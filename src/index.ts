@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import { langOf, runPrivacyCommand, type PrivacyFace } from './command.ts'
-import { liveBool, liveStrings, resolveConfig, type PrivacyGatewayConfig } from './config.ts'
+import { liveBool, liveMark, liveStrings, resolveConfig, type PrivacyGatewayConfig, type ResolvedConfig } from './config.ts'
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
@@ -68,26 +68,25 @@ export { Config } from './config.ts'
 export type { ChainOptions, LayerInfo, LayerRole, MaskingDispatcher } from './dispatcher.ts'
 
 export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): void {
-  const cfg = resolveConfig(config)
-  if (!cfg.enabled) {
-    ctx.logger.info('dsh-privacy-gateway: disabled by config')
-    return
-  }
+  let cfg = resolveConfig(config)
+  // enabled is volatile (docs/adr/0021): off, the gateway stays installed and lets every request by
+  if (!cfg.enabled) ctx.logger.info('dsh-privacy-gateway: disabled by config')
   const keyPath = join(stateDir(), 'redact.key')
   const { key, persisted } = loadKey(keyPath)
   if (!persisted) {
     ctx.logger.warn(`dsh-privacy-gateway: could not keep the placeholder key at ${keyPath}; placeholders change on restart`)
   }
+  const recordDir = join(stateDir(), 'masking')
   const records = new RecordStore({
     // record: false keeps the statistics in memory only
-    ...(cfg.record ? { dir: join(stateDir(), 'masking') } : {}),
+    ...(cfg.record ? { dir: recordDir } : {}),
     keepDays: cfg.keepDays,
     keepBytes: cfg.keepMegabytes * 1024 * 1024,
     keepRecords: cfg.keepRecords,
     logger: ctx.logger,
   })
-  // the vendor view keeps the bodies as they went, in memory only
-  const views = cfg.vendorView ? new ViewStore() : undefined
+  // the vendor view keeps the bodies as they went, in memory only, while vendorView is on
+  const views = new ViewStore()
   const optional = (name: string): unknown => {
     try {
       return ctx.get?.(name)
@@ -121,17 +120,35 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     return out
   }
   const excludedProviders = (): string[] => liveStrings(config.excludeProviders)
-  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, ...(views ? { views } : {}), names })
+  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, views, names })
+  // the config as it is now: a change the configuration page made is applied here, before the
+  // request that first sees it (docs/adr/0021); reading it is cheap, rebuilding happens on a change only
+  let mark = liveMark(cfg)
+  const current = (): ResolvedConfig => {
+    const next = resolveConfig(config)
+    const m = liveMark(next)
+    if (m === mark) return cfg
+    mark = m
+    if (next.enabled !== cfg.enabled) ctx.logger.info(`dsh-privacy-gateway: ${next.enabled ? 'enabled' : 'disabled'} by config`)
+    cfg = next
+    engine.reconfigure(next)
+    records.configure({ ...(next.record ? { dir: recordDir } : {}), keepDays: next.keepDays })
+    return cfg
+  }
   const face: PrivacyFace = {
     get active() {
-      return engine.active
+      return engine.active && current().enabled
     },
     set active(on: boolean) {
       engine.active = on
       ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} by /privacy`)
     },
-    secrets: cfg.secrets,
-    personal: cfg.personal,
+    get secrets() {
+      return current().secrets
+    },
+    get personal() {
+      return current().personal
+    },
     get values() {
       return engine.values
     },
@@ -156,7 +173,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   if (ctx.plugin) {
     const source: OverviewSource = {
       overview: (limit, session) => ({
-        active: engine.active,
+        active: engine.active && current().enabled,
         secrets: cfg.secrets,
         personal: cfg.personal,
         record: cfg.record,
@@ -165,7 +182,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         stats: records.stats(session),
         recent: records.recent(limit, session),
         vendorView: cfg.vendorView,
-        views: views?.keys() ?? [],
+        views: views.keys(),
         // read now: the detail page's switch changes it without remounting the plugin
         showPanel: liveBool(config.showPanel, cfg.showPanel),
         excludeProviders: excludedProviders(),
@@ -183,7 +200,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         }
       },
       vendorView: (key) => {
-        const body = views?.get(key)
+        const body = views.get(key)
         return body === undefined ? null : { key, body }
       },
     }
@@ -200,7 +217,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   }
   ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next, options?.sessionId))
   ctx.effect(() => {
-    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => bypassedProvider() !== undefined, logger: ctx.logger })
+    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => !current().enabled || bypassedProvider() !== undefined, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
     return () => {
       gateway.dispose()

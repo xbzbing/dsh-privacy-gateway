@@ -28,7 +28,7 @@ test('hideWarned swaps every form of a warned value, the longest first', () => {
 
 test('a recorded request keeps the body as it went, with a warned value as its placeholder', () => {
   const views = new ViewStore()
-  const e = new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, personal: true, actions: { EMAIL: 'warn' } }), { views })
+  const e = new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, personal: true, vendorView: true, actions: { EMAIL: 'warn' } }), { views })
   const ex = e.maskRequest(chat(`key ${KEY} mail ${MAIL}`), info)
   assert.ok(ex)
   assert.ok(ex.text.includes(MAIL))
@@ -45,8 +45,20 @@ test('a recorded request keeps the body as it went, with a warned value as its p
 
 test('a request not recorded, or blocked, keeps no body', () => {
   const views = new ViewStore()
-  const e = new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, actions: { API_KEY: 'block' } }), { views })
+  const e = new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, vendorView: true, actions: { API_KEY: 'block' } }), { views })
   e.maskRequest(chat('hello'), info)?.finish()
   assert.throws(() => e.maskRequest(chat(`key ${KEY}`), info))
+  assert.equal(views.size, 0)
+})
+
+test('vendorView turned off keeps no more bodies and drops the ones kept', () => {
+  const views = new ViewStore()
+  const on = resolveConfig({ ...defaults, vendorView: true })
+  const e = new PrivacyEngine(randomBytes(32), on, { views })
+  e.maskRequest(chat(`key ${KEY}`), info)?.finish()
+  assert.equal(views.size, 1)
+  e.reconfigure({ ...on, vendorView: false })
+  assert.equal(views.size, 0)
+  e.maskRequest(chat(`key ${KEY}`), info)?.finish()
   assert.equal(views.size, 0)
 })

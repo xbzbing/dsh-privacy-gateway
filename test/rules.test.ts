@@ -175,3 +175,23 @@ test('a hint keeps a key\'s prefix and its next characters, plus a couple at the
   assert.deepEqual(hint('EMAIL', 'someone@example.com', true), { head: 's', len: 19 })
   assert.deepEqual(hint('TERM', 'project-x', false), { head: 'p', len: 9 })
 })
+
+test('reconfigure: new words mask from the next request, and a value masked before is still restored', async () => {
+  const { randomBytes } = await import('node:crypto')
+  const { PrivacyEngine } = await import('../src/engine.ts')
+  const { defaults: base } = await import('../src/config.ts')
+  const info = { host: 'api.example.com', path: '/v1/chat/completions' }
+  const chat = (content: string) => JSON.stringify({ model: 'm', stream: false, messages: [{ role: 'user', content }] })
+  const key = 'sk-' + 'proj-RECONFIGsentinel0123456789abcd'
+  const e = new PrivacyEngine(randomBytes(32), base)
+  const first = e.maskRequest(chat(`key ${key} for Bluebird`), info)
+  assert.ok(first && first.text.includes('Bluebird') && !first.text.includes(key))
+  e.reconfigure({ ...base, words: ['Bluebird'], secrets: false })
+  const second = e.maskRequest(chat('Bluebird again'), info)
+  assert.ok(second && !second.text.includes('Bluebird'))
+  // the reply to the first request still has its key put back
+  const placeholder = /\{\{API_KEY_[^}]+\}\}/.exec(first.text)?.[0] ?? ''
+  assert.ok(placeholder)
+  const reply = JSON.stringify({ choices: [{ message: { role: 'assistant', content: `use ${placeholder}` } }] })
+  assert.ok(first.restoreBody(reply).includes(key))
+})

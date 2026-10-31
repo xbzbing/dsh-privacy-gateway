@@ -56,9 +56,10 @@ test('manifest declares no install-time lifecycle scripts', () => {
 
 test('Config defaults and round-trips through toJSON', () => {
   const parsed = Config({}) as Record<string, unknown>
-  // showPanel and excludeProviders are volatile: they come as live references
+  // the fields the configuration page edits are volatile: they come as live references
   assert.equal(liveBool(parsed.showPanel, true), false)
-  assert.deepEqual({ ...parsed, showPanel: liveBool(parsed.showPanel, true), excludeProviders: liveStrings(parsed.excludeProviders) }, defaults)
+  assert.deepEqual(liveStrings(parsed.excludeProviders), [])
+  assert.deepEqual(resolveConfig(parsed), defaults)
   assert.equal(resolveConfig(Config({ showPanel: true })).showPanel, true)
   assert.equal(resolveConfig({ enabled: false }).enabled, false)
   assert.doesNotThrow(() => JSON.stringify(Config.toJSON()))
@@ -84,7 +85,11 @@ test('apply installs the gateway and its disposal puts the previous dispatcher b
     for (const d of disposers) d()
     assert.equal(getGlobalDispatcher(), before)
 
+    // enabled is volatile: off, the gateway is installed and lets every request by (docs/adr/0021)
+    disposers.length = 0
     apply({ logger, effect: (fn) => disposers.push(fn()) }, { enabled: false })
+    assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher)
+    for (const d of disposers) d()
     assert.equal(getGlobalDispatcher(), before)
   } finally {
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME

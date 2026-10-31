@@ -55,6 +55,12 @@ export class ViewStore {
     return [...this.#views.keys()]
   }
 
+  /** Drops every body. */
+  clear(): void {
+    this.#views.clear()
+    this.#total = 0
+  }
+
   get size(): number {
     return this.#views.size
   }

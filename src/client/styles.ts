@@ -47,21 +47,31 @@ const CSS = `
 .pgw-detail th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:3px 8px 3px 0}
 .pgw-detail td{padding:3px 8px 3px 0;font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:nowrap}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:8px}
-.pgw-cfg{display:flex;flex-direction:column;gap:14px}
-.pgw-cfg__field{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
-.pgw-cfg__text{display:flex;flex-direction:column;gap:3px;min-width:0}
-.pgw-cfg__name{font-size:13px}
-.pgw-cfg__control{display:flex;align-items:center;gap:8px}
-.pgw-picker{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}
-.pgw-picker:disabled{opacity:.5;cursor:default}
-.pgw-picker__row{display:inline-flex;align-items:center;gap:6px}
-.pgw-cfg__chips{display:flex;flex-wrap:wrap;gap:6px}
-.pgw-chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 6px 2px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
-.pgw-chip__x{border:0;background:none;color:inherit;font:inherit;font-size:13px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}
-.pgw-chip__x:hover{opacity:1}
-.pgw-chip__x:disabled{opacity:.3;cursor:default}
-.pgw-cfg__add{display:flex;gap:6px;align-items:center}
-.pgw-cfg__add input{flex:1;min-width:0;max-width:240px;font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary)}
+.pgw-cfg{display:flex;flex-direction:column;gap:20px}
+.pgw-cfg__group{display:flex;flex-direction:column}
+.pgw-cfg__groupHead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding-bottom:4px;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.pgw-cfg__groupName{font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.pgw-cfg__row{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.pgw-cfg__text{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pgw-cfg__name{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:400;line-height:22px}
+.pgw-cfg__desc{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px}
+.pgw-cfg__desc--error{color:var(--dsw-alias-state-error-primary)}
+.pgw-cfg__control{display:flex;align-items:center;gap:8px;max-width:100%}
+.pgw-select{display:inline-flex;align-items:center;gap:12px;height:36px;max-width:100%;padding:0 14px;border:none;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary);cursor:pointer}
+@media (hover:hover){.pgw-select:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}}
+.pgw-select:disabled{cursor:default;opacity:.6}
+.pgw-select__label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pgw-select__chevron{flex:none}
+.pgw-cfg__list{display:flex;flex-direction:column;gap:8px;min-width:0}
+.pgw-cfg__add{display:flex;align-items:center;gap:8px}
+.pgw-cfg__input{width:240px;max-width:100%}
+.pgw-cfg__input--count{width:96px}
+.pgw-cfg__tags{display:flex;flex-wrap:wrap;gap:6px;max-width:560px}
+.pgw-cfg__tag{display:inline-flex;align-items:center;gap:4px;max-width:240px}
+.pgw-cfg__tagText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pgw-cfg__tagX{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:inherit;cursor:pointer;opacity:.6}
+.pgw-cfg__tagX:hover:not(:disabled){opacity:1}
+.pgw-cfg__tagX:disabled{opacity:.3;cursor:default}
 .pgw-fallback{display:flex;align-items:center;gap:8px;cursor:pointer}
 .pgw-btn:disabled{opacity:.5;cursor:default}
 .pgw-tab-icon{flex:none;vertical-align:-3px;margin-right:4px}

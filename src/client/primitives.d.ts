@@ -64,13 +64,9 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     children?: ReactNode
     className?: string
   }): JSX.Element
-  /** A single-line text input, already themed. */
-  export function TextInput(props: {
-    value: string
-    placeholder?: string
-    disabled?: boolean
-    onChange(next: string): void
-    onKeyDown?(event: { key: string }): void
-    className?: string
-  }): JSX.Element
+  /** The themed native input: every `<input>` attribute passes through. */
+  export function Input(props: import('react').InputHTMLAttributes<HTMLInputElement> & { className?: string }): JSX.Element
+  /** A small label pill. */
+  export function Tag(props: { tone?: 'neutral' | 'outline' | 'solid'; className?: string; title?: string; children?: ReactNode }): JSX.Element
+  export const IconCloseOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
 }

@@ -34,9 +34,11 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 ## 配置
 
+插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`words`、`allow`、`record`、`keepDays`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 `cordis.patch.yml` 里改。
+
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `enabled` | `true` | 总开关；关掉后网关不安装 |
+| `enabled` | `true` | 总开关；关掉后网关仍在，但所有请求原样放行，不还原、不记录 |
 | `secrets` | `true` | 脱敏密钥、令牌、密码、私钥、cookie |
 | `personal` | `false` | 脱敏邮箱、手机号、身份证号、银行卡号 |
 | `words` | `[]` | 自己的词（项目代号、客户名），按原样换成 `TERM` 占位符 |
@@ -49,14 +51,14 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用（[ADR-0004](docs/adr/0004-protected-regions.md)） |
 | `protectTools` | `true` | 请求的 `tools` 数组原样发出 |
 | `excludeHosts` | `[]` | 不改写的 `host` 或 `host:port` |
-| `excludeProviders` | `[]` | 不脱敏的 provider id；该行的「配置」页里可以勾选，改了从下一次模型调用起生效（[ADR-0018](docs/adr/0018-exclude-providers.md)） |
+| `excludeProviders` | `[]` | 不脱敏的 provider id；「配置」页里从当前注册的 provider 中勾选（[ADR-0018](docs/adr/0018-exclude-providers.md)） |
 | `maxValues` | `5000` | 内存值表上限，满了淘汰最老的一半 |
 | `record` | `true` | 脱敏记录写盘；关掉只在内存里统计 |
 | `keepDays` | `30` | 记录保留天数 |
 | `keepMegabytes` | `100` | 记录总量上限（MB），超了从最老的一天删 |
 | `keepRecords` | `500` | 内存里保留的最近记录条数 |
 | `vendorView` | `false` | 在内存里留最近记录的请求实际发出的 body，统计卡里可以左右对照；最多 100 份、共 64 MiB，不落盘（[ADR-0016](docs/adr/0016-vendor-view.md)） |
-| `showPanel` | `false` | 在会话顶部提供「隐私保护」标签页（对话 / 轨迹 / Git 之后），内容是本会话的记录与统计；插件页面里该行的「配置」页上有开关，改了即时生效（[ADR-0017](docs/adr/0017-sidebar-panel.md)） |
+| `showPanel` | `false` | 在会话顶部提供「隐私保护」标签页（对话 / 轨迹 / Git 之后），内容是本会话的记录与统计（[ADR-0017](docs/adr/0017-sidebar-panel.md)） |
 
 ## `/privacy` 命令
 

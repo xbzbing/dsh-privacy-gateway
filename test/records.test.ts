@@ -223,3 +223,30 @@ test('a write that fails is told once and the request still gets its reply (best
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('record turned on writes from then on and reads the days on disk once; turned off writes nothing more', async () => {
+  const dir = tmp()
+  try {
+    const a = store(dir)
+    a.add(record(new Date(), { n: 3 }))
+    await a.flush()
+    // a store that started with record off, then had it turned on twice
+    const b = store(undefined)
+    b.add(record(new Date(), { n: 7 }))
+    b.configure({ dir, keepDays: 30 })
+    await b.loaded
+    b.configure({ keepDays: 30 })
+    b.configure({ dir, keepDays: 30 })
+    await b.loaded
+    assert.equal(b.stats().today.n, 10)
+    b.add(record(new Date(), { n: 11 }))
+    await b.flush()
+    b.configure({ keepDays: 30 })
+    b.add(record(new Date(), { n: 13 }))
+    await b.flush()
+    const lines = readFileSync(join(dir, `${dayOf(new Date())}.jsonl`), 'utf8').trim().split('\n')
+    assert.deepEqual(lines.map((l) => (JSON.parse(l) as MaskRecord).n), [3, 11])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

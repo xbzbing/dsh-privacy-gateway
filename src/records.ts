@@ -231,6 +231,8 @@ const STAT_DAYS = 30
 
 export class RecordStore {
   readonly #o: RecordStoreOptions
+  /** The days on disk have been read into the sums (they are read once: a second read would count them twice). */
+  #diskRead = false
   readonly #now: () => Date
   #ring: MaskRecord[] = []
   readonly #days = new Map<string, Totals>()
@@ -244,14 +246,42 @@ export class RecordStore {
   readonly #private = new Set<string>()
   #warnedAt = -Infinity
   /** Settles once the days on disk are in the sums and the latest records. */
-  readonly loaded: Promise<void>
+  loaded: Promise<void> = Promise.resolve()
 
   constructor(options: RecordStoreOptions) {
-    this.#o = options
+    this.#o = { ...options }
     this.#now = options.now ?? (() => new Date())
     // what is on disk now has smaller keys: one this store adds is in the sums already
     this.#startKey = this.#nextKey()
-    this.loaded = options.dir ? this.#load(options.dir).catch((err: unknown) => this.#warn('could not read the records', err)) : Promise.resolve()
+    if (options.dir) this.#readDisk(options.dir)
+  }
+
+  #readDisk(dir: string): void {
+    if (this.#diskRead) return
+    this.#diskRead = true
+    this.loaded = this.#load(dir).catch((err: unknown) => this.#warn('could not read the records', err))
+  }
+
+  /**
+   * Starts or stops writing to disk (config record) and sets the days kept
+   * (config keepDays), from the next record on (docs/adr/0021). Turning
+   * writing on reads the days already on disk into the sums, once.
+   */
+  configure(options: { dir?: string; keepDays: number }): void {
+    if (options.keepDays !== this.#o.keepDays) {
+      this.#o.keepDays = options.keepDays
+      // fewer days kept: the next write prunes, instead of up to an hour later
+      this.#prunedAt = -Infinity
+    }
+    if (options.dir === this.#o.dir) return
+    if (options.dir) {
+      this.#o.dir = options.dir
+      this.#readDisk(options.dir)
+    } else {
+      delete this.#o.dir
+      // what was waiting to be written is not written: off means nothing more goes to disk
+      this.#queue = []
+    }
   }
 
   #nextKey(): number {

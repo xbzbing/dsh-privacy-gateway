@@ -50,6 +50,12 @@ export function liveStrings(v: unknown): string[] {
   return strings(live(v))
 }
 
+/**
+ * The fields the configuration page edits are volatile (docs/adr/0021): cordis
+ * hands each one over as a live reference and does not remount the plugin when
+ * it changes; `resolveConfig` reads them as they are now, and the plugin applies
+ * a change from the next request. The others remount the plugin as usual.
+ */
 export interface PrivacyGatewayConfig {
   /** Master switch. */
   enabled?: boolean
@@ -113,14 +119,14 @@ export interface PrivacyGatewayConfig {
 
 // the cast: a volatile field's input is a boolean and its output a live reference, which Schema<T> has one type for
 export const Config = Schema.object({
-  enabled: Schema.boolean().default(true),
-  secrets: Schema.boolean().default(true),
-  personal: Schema.boolean().default(false),
-  words: Schema.array(Schema.string()).default([]),
-  allow: Schema.array(Schema.string()).default([]),
+  enabled: Schema.boolean().default(true).volatile(),
+  secrets: Schema.boolean().default(true).volatile(),
+  personal: Schema.boolean().default(false).volatile(),
+  words: Schema.array(Schema.string()).default([]).volatile(),
+  allow: Schema.array(Schema.string()).default([]).volatile(),
   actions: Schema.dict(Schema.union(['mask', 'warn', 'block'] as const)).default({}),
-  toolGuard: Schema.union(['off', 'warn', 'block'] as const).default('off'),
-  shape: Schema.boolean().default(false),
+  toolGuard: Schema.union(['off', 'warn', 'block'] as const).default('off').volatile(),
+  shape: Schema.boolean().default(false).volatile(),
   cookieNames: Schema.array(Schema.string()).default([]),
   cookieKeep: Schema.array(Schema.string()).default(['lang', 'locale', 'theme', 'tz']),
   protectEnvBlock: Schema.boolean().default(true),
@@ -128,16 +134,24 @@ export const Config = Schema.object({
   excludeHosts: Schema.array(Schema.string()).default([]),
   excludeProviders: Schema.array(Schema.string()).default([]).volatile().description(EXCLUDE_PROVIDERS_DESCRIPTION),
   maxValues: Schema.number().step(1).min(100).default(5000),
-  record: Schema.boolean().default(true),
-  keepDays: Schema.number().step(1).min(1).default(30),
+  record: Schema.boolean().default(true).volatile(),
+  keepDays: Schema.number().step(1).min(1).default(30).volatile(),
   keepMegabytes: Schema.number().step(1).min(1).default(100),
   keepRecords: Schema.number().step(1).min(10).default(500),
-  vendorView: Schema.boolean().default(false),
-  // volatile: the detail page's switch edits it live, without remounting the gateway (docs/adr/0017)
+  vendorView: Schema.boolean().default(false).volatile(),
+  // volatile: the configuration page edits these live, without remounting the gateway (docs/adr/0017, 0021)
   showPanel: Schema.boolean().default(false).volatile().description(SHOW_PANEL_DESCRIPTION),
 }) as unknown as Schema<PrivacyGatewayConfig>
 
 export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders'>> & { showPanel: boolean; excludeProviders: string[] }
+
+/** The volatile fields the gateway rebuilds its rules and stores from (showPanel and excludeProviders are read where they are used). */
+export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'record', 'keepDays', 'vendorView'] as const
+
+/** A string that changes when one of LIVE_FIELDS does. */
+export function liveMark(cfg: ResolvedConfig): string {
+  return JSON.stringify(LIVE_FIELDS.map((k) => cfg[k]))
+}
 
 export const defaults: ResolvedConfig = {
   enabled: true,
@@ -189,7 +203,9 @@ function bool(v: unknown, fallback: boolean): boolean {
 
 /** The config as the plugin runs it: every field present, each one checked (the schema has no callbacks to do it). */
 export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig {
-  const c = config as Record<string, unknown>
+  // a volatile field comes as a live reference: read each one as it is now
+  const c: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(config as Record<string, unknown>)) c[k] = live(v)
   return {
     enabled: bool(c.enabled, defaults.enabled),
     secrets: bool(c.secrets, defaults.secrets),
@@ -204,13 +220,13 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     protectEnvBlock: bool(c.protectEnvBlock, defaults.protectEnvBlock),
     protectTools: bool(c.protectTools, defaults.protectTools),
     excludeHosts: strings(c.excludeHosts).map((h) => h.toLowerCase()),
-    excludeProviders: liveStrings(c.excludeProviders),
+    excludeProviders: strings(c.excludeProviders),
     maxValues: int(c.maxValues, 100, defaults.maxValues),
     record: bool(c.record, defaults.record),
     keepDays: int(c.keepDays, 1, defaults.keepDays),
     keepMegabytes: int(c.keepMegabytes, 1, defaults.keepMegabytes),
     keepRecords: int(c.keepRecords, 10, defaults.keepRecords),
     vendorView: bool(c.vendorView, defaults.vendorView),
-    showPanel: liveBool(c.showPanel, defaults.showPanel),
+    showPanel: bool(c.showPanel, defaults.showPanel),
   }
 }

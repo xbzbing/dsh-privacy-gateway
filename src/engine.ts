@@ -81,9 +81,12 @@ function modelInPath(path: string): string | undefined {
 }
 
 export class PrivacyEngine implements RedactionEngine {
+  readonly #key: Uint8Array
   readonly #table: ValueTable
-  readonly #masker: Masker
-  readonly #restorer: Restorer
+  #masker: Masker
+  #restorer: Restorer
+  /** Keep the bodies for the vendor view (config vendorView); `reconfigure` changes it. */
+  #keepViews: boolean
   readonly records: RecordStore
   readonly #logger: EngineLogger | undefined
   readonly views: ViewStore | undefined
@@ -92,8 +95,19 @@ export class PrivacyEngine implements RedactionEngine {
   active = true
 
   constructor(key: Uint8Array, config: ResolvedConfig, options: EngineOptions = {}) {
+    this.#key = key
     this.#table = new ValueTable(config.maxValues)
-    this.#masker = new Masker(key, this.#table, {
+    this.#masker = this.#maskerFor(config)
+    this.#restorer = new Restorer(this.#table, config.toolGuard)
+    this.#keepViews = config.vendorView
+    this.#logger = options.logger
+    this.#names = options.names
+    this.views = options.views
+    this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
+  }
+
+  #maskerFor(config: ResolvedConfig): Masker {
+    return new Masker(this.#key, this.#table, {
       secrets: config.secrets,
       personal: config.personal,
       protectEnvBlock: config.protectEnvBlock,
@@ -104,11 +118,20 @@ export class PrivacyEngine implements RedactionEngine {
       actions: notMasked(config.actions),
       shape: config.shape,
     })
+  }
+
+  /**
+   * The rules from `config` from the next request on (docs/adr/0021): the
+   * finders and the reply guard are rebuilt, the value table stays, so a reply
+   * to a request already sent is still restored. The masker starts with an
+   * empty memo of what was sent, which was keyed to the old rules.
+   */
+  reconfigure(config: ResolvedConfig): void {
+    this.#masker = this.#maskerFor(config)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
-    this.#logger = options.logger
-    this.#names = options.names
-    this.views = options.views
-    this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
+    this.#keepViews = config.vendorView
+    // off drops the bodies kept: they are not to stay in memory once it is turned off
+    if (!config.vendorView) this.views?.clear()
   }
 
   /** How many values the table holds. */
@@ -156,13 +179,15 @@ export class PrivacyEngine implements RedactionEngine {
       throw new RequestBlocked(blocks)
     }
     const tally: Tally = newTally()
+    // the reply goes through the guard this request was sent under, whatever reconfigure does meanwhile
+    const restorer = this.#restorer
     const sentText = r.text
     let done = false
     return {
       text: r.text,
       restoring: () => this.#table.size > 0,
-      restoreBody: (text) => this.#restorer.restoreJSON(text, tally),
-      streamRestorer: () => this.#restorer.stream(tally),
+      restoreBody: (text) => restorer.restoreJSON(text, tally),
+      streamRestorer: () => restorer.stream(tally),
       finish: () => {
         if (done) return
         done = true
@@ -183,7 +208,7 @@ export class PrivacyEngine implements RedactionEngine {
           ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
           ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
         })
-        if (this.views) this.views.put(rec.key, hideWarned(sentText, warnedForms(r.warned)))
+        if (this.views && this.#keepViews) this.views.put(rec.key, hideWarned(sentText, warnedForms(r.warned)))
       },
     }
   }

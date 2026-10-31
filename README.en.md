@@ -34,9 +34,11 @@ In the default web profile a first install takes effect immediately, with no res
 
 ## Configuration
 
+The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `words`, `allow`, `record`, `keepDays`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in `cordis.patch.yml`.
+
 | Key | Default | Description |
 | --- | --- | --- |
-| `enabled` | `true` | Master switch; when off, the gateway is not installed |
+| `enabled` | `true` | Master switch; when off, the gateway stays but lets every request by as it is, restoring and recording nothing |
 | `secrets` | `true` | Mask secrets, tokens, passwords, private keys and cookies |
 | `personal` | `false` | Mask email addresses, phone numbers, ID card and bank card numbers |
 | `words` | `[]` | Your own words (a project's code name, a customer's name), masked as written as `TERM` |
@@ -49,14 +51,14 @@ In the default web profile a first install takes effect immediately, with no res
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them ([ADR-0004](docs/adr/0004-protected-regions.md)) |
 | `protectTools` | `true` | Send the request's `tools` array as written |
 | `excludeHosts` | `[]` | `host` or `host:port` entries that are never rewritten |
-| `excludeProviders` | `[]` | Provider ids whose requests are not masked; the row's Configure page has a checkbox for each, and a change applies from the next model call ([ADR-0018](docs/adr/0018-exclude-providers.md)) |
+| `excludeProviders` | `[]` | Provider ids whose requests are not masked; checked on the Configure page from the providers registered now ([ADR-0018](docs/adr/0018-exclude-providers.md)) |
 | `maxValues` | `5000` | Size of the in-memory value table; when full, the oldest half is dropped |
 | `record` | `true` | Write the masking records to disk; when off, the statistics stay in memory |
 | `keepDays` | `30` | Days of records kept |
 | `keepMegabytes` | `100` | Megabytes of records kept; past it, the oldest days are deleted |
 | `keepRecords` | `500` | Latest records kept in memory |
 | `vendorView` | `false` | Keep in memory the body each recorded request went out with, for the side-by-side view in the statistics card; at most 100 bodies and 64 MiB in all, never on disk ([ADR-0016](docs/adr/0016-vendor-view.md)) |
-| `showPanel` | `false` | Offer a Privacy tab at the top of the session (after Chat / Trajectory / Git) with this session's records and counts; the row's Configure page on the plugin's page has a switch for it that takes effect at once ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
+| `showPanel` | `false` | Offer a Privacy tab at the top of the session (after Chat / Trajectory / Git) with this session's records and counts ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
 
 ## The `/privacy` command
 
