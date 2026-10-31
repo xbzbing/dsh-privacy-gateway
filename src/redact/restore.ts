@@ -52,9 +52,13 @@ const MAX_HOSTS = 8
 /** Keys a tool call's arguments sit under, in any vendor's reply. */
 const TOOL_PATH = /(?:^|\.)(?:tool_calls|function_call|functionCall|tool_use|args|arguments|input|partial_json)(?:\.|$)/
 
-/** Whether the string at `path` (its key `key`, in an event of `type`) is part of a tool call's arguments. */
+/**
+ * Whether the string at `path` (its key `key`, in an event of `type`) is part
+ * of a tool call's arguments. A Responses custom tool's input streams as the
+ * delta of response.custom_tool_call_input.delta: free text, not JSON.
+ */
 export function inToolCall(path: string, key: string, type: string): boolean {
-  return asJSON(key, type) || TOOL_PATH.test(path)
+  return asJSON(key, type) || TOOL_PATH.test(path) || (key === 'delta' && type.includes('custom_tool_call_input'))
 }
 
 function isWordChar(c: string | undefined): boolean {

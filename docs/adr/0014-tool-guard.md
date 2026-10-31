@@ -15,6 +15,13 @@ ADR-0009 对 R15（还原变成外带通道）只做了第 ① 档：工具调�
 - `warn`：照常流式还原，判定在这一段结束时做，命中时告警（日志写 host，不写值），记录里记 `exfil`（次数）和 `exfilHosts`。工具在回复结束后才执行，所以告警早于执行。
 - `block`：这一段事件先扣住，判定后再一起发出。命中时这段工具参数里的占位符一律不还原，工具拿到占位符字面量；正文照常还原。记录另记 `exfilBlocked`（留下的处数），这些处不计入 `restoredInTools`。没命中的段照常还原后发出。扣住期间 keep-alive 注释行照常先发。
 
+### 补充（2026-10-31）：本机判定与转义
+
+- 本机只认 `localhost`、`*.localhost`、完整写出的 IPv4 回环地址（`127.x.y.z`，四段都在 0–255）、`::1`、`::`、`0.0.0.0`。`127.0.0.1.evil.example` 是别的机器的域名，不算本机。
+- URL 的 `user:password@` 部分不含 `?` 和 `#`：`https://evil.example#@localhost/`、`https://evil.example?@127.0.0.1/` 的 host 是 `evil.example`。
+- 工具参数是 JSON 文本，工具拿到的是解掉转义之后的内容。判定时原文和解掉 JSON 转义（`\/`、`\uXXXX` 等）后的文本各找一遍 host，`https:\/\/evil.example` 照样认得出。流式回复里一段转义被切在两条事件之间时，拼起来之后再解。
+- Responses 自定义工具的输入（`response.custom_tool_call_input.delta` 的 `delta`）算工具参数，与 `.done` 的 `input` 一样参与判定和 `block`。它不是 JSON，还原时不转义。
+
 ## Consequences
 
 - `block` 让工具参数的流式输出推迟到这次调用结束，前端看到的是参数一次性出现。
