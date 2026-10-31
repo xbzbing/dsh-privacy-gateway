@@ -13,7 +13,7 @@
 ## Decision
 
 - R9：值表不落盘。重启后的漏遮只限规则命不中、靠 known 索引兜住的值；会话日志里是真值（ADR-0003），规则能命中的值重启后照样会被遮。
-- R15：默认取第 ① 档。还原时按 JSON 路径判断是否在工具调用参数里（`tool_calls`、`function_call`、`functionCall`、`tool_use`、`arguments`、`args`、`input`、`partial_json`），记录里另记 `restoredInTools`，`/privacy status` 和统计卡显示这一项。②③ 与 P2 的 warn/block 动作一起做。
+- R15：默认取第 ① 档。还原时按 JSON 路径判断是否在工具调用参数里（`tool_calls`、`function_call`、`functionCall`、`tool_use`、`arguments`、`args`、`input`、`partial_json`），记录里另记 `restoredInTools`，`/privacy status` 和统计卡显示这一项。②③ 与 P2 的 warn/block 动作一起做（2026-10-31 已做，见 [ADR-0014](0014-tool-guard.md)，默认仍是第 ① 档）。
 
 ## Consequences
 

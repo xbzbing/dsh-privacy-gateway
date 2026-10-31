@@ -57,6 +57,12 @@ export interface MaskRecord {
   restoredInTools?: number
   /** Placeholders in the reply no value is known for (design §13 R11). */
   unmapped: number
+  /** Tool calls whose arguments had a value put back and named a host off this machine (docs/adr/0014). */
+  exfil?: number
+  /** Places in them left as placeholders (toolGuard block). */
+  exfilBlocked?: number
+  /** The hosts they named. */
+  exfilHosts?: string[]
   /** Masking failed: the request was not sent (docs/adr/0005). */
   failed?: true
 }
@@ -95,6 +101,9 @@ export interface Totals {
   warned: number
   /** Requests a block action stopped. */
   blocked: number
+  /** Tool calls that sent a value put back off this machine, and the places left as placeholders in them. */
+  exfil: number
+  exfilBlocked: number
   tookMs: { sum: number; max: number }
   /** Places by kind, by finder, by host and by model. */
   kinds: Record<string, number>
@@ -104,7 +113,7 @@ export interface Totals {
 }
 
 export function emptyTotals(): Totals {
-  return { requests: 0, masked: 0, n: 0, restored: 0, restoredInTools: 0, unmapped: 0, failed: 0, warned: 0, blocked: 0, tookMs: { sum: 0, max: 0 }, kinds: {}, finders: {}, hosts: {}, models: {} }
+  return { requests: 0, masked: 0, n: 0, restored: 0, restoredInTools: 0, unmapped: 0, failed: 0, warned: 0, blocked: 0, exfil: 0, exfilBlocked: 0, tookMs: { sum: 0, max: 0 }, kinds: {}, finders: {}, hosts: {}, models: {} }
 }
 
 function bump(m: Record<string, number>, k: string, by: number): void {
@@ -121,6 +130,8 @@ export function addRecord(t: Totals, r: MaskRecord): void {
   if (r.failed) t.failed++
   t.warned += r.warned ?? 0
   if (r.blocked) t.blocked++
+  t.exfil += r.exfil ?? 0
+  t.exfilBlocked += r.exfilBlocked ?? 0
   t.tookMs.sum += r.tookMs
   t.tookMs.max = Math.max(t.tookMs.max, r.tookMs)
   for (const v of r.values) {
@@ -142,6 +153,8 @@ export function addTotals(into: Totals, t: Totals): void {
   into.failed += t.failed
   into.warned += t.warned
   into.blocked += t.blocked
+  into.exfil += t.exfil
+  into.exfilBlocked += t.exfilBlocked
   into.tookMs.sum += t.tookMs.sum
   into.tookMs.max = Math.max(into.tookMs.max, t.tookMs.max)
   for (const k of ['kinds', 'finders', 'hosts', 'models'] as const) {
@@ -166,6 +179,8 @@ function parseRecord(line: string): MaskRecord | undefined {
     r.unmapped = typeof r.unmapped === 'number' ? r.unmapped : 0
     if (typeof r.restoredInTools !== 'number') delete r.restoredInTools
     if (typeof r.warned !== 'number') delete r.warned
+    if (typeof r.exfil !== 'number') delete r.exfil
+    if (typeof r.exfilBlocked !== 'number') delete r.exfilBlocked
     r.tookMs = typeof r.tookMs === 'number' ? r.tookMs : 0
     r.host = typeof r.host === 'string' ? r.host : ''
     return r

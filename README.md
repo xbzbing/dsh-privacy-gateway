@@ -42,6 +42,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | `words` | `[]` | 自己的词（项目代号、客户名），按原样遮成 `TERM` |
 | `allow` | `[]` | 永不遮的值：整值匹配，不分大小写 |
 | `actions` | `{}` | 按 kind 选动作：`mask`（默认，换成占位符）、`warn`（照发并记一条）、`block`（整个请求不发）。例：`{ PRIVATE_KEY: block, EMAIL: warn }`（[ADR-0013](docs/adr/0013-actions.md)） |
+| `toolGuard` | `off` | 工具调用参数里还原出值、又指向本机以外的 host 时怎么办：`off` 只计数，`warn` 告警并记一条，`block` 这次调用的参数里不还原，工具拿到占位符（[ADR-0014](docs/adr/0014-tool-guard.md)） |
 | `cookieNames` | `[]` | 追加要遮的 cookie 名 |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不遮的 cookie 名 |
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用（[ADR-0004](docs/adr/0004-protected-regions.md)） |

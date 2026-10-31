@@ -53,9 +53,14 @@ export class RequestBlocked extends Error {
   }
 }
 
+export interface EngineLogger {
+  warn(...args: unknown[]): void
+}
+
 export interface EngineOptions {
   /** Where the records go; a memory-only one by default. */
   records?: RecordStore
+  logger?: EngineLogger
 }
 
 function isLoopback(host: string): boolean {
@@ -74,6 +79,7 @@ export class PrivacyEngine implements RedactionEngine {
   readonly #masker: Masker
   readonly #restorer: Restorer
   readonly records: RecordStore
+  readonly #logger: EngineLogger | undefined
   /** `/privacy off` turns masking off until `/privacy on` or a restart; the config stays as it is. */
   active = true
 
@@ -89,7 +95,8 @@ export class PrivacyEngine implements RedactionEngine {
       cookies: { names: config.cookieNames, keep: config.cookieKeep },
       actions: notMasked(config.actions),
     })
-    this.#restorer = new Restorer(this.#table)
+    this.#restorer = new Restorer(this.#table, config.toolGuard)
+    this.#logger = options.logger
     this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
   }
 
@@ -143,8 +150,20 @@ export class PrivacyEngine implements RedactionEngine {
         let restored = 0
         for (const n of tally.restored.values()) restored += n
         // a request with nothing masked and nothing put back is not recorded (docs/adr/0008)
-        if (record.n === 0 && warned === 0 && restored === 0 && tally.unmapped === 0) return
-        this.records.add({ ...record, restored, ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}), unmapped: tally.unmapped })
+        if (record.n === 0 && warned === 0 && restored === 0 && tally.unmapped === 0 && tally.exfil === 0) return
+        const hosts = [...tally.exfilHosts]
+        if (tally.exfil > 0) {
+          const left = tally.exfilBlocked > 0 ? `; ${tally.exfilBlocked} placeholders were left in them` : ''
+          this.#logger?.warn(`dsh-privacy-gateway: ${tally.exfil} tool calls had a value put back in arguments that name ${hosts.join(', ')}${left}`)
+        }
+        this.records.add({
+          ...record,
+          restored,
+          ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}),
+          unmapped: tally.unmapped,
+          ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
+          ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
+        })
       },
     }
   }

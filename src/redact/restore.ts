@@ -1,3 +1,4 @@
+import { externalHosts } from './guard.ts'
 import type { ValueTable } from './known.ts'
 import { asJSON, jsonEscape, KEPT, SIGNATURE_KEYS, walkJSON } from './json.ts'
 
@@ -23,11 +24,28 @@ export interface Tally {
   restored: Map<string, number>
   inTools: number
   unmapped: number
+  /** Tool calls whose arguments had a value put back and named a host off this machine (toolGuard warn or block). */
+  exfil: number
+  /** Places in those arguments left as placeholders (toolGuard block). */
+  exfilBlocked: number
+  /** The hosts they named. */
+  exfilHosts: Set<string>
 }
 
 export function newTally(): Tally {
-  return { restored: new Map(), inTools: 0, unmapped: 0 }
+  return { restored: new Map(), inTools: 0, unmapped: 0, exfil: 0, exfilBlocked: 0, exfilHosts: new Set() }
 }
+
+/**
+ * What is done with a tool call's arguments that would have a value put back
+ * and name a host off this machine (design §13 R15, docs/adr/0014): nothing
+ * but the count (off), a warning and a record (warn), or the placeholders
+ * left in them as they are (block).
+ */
+export type ToolGuard = 'off' | 'warn' | 'block'
+
+/** The most hosts a tally keeps. */
+const MAX_HOSTS = 8
 
 /** Keys a tool call's arguments sit under, in any vendor's reply. */
 const TOOL_PATH = /(?:^|\.)(?:tool_calls|function_call|functionCall|tool_use|args|arguments|input|partial_json)(?:\.|$)/
@@ -171,14 +189,29 @@ function sealedText(key: string, s: string): boolean {
  */
 export class Restorer {
   readonly #table: ValueTable
+  readonly #guard: ToolGuard
 
-  constructor(table: ValueTable) {
+  constructor(table: ValueTable, guard: ToolGuard = 'off') {
     this.#table = table
+    this.#guard = guard
   }
 
-  /** `escaped` is for text that is itself JSON (a tool call's arguments), where a value goes in escaped. */
-  restoreText(s: string, escaped = false, tally?: Tally, tool = false): string {
+  /**
+   * `escaped` is for text that is itself JSON (a tool call's arguments), where
+   * a value goes in escaped. `leave` puts nothing back: the places are counted
+   * as left (toolGuard block).
+   */
+  restoreText(s: string, escaped = false, tally?: Tally, tool = false, leave = false): string {
     if (this.#table.size === 0 || !s.includes('_')) return s
+    if (leave) {
+      const scratch = newTally()
+      this.restoreText(s, escaped, scratch, tool)
+      if (tally) {
+        for (const n of scratch.restored.values()) tally.exfilBlocked += n
+        tally.unmapped += scratch.unmapped
+      }
+      return s
+    }
     if (tally && s.includes('{{')) {
       for (const m of s.matchAll(STRICT)) if (this.#table.get(m[0]) === undefined) tally.unmapped++
     }
@@ -209,8 +242,32 @@ export class Restorer {
   restoreJSON(text: string, tally?: Tally): string {
     if (this.#table.size === 0 || !text.includes('_')) return text
     const type = typeOf(text)
-    const out = walkJSON(text, (path, key, s) => (SIGNATURE_KEYS.has(key) ? s : this.restoreText(s, asJSON(key, type), tally, inToolCall(path, key, type))))
+    const leave = this.#guard !== 'off' && this.#judge(toolText(text, type) ?? '', tally) && this.#guard === 'block'
+    const out = walkJSON(text, (path, key, s) => {
+      if (SIGNATURE_KEYS.has(key)) return s
+      const tool = inToolCall(path, key, type)
+      return this.restoreText(s, asJSON(key, type), tally, tool, leave && tool)
+    })
     return out ?? this.restoreText(text, false, tally)
+  }
+
+  /**
+   * Whether tool arguments `text` (as the vendor wrote them, placeholders in
+   * them) would have a value put back and name a host off this machine;
+   * counted in `tally` where they would.
+   */
+  #judge(text: string, tally?: Tally): boolean {
+    if (text === '') return false
+    const scratch = newTally()
+    const restored = this.restoreText(text, false, scratch, true)
+    if (scratch.restored.size === 0) return false
+    const hosts = externalHosts(restored)
+    if (hosts.length === 0) return false
+    if (tally) {
+      tally.exfil++
+      for (const h of hosts) if (tally.exfilHosts.size < MAX_HOSTS) tally.exfilHosts.add(h)
+    }
+    return true
   }
 
   /**
@@ -255,7 +312,7 @@ export class Restorer {
       pending = undefined
       return out
     }
-    const event = (ev: string): string => {
+    const event = (ev: string, leave = false): string => {
       if (!pending && this.#table.size === 0) return ev
       const e = splitEvent(ev)
       if (!e) return release() + this.restoreText(ev, false, tally)
@@ -290,11 +347,12 @@ export class Restorer {
             tails ??= new Map()
             cuts ??= new Map()
             tails.set(path, s.slice(s.length - n))
-            cuts.set(path, this.restoreText(s.slice(0, s.length - n), escaped))
+            cuts.set(path, this.restoreText(s.slice(0, s.length - n), escaped, undefined, false, leave && inToolCall(path, key, type)))
           }
         }
         // counted here only: whichever of full and cut goes out, the places are these
-        return this.restoreText(s, escaped, tally, inToolCall(path, key, type))
+        const tool = inToolCall(path, key, type)
+        return this.restoreText(s, escaped, tally, tool, leave && tool)
       })
       if (restored === null) return out + this.restoreText(ev, false, tally)
       const full = e.pre + restored + e.post
@@ -303,6 +361,31 @@ export class Restorer {
       const cutData = walkJSON(restored, (path, _k, s) => cutMap.get(path) ?? s) ?? restored
       pending = { ctx, tails, full, cut: e.pre + cutData + e.post }
       return out
+    }
+    // the tool arguments of the events in a row that have some: judged as one when the row ends (toolGuard)
+    const guard = this.#guard
+    let run: { text: string; held: string[] } | undefined
+    const closeRun = (): string => {
+      if (!run) return ''
+      const r = run
+      run = undefined
+      const leave = this.#judge(r.text, tally) && guard === 'block'
+      let out = ''
+      for (const ev of r.held) out += event(ev, leave)
+      return out
+    }
+    const route = (ev: string): string => {
+      if (guard === 'off' || this.#table.size === 0) return closeRun() + event(ev)
+      const t = eventToolText(ev)
+      if (t === undefined) return closeRun() + event(ev)
+      run ??= { text: '', held: [] }
+      run.text += t
+      // block holds the row until it ends, so nothing in it goes out restored before it is judged
+      if (guard === 'block') {
+        run.held.push(ev)
+        return ''
+      }
+      return event(ev)
     }
     const drain = (): string => {
       let out = ''
@@ -317,7 +400,7 @@ export class Restorer {
         if (i < 0) return out
         const ev = buf.slice(0, i + n)
         buf = buf.slice(i + n)
-        out += event(ev)
+        out += route(ev)
       }
     }
     return {
@@ -327,13 +410,36 @@ export class Restorer {
       },
       end: () => {
         buf += decoder.decode()
-        let out = drain() + release()
+        let out = drain()
+        out += closeRun()
+        out += release()
         if (buf !== '') out += this.restoreText(buf, false, tally)
         buf = ''
         return out
       },
     }
   }
+}
+
+/**
+ * The tool call arguments' strings of a JSON body, one after another, `sep`
+ * between them; undefined where it has none. A stream's pieces go on with no
+ * separator, so a URL split between two events reads whole.
+ */
+function toolText(data: string, type: string, sep = '\n'): string | undefined {
+  let t: string | undefined
+  walkJSON(data, (path, key, s) => {
+    if (s !== '' && !SIGNATURE_KEYS.has(key) && inToolCall(path, key, type)) t = (t ?? '') + s + sep
+    return s
+  })
+  return t
+}
+
+/** The tool call arguments' strings of one event; undefined where it has none. */
+function eventToolText(ev: string): string | undefined {
+  const e = splitEvent(ev)
+  if (!e) return undefined
+  return toolText(e.data, typeOf(e.data) || e.name, '')
 }
 
 /** A tail from { or {{ on: then spaces, a placeholder's body or the start of one, then spaces and one } at most. */

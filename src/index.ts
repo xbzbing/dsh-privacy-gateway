@@ -82,7 +82,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     keepRecords: cfg.keepRecords,
     logger: ctx.logger,
   })
-  const engine = new PrivacyEngine(key, cfg, { records })
+  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger })
   const face: PrivacyFace = {
     get active() {
       return engine.active

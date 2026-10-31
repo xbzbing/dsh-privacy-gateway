@@ -26,3 +26,4 @@
 | [ADR-0011](0011-command-and-statistics-card.md) | `/privacy` 命令与统计卡 | Accepted | 界面 |
 | [ADR-0012](0012-dispatcher-composition.md) | 网关下游按角色排序，并公开合成契约 | Accepted | 架构 |
 | [ADR-0013](0013-actions.md) | 按 kind 选动作：mask、warn、block | Accepted | 脱敏 |
+| [ADR-0014](0014-tool-guard.md) | 工具参数外带守卫：告警或不还原 | Accepted | 脱敏 |
