@@ -1,9 +1,12 @@
 /**
- * The Privacy tab of the session's right sidebar (docs/adr/0017): the same
- * statistics as the detail page's card, offered only while the config's
- * showPanel is on. The sidebar's registry is optional, so the type is
- * registered from a deferred injection rather than the plugin's own inject
- * list, and released when showPanel goes off.
+ * The Privacy tab of the conversation's view strip — the 「隐私保护」 tab beside
+ * Chat, Trajectory, Git and the rest (docs/adr/0017). It is the same card as
+ * the plugin's detail page, narrowed to the session the tab belongs to, and it
+ * exists only while the config's showPanel is on.
+ *
+ * A view registers through `conversation.view`, the same seat the Git panel
+ * takes; the strip renders one view at a time and passes the session it is
+ * showing.
  */
 import { createElement as h, Fragment } from 'react'
 import type { ReactNode } from 'react'
@@ -12,74 +15,11 @@ import { NS, type T } from './locales.ts'
 import type { ClientCtx } from './rpc.ts'
 import { StatsCard } from './StatsCard.ts'
 
-/** This type's identity in the tab system, and the key its body and title register under. */
-export const SIDEBAR_ID = 'dsh-privacy-gateway'
-/** What openTab names. */
-export const SIDEBAR_KIND = 'dsh-privacy-gateway'
+/** The view's identity in the strip, and the key its label registers under. */
+export const VIEW_ID = 'dsh-privacy-gateway'
 
-interface GuideEntry {
-  id: string
-  order: number
-  title: () => string
-  description?: () => string
-  icon?: (props: { size?: number; className?: string }) => ReactNode
-}
-
-interface TabDefinition {
-  id: string
-  kind: string
-  priority?: 'extension' | 'builtin' | 'fallback'
-  keepMounted?: boolean
-  title: (address: string) => string
-  guide?: GuideEntry[]
-}
-
-interface Registry {
-  register(definition: TabDefinition): () => void
-}
-
-interface Controller {
-  /** Opens the page type in this session's pane; undefined where the host has no controller. */
-  openTab(kind: string, options?: Record<string, unknown>): void
-}
-
-/** The controller that opens a page type, or undefined where the host offers none. */
-export function controllerOf(ctx: ClientCtx): Controller | undefined {
-  try {
-    const c = ctx.get('sidebarRight') as Controller | undefined
-    return c !== undefined && typeof c.openTab === 'function' ? c : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Open this plugin's page type. A registered type is only a candidate: the
- * right sidebar shows the tabs a session has opened, so the panel stays out of
- * the way until asked for (docs/adr/0017).
- */
-export function openPanelTab(ctx: ClientCtx): boolean {
-  const controller = controllerOf(ctx)
-  if (!controller) return false
-  try {
-    controller.openTab(SIDEBAR_KIND)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Why the last registration attempt failed, for the configuration page to show. */
+/** Why the last mount attempt failed, for the configuration page to show. */
 export let lastFailure: string | undefined
-
-export function registryOf(ctx: ClientCtx): Registry | undefined {
-  try {
-    const r = ctx.get('sidebarRightTabs') as Registry | undefined
-    return r !== undefined && typeof r.register === 'function' ? r : undefined
-  } catch {
-    return undefined
-  }
-}
 
 /** The plugin's shield, drawn in its own colours in both themes. */
 export function ShieldIcon(props: { size?: number; className?: string }): ReactNode {
@@ -97,63 +37,36 @@ export function ShieldIcon(props: { size?: number; className?: string }): ReactN
 }
 
 /**
- * Registers the tab type, its body and its title, rolled back as one; a
- * disposer, or undefined when the host has no right sidebar.
+ * Registers the view and its label, rolled back as one; a disposer, or
+ * undefined when the strip is not there to register with.
  */
-export function registerSidebarTab(ctx: ClientCtx, t: T): (() => void) | undefined {
+export function registerPanelView(ctx: ClientCtx, t: T): (() => void) | undefined {
   lastFailure = undefined
-  const registry = registryOf(ctx)
-  if (!registry) {
-    lastFailure = 'no sidebarRightTabs service'
-    return undefined
-  }
-  let releaseType: (() => void) | undefined
+  let release: (() => void) | undefined
   try {
-    releaseType = registry.register({
-      id: SIDEBAR_ID,
-      kind: SIDEBAR_KIND,
-      priority: 'extension',
-      title: () => t('panel.tab'),
-      guide: [{ id: 'privacy', order: 40, title: () => t('panel.tab'), description: () => t('panel.guide'), icon: ShieldIcon }],
-    })
+    const handle = ctx.slots.inject('conversation.view', () =>
+      ctx.slots.register(
+        // beside Chat (0), Trajectory (10) and Git (30)
+        { name: 'conversation.view', id: VIEW_ID, order: 40, locale: NS, label: () => h(Fragment, null, h(ShieldIcon, { size: 14, className: 'pgw-tab-icon' }), h('span', null, t('panel.tab'))) },
+        (props: { sessionId?: string }) => h(StatsCard, { ctx, t, panel: true, ...(props?.sessionId ? { sessionId: props.sessionId } : {}) }),
+      ),
+    )
+    if (typeof handle !== 'function') {
+      lastFailure = 'slots.inject returned no disposer'
+      return undefined
+    }
+    release = handle as () => void
   } catch (err) {
     lastFailure = err instanceof Error ? err.message : String(err)
     return undefined
   }
-  const releases: Array<() => void> = []
-  const rollback = (): void => {
-    for (const r of [...releases].reverse()) {
-      try {
-        r()
-      } catch {
-        // already gone
-      }
-    }
-    releases.length = 0
+  return () => {
+    const r = release
+    release = undefined
     try {
-      releaseType?.()
+      r?.()
     } catch {
       // already gone
     }
-    releaseType = undefined
   }
-  try {
-    const body = ctx.slots.inject('sidebar.right.pane.tab', () =>
-      ctx.slots.register({ name: 'sidebar.right.pane.tab', key: SIDEBAR_ID, locale: NS }, (props: { sessionId?: string }) =>
-        h(StatsCard, { ctx, t, panel: true, ...(props?.sessionId ? { sessionId: props.sessionId } : {}) }),
-      ),
-    )
-    if (typeof body === 'function') releases.push(body as () => void)
-    const title = ctx.slots.inject('sidebar.right.pane.tab.title', () =>
-      ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: SIDEBAR_ID }, () =>
-        h(Fragment, null, h(ShieldIcon, { size: 16, className: 'pgw-tab-icon' }), h('span', null, t('panel.tab'))),
-      ),
-    )
-    if (typeof title === 'function') releases.push(title as () => void)
-  } catch (err) {
-    lastFailure = err instanceof Error ? err.message : String(err)
-    rollback()
-    return undefined
-  }
-  return rollback
 }

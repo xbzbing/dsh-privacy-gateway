@@ -56,7 +56,7 @@ In the default web profile a first install takes effect immediately, with no res
 | `keepMegabytes` | `100` | Megabytes of records kept; past it, the oldest days are deleted |
 | `keepRecords` | `500` | Latest records kept in memory |
 | `vendorView` | `false` | Keep in memory the body each recorded request went out with, for the side-by-side view in the statistics card; at most 100 bodies and 64 MiB in all, never on disk ([ADR-0016](docs/adr/0016-vendor-view.md)) |
-| `showPanel` | `false` | Offer a Privacy tab in the session's right sidebar; the row's Configure page on the plugin's page has a switch for it that takes effect at once ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
+| `showPanel` | `false` | Offer a Privacy tab at the top of the session (after Chat / Trajectory / Git) with this session's records and counts; the row's Configure page on the plugin's page has a switch for it that takes effect at once ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
 
 ## The `/privacy` command
 
@@ -77,7 +77,7 @@ The head keeps a few characters to recognize it by: a key with a prefix keeps th
 
 Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
 
-The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. With `showPanel` on, the same view is a Privacy tab in the session's right sidebar.
+The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. With `showPanel` on, the same view is a Privacy tab at the top of the session, counting only that session.
 
 With `vendorView` on, a record's details have a Vendor view button: on the right the body the vendor got, on the left the same body with each replaced place shown as a "kind · head · length" marker; by default only the lines with replacements are listed. Neither side has a value in it; a value a warn action sent as written is a placeholder in the copy too.
 

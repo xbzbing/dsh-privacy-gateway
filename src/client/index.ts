@@ -13,7 +13,7 @@ import { ConfigSection, type RowForm } from './ConfigSection.ts'
 import { DICTIONARIES, NS, type T } from './locales.ts'
 import { watchShowPanel } from './panelConfig.ts'
 import type { ClientCtx } from './rpc.ts'
-import { openPanelTab, registerSidebarTab, registryOf } from './sidebar.ts'
+import { registerPanelView } from './sidebar.ts'
 import { StatsCard } from './StatsCard.ts'
 import { ensureStyles } from './styles.ts'
 
@@ -60,27 +60,17 @@ function apply(ctx: ClientCtx): void {
     return typeof handle === 'function' ? (handle as () => void) : undefined
   }, 'dsh-privacy-gateway: configuration (row page)')
 
-  // the sidebar tab: registered while showPanel is on and the sidebar's registry is there
+  // the view tab in the conversation's strip, registered while showPanel is on (docs/adr/0017)
   let want = false
   let release: (() => void) | undefined
-  let sidebarCtx: ClientCtx | undefined
   const unmount = (): void => {
     const r = release
     release = undefined
     r?.()
   }
-  // opening the pane is user-visible, so it happens once per turn-on, not on every reconcile
-  let opened = false
   const reconcile = (): void => {
-    const target = sidebarCtx ?? ctx
-    if (want && !release && registryOf(target)) {
-      release = registerSidebarTab(target, t)
-      // only a successful open counts: a session whose sidebar was not adopted yet gets another try
-      if (release && !opened) opened = openPanelTab(target)
-    } else if (!want) {
-      opened = false
-      unmount()
-    }
+    if (want && !release) release = registerPanelView(ctx, t)
+    else if (!want) unmount()
   }
   ctx.effect(() => {
     const stop = watchShowPanel(ctx, (on) => {
@@ -92,16 +82,7 @@ function apply(ctx: ClientCtx): void {
       want = false
       unmount()
     }
-  }, 'dsh-privacy-gateway: sidebar tab')
-  // the registry may come after this plugin, or never: waited for apart from the plugin's own inject list
-  ctx.inject?.(['sidebarRightTabs'], (child) => {
-    sidebarCtx = child
-    reconcile()
-    child.effect(() => () => {
-      if (sidebarCtx === child) sidebarCtx = undefined
-      unmount()
-    }, 'dsh-privacy-gateway: sidebar registry')
-  })
+  }, 'dsh-privacy-gateway: view tab')
 }
 
 module.exports = { name, inject, apply }

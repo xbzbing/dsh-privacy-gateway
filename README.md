@@ -56,7 +56,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | `keepMegabytes` | `100` | 记录总量上限（MB），超了从最老的一天删 |
 | `keepRecords` | `500` | 内存里保留的最近记录条数 |
 | `vendorView` | `false` | 在内存里留最近记录的请求实际发出的 body，统计卡里可以左右对照；最多 100 份、共 64 MiB，不落盘（[ADR-0016](docs/adr/0016-vendor-view.md)） |
-| `showPanel` | `false` | 在会话右侧栏提供「隐私保护」标签页；插件页面里该行的「配置」页上有开关，改了即时生效（[ADR-0017](docs/adr/0017-sidebar-panel.md)） |
+| `showPanel` | `false` | 在会话顶部提供「隐私保护」标签页（对话 / 轨迹 / Git 之后），内容是本会话的记录与统计；插件页面里该行的「配置」页上有开关，改了即时生效（[ADR-0017](docs/adr/0017-sidebar-panel.md)） |
 
 ## `/privacy` 命令
 
@@ -77,7 +77,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 记录按天写在 `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`，目录 0700、文件 0600。写盘失败只告警，不影响请求。
 
-插件详情页下方有一张统计卡：今日 / 7 天 / 30 天切换，计数、按 kind / finder / host 的分布、最近 200 条记录（每页 10 条，每条带着工作区 · 会话标题），点开一条看每个值的明细。打开 `showPanel` 后，同样的内容也出现在会话右侧栏的「隐私保护」标签页里。
+插件详情页下方有一张统计卡：今日 / 7 天 / 30 天切换，计数、按 kind / finder / host 的分布、最近 200 条记录（每页 10 条，每条带着工作区 · 会话标题），点开一条看每个值的明细。打开 `showPanel` 后，同样的内容也出现在会话顶部的「隐私保护」标签页里，只统计当前会话。
 
 打开 `vendorView` 后，记录明细里多一个「厂商视角」按钮：右边是厂商实际收到的 body，左边是同一份 body 里每个替换处换成「kind · 开头 · 长度」的标记，默认只列有替换的行。两边都不出现真值，warn 照发的值在副本里也换成了占位符。
 
