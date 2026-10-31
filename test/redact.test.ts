@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { loadKey, tagOf } from '../src/redact/key.ts'
 import { ValueTable } from '../src/redact/known.ts'
 import { Masker, type MaskOptions } from '../src/redact/mask.ts'
-import { Restorer } from '../src/redact/restore.ts'
+import { newTally, Restorer } from '../src/redact/restore.ts'
 import { notASlug } from '../src/redact/rules.ts'
 
 // Built from pieces so no literal in the repository reads as a live credential.
@@ -40,7 +40,7 @@ test('sk- slugs in article URLs are no keys; keys beside them are', () => {
     'https://www.cnbc.com/2026/10/28/sk-hynix-third-quarter-profit.html',
     'https://www.techpowerup.com/354203/sk-hynix-announces-3q26-financial-results',
   ]) {
-    assert.deepEqual(masker.maskText(s), { text: s, n: 0 })
+    assert.deepEqual(masker.maskText(s), { text: s, n: 0, hits: [] })
   }
   for (const key of [
     OPENAI,
@@ -68,7 +68,7 @@ test('placeholders are deterministic, idempotent, and stable across a restart wi
   const b = setup(all, key)
   const once = a.masker.maskText(`key ${OPENAI}`).text
   assert.equal(b.masker.maskText(`key ${OPENAI}`).text, once)
-  assert.deepEqual(a.masker.maskText(once), { text: once, n: 0 })
+  assert.deepEqual(a.masker.maskText(once), { text: once, n: 0, hits: [] })
   assert.notEqual(tagOf(key, 'API_KEY', OPENAI), tagOf(key, 'API_KEY', `${OPENAI}x`))
   assert.notEqual(setup().masker.maskText(`key ${OPENAI}`).text, once)
 })
@@ -203,4 +203,36 @@ test('the value table drops its oldest half when full', () => {
   assert.equal(table.get('{{K_0}}'), undefined)
   assert.equal(table.get('{{K_99}}'), 'v99')
   assert.equal(table.get('{{K_new}}'), 'new')
+})
+
+test('a placeholder split across two SSE deltas is put back whole, at every split point', () => {
+  const { masker, restorer } = setup()
+  const p = masker.placeholder('API_KEY', OPENAI)
+  const ev = (text: string) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text } }] })}\n\n`
+  for (let cut = 1; cut < p.length; cut++) {
+    const sse = `${ev(`key ${p.slice(0, cut)}`)}: keep-alive\n\n${ev(`${p.slice(cut)} done`)}data: [DONE]\n\n`
+    const s = restorer.stream()
+    const out = s.push(Buffer.from(sse)) + s.end()
+    const text = [...out.matchAll(/^data: (\{.*\})$/gm)].map((m) => (JSON.parse(m[1] as string) as { choices: Array<{ delta: { content: string } }> }).choices[0]?.delta.content).join('')
+    assert.equal(text, `key ${OPENAI} done`, `cut at ${cut}`)
+    assert.ok(out.includes(': keep-alive\n\n') && out.endsWith('data: [DONE]\n\n'))
+  }
+})
+
+test('a held tail goes out as it came when the next event is another text', () => {
+  const { masker, restorer } = setup()
+  masker.placeholder('API_KEY', OPENAI)
+  const a = `data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'see {{API_' } })}\n\n`
+  const b = `data: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`
+  const s = restorer.stream()
+  assert.equal(s.push(Buffer.from(a + b)) + s.end(), a + b)
+})
+
+test('the tally counts places restored and placeholders no value is known for', () => {
+  const { masker, restorer } = setup()
+  const p = masker.placeholder('API_KEY', OPENAI)
+  const tally = newTally()
+  restorer.restoreJSON(JSON.stringify({ content: `${p} and ${p} and {{API_KEY_aaaaaaaa}}` }), tally)
+  assert.equal(tally.restored.get(p), 2)
+  assert.equal(tally.unmapped, 1)
 })

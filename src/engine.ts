@@ -24,8 +24,12 @@ export class PrivacyEngine implements RedactionEngine {
     this.#table = new ValueTable(config.maxValues)
     this.#masker = new Masker(key, this.#table, {
       secrets: config.secrets,
+      personal: config.personal,
       protectEnvBlock: config.protectEnvBlock,
       protectTools: config.protectTools,
+      words: config.words,
+      allow: config.allow,
+      cookies: { names: config.cookieNames, keep: config.cookieKeep },
     })
     this.#restorer = new Restorer(this.#table)
   }

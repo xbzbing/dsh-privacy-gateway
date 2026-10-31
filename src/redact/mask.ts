@@ -1,42 +1,47 @@
+import { cookieSpans, type CookieOptions } from './cookie.ts'
+import { hint, inStrings, lowerASCII, outsideEscapes, ruleSpans, SentMemo, unescapedView, wordSpans } from './find.ts'
+import { noIDs, noNumbers, PERSONAL_KINDS, type Finder, type Found } from './ids.ts'
 import { tagOf } from './key.ts'
-import type { ValueTable } from './known.ts'
-import { secretRules, type Rule } from './rules.ts'
-import { asJSON, walkJSON } from './json.ts'
+import type { KnownSpan, ValueTable } from './known.ts'
+import { rules } from './rules.ts'
+import { asJSON, KEPT, walkJSON } from './json.ts'
 import { envBlockRanges, TOOL_ROOTS, under, type Range } from '../protect.ts'
 
 export interface MaskOptions {
+  /** API keys, tokens, passwords, private keys, cookies. */
   secrets: boolean
+  /** Emails, phone numbers, ID and bank card numbers. */
+  personal?: boolean
   protectEnvBlock: boolean
   protectTools: boolean
+  /** The user's own words (a project's code name), masked wherever they are, as written. */
+  words?: readonly string[]
+  /** Values sent as written whichever finder finds them: each a whole value, in any case. */
+  allow?: readonly string[]
+  cookies?: CookieOptions
 }
 
-interface Span {
-  start: number
-  end: number
+/** One value masked, as the record keeps it: never the value itself. */
+export interface Hit {
+  placeholder: string
   kind: string
+  by: Finder
+  /** Its first character, a key's prefix (sk-) or a cookie's name. */
+  head: string
+  len: number
 }
 
 export interface MaskResult {
   text: string
   /** How many values were swapped for placeholders. */
   n: number
+  hits: Hit[]
+  /** The request body's `model`, where it names one (maskJSON). */
+  model?: string
 }
 
 /** A placeholder as the masker writes it. */
 const PLACEHOLDER_RE = /\{\{[A-Z][A-Z0-9_]*_[a-z2-7]{8}\}\}/g
-
-/**
- * Keys whose strings the vendor needs as they are: ids, names and kinds, and
- * what is sealed or encoded. magpie json.go `kept`: a tool's name masked is a
- * 400 on every turn that replays the call.
- */
-const KEPT = new Set([
-  'signature', 'encrypted_content', 'data', 'thoughtSignature', 'thought_signature',
-  'model', 'id', 'tool_use_id', 'call_id', 'item_id', 'type', 'role',
-  'name', 'namespace', 'server_label', 'server_name', 'previous_response_id', 'prompt_cache_key', 'media_type', 'mime_type',
-  'mimeType', 'url', 'image_url', 'file_id', 'reasoning_effort', 'effort',
-  'stop_reason', 'finish_reason', 'status', 'object', 'event',
-])
 
 /** A key holding an identifier the vendor matches against another (tool_call_id against its call's id). */
 function isID(key: string): boolean {
@@ -115,163 +120,8 @@ function keepIn(path: string, key: string, s: string, args: string[], defs: stri
   return KEPT.has(key) || isID(key)
 }
 
-/**
- * `s`, JSON text, as long as `s` and read as the vendor reads it once
- * unescaped, as far as the finders tell: the letter of \n, \t, \r, \b, \f is
- * read as a line break and a \u escape's u and digits too, so none of them
- * starts or ends a key (magpie `unescapedView`).
- */
-function unescapedView(s: string): string {
-  if (!s.includes('\\')) return s
-  const b = s.split('')
-  for (let i = 0; i + 1 < b.length; i++) {
-    if (b[i] !== '\\') continue
-    i++
-    switch (b[i]) {
-      case 'n': case 'b': case 'f': b[i] = '\n'; break
-      case 'r': b[i] = '\r'; break
-      case 't': b[i] = '\t'; break
-      case 'u':
-        for (let j = i; j < i + 5 && j < b.length; j++) b[j] = '\n'
-        i += 4
-        break
-    }
-  }
-  return b.join('')
-}
-
-/** `found` with no value starting or ending inside one of the escapes of `s`: each is cut back to the escape's edge. */
-function outsideEscapes(s: string, found: Span[]): Span[] {
-  if (found.length === 0 || !s.includes('\\')) return found
-  // inside[i] for i past an escape's backslash: [where the escape's letters start, where it ends]
-  const inside: Array<[number, number] | undefined> = new Array(s.length + 1)
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] !== '\\') continue
-    const end = Math.min(i + (s[i + 1] === 'u' ? 6 : 2), s.length)
-    for (let j = i + 1; j < end; j++) inside[j] = [i + 1, end]
-    i = end - 1
-  }
-  const out: Span[] = []
-  for (const f of found) {
-    let { start, end } = f
-    const a = inside[start]
-    if (a) start = a[1]
-    const z = inside[end]
-    if (z) end = z[0] - 1
-    if (start < end) out.push({ ...f, start, end })
-  }
-  return out
-}
-
-function findSpans(s: string, rules: readonly Rule[]): Span[] {
-  const found: Span[] = []
-  for (const r of rules) {
-    if (r.markers.length > 0 && !r.markers.some((m) => s.includes(m))) continue
-    for (const m of s.matchAll(r.re)) {
-      const start = m.index
-      const end = start + m[0].length
-      if (r.bound && ((start > 0 && r.bound.includes(s[start - 1] as string)) || (end < s.length && r.bound.includes(s[end] as string)))) {
-        continue
-      }
-      if (r.ok && !r.ok(m[0])) continue
-      found.push({ start, end, kind: r.kind })
-    }
-  }
-  return found
-}
-
-function overlaps(f: Span, r: Range): boolean {
+function overlaps(f: { start: number; end: number }, r: Range): boolean {
   return f.start < r.end && f.end > r.start
-}
-
-/**
- * Swaps the secrets of a model request for placeholders, by magpie's
- * semantics (internal/redact/redact.go `mask`, json.go `MaskJSON`).
- */
-export class Masker {
-  readonly #key: Uint8Array
-  readonly #table: ValueTable
-  readonly #options: MaskOptions
-
-  constructor(key: Uint8Array, table: ValueTable, options: MaskOptions) {
-    this.#key = key
-    this.#table = table
-    this.#options = options
-  }
-
-  /** The placeholder `value` of `kind` goes as, remembered for the reply. */
-  placeholder(kind: string, value: string): string {
-    const p = tagOf(this.#key, kind, value)
-    this.#table.put(p, kind, value)
-    return p
-  }
-
-  /**
-   * Masks one string. `escaped` says it holds JSON text of its own (a tool
-   * call's arguments): the finders read it as the vendor does, no value starts
-   * or ends inside an escape, and what is remembered is the value unescaped,
-   * so the reply gets back what the agent wrote. Nothing inside `keep` is
-   * touched.
-   */
-  maskText(raw: string, escaped = false, keep: readonly Range[] = []): MaskResult {
-    if (raw.length < 3 || !this.#options.secrets) return { text: raw, n: 0 }
-    const s = escaped ? unescapedView(raw) : raw
-    let found = findSpans(s, secretRules)
-    if (escaped) found = outsideEscapes(raw, found)
-    if (found.length === 0) return { text: raw, n: 0 }
-    // nothing inside a placeholder already there: masking again changes nothing
-    const fixed: Range[] = [...keep]
-    if (raw.includes('{{')) {
-      for (const m of raw.matchAll(PLACEHOLDER_RE)) fixed.push({ start: m.index, end: m.index + m[0].length })
-    }
-    found = found.filter((f) => !fixed.some((r) => overlaps(f, r)))
-    // the first to start, and of those the longest, wins where they overlap
-    found.sort((a, b) => a.start - b.start || b.end - a.end)
-    const out: string[] = []
-    let last = 0
-    let next = 0
-    let n = 0
-    for (const f of found) {
-      if (f.start < next) continue
-      next = f.end
-      out.push(raw.slice(last, f.start), this.placeholder(f.kind, escaped ? unescaped(raw.slice(f.start, f.end)) : raw.slice(f.start, f.end)))
-      last = f.end
-      n++
-    }
-    if (n === 0) return { text: raw, n: 0 }
-    out.push(raw.slice(last))
-    return { text: out.join(''), n }
-  }
-
-  /**
-   * Masks the strings of a request body. Null when the body is not JSON or
-   * not a model request: the gateway sends those as they are. Ids, names and
-   * kinds, the request's own definitions (but their descriptions), the tool
-   * definitions and `<env>` blocks where protected (docs/adr/0004) are left.
-   */
-  maskJSON(body: string): MaskResult | null {
-    let doc: unknown
-    try {
-      doc = JSON.parse(body)
-    } catch {
-      return null
-    }
-    if (!isModelRequest(doc)) return null
-    const args = argPaths(doc, body)
-    const defs = definitions(doc)
-    const { protectTools, protectEnvBlock } = this.#options
-    let n = 0
-    const out = walkJSON(body, (path, key, s) => {
-      if (protectTools && under(path, TOOL_ROOTS)) return s
-      if (keepIn(path, key, s, args, defs)) return s
-      const r = this.maskText(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [])
-      n += r.n
-      return r.text
-    })
-    // JSON.parse took it, so the walker must too: anything else is our bug
-    if (out === null) throw new Error('request body is JSON but could not be walked')
-    return { text: out, n }
-  }
 }
 
 /** A value found in JSON text, as the vendor and the agent read it: a JSON string's text unescaped. */
@@ -282,5 +132,157 @@ function unescaped(v: string): string {
     return typeof u === 'string' ? u : v
   } catch {
     return v
+  }
+}
+
+/** Where one string is masked: the host it goes to (SentMemo), and whether nothing is remembered (a preview). */
+interface Pass {
+  route: string
+  preview: boolean
+  hits: Hit[]
+}
+
+/**
+ * Swaps the secrets of a model request for placeholders, by magpie's
+ * semantics (internal/redact/redact.go `mask`, json.go `MaskJSON`).
+ */
+export class Masker {
+  readonly #key: Uint8Array
+  readonly #table: ValueTable
+  readonly #options: MaskOptions
+  readonly #memo: SentMemo
+  readonly #allow: Set<string>
+  readonly #fingerprint: string
+
+  constructor(key: Uint8Array, table: ValueTable, options: MaskOptions, memo: SentMemo = new SentMemo()) {
+    this.#key = key
+    this.#table = table
+    this.#options = options
+    this.#memo = memo
+    this.#allow = new Set((options.allow ?? []).map((a) => a.trim().toLowerCase()).filter((a) => a !== ''))
+    this.#fingerprint = `${options.secrets ? 1 : 0}${options.personal ? 1 : 0}`
+  }
+
+  /** The placeholder `value` of `kind` goes as, remembered for the reply. */
+  placeholder(kind: string, value: string): string {
+    const p = tagOf(this.#key, kind, value)
+    this.#table.put(p, kind, value)
+    return p
+  }
+
+  #covers = (kind: string): boolean => {
+    if (kind === 'TERM') return true
+    return PERSONAL_KINDS.has(kind) ? this.#options.personal === true : this.#options.secrets
+  }
+
+  /**
+   * Masks one string. `escaped` says it holds JSON text of its own (a tool
+   * call's arguments): the finders read it as the vendor does, no value starts
+   * or ends inside an escape or crosses a string's quote, and what is
+   * remembered is the value unescaped, so the reply gets back what the agent
+   * wrote. Nothing inside `keep` is touched.
+   */
+  maskText(raw: string, escaped = false, keep: readonly Range[] = []): MaskResult {
+    const pass: Pass = { route: '', preview: false, hits: [] }
+    const r = this.#mask(raw, escaped, keep, pass)
+    return { ...r, hits: pass.hits }
+  }
+
+  /** maskText with nothing remembered: each value goes as the placeholder it would have (`/privacy test`). */
+  preview(raw: string): MaskResult {
+    const pass: Pass = { route: '', preview: true, hits: [] }
+    const r = this.#mask(raw, false, [], pass)
+    return { ...r, hits: pass.hits }
+  }
+
+  #find(raw: string, s: string, escaped: boolean, pass: Pass): Found[] {
+    const o = this.#options
+    let low: string | undefined
+    const lower = (): string => (low ??= lowerASCII(s))
+    // a cookie's value is one value however else it reads (a JWT in it, token=…): by its context first
+    const cookies = o.secrets ? cookieSpans(s, o.cookies, lower) : []
+    let found: Found[] = o.words && o.words.length > 0 ? wordSpans(s, o.words) : []
+    for (const r of rules) {
+      if (r.cat === 'secret' ? !o.secrets : !o.personal) continue
+      found.push(...ruleSpans(r, s, lower))
+    }
+    if (o.secrets || o.personal) {
+      const known = (): KnownSpan[] => this.#table.knownSpans(s, this.#covers)
+      const spans = pass.preview ? known() : this.#memo.spans(pass.route, this.#fingerprint, s, known)
+      for (const k of spans) found.push({ ...k, by: 'known' })
+    }
+    if (cookies.length > 0) found = [...cookies, ...found.filter((f) => f.by === 'word' || !cookies.some((c) => overlaps(f, c)))]
+    if (escaped) found = inStrings(raw, outsideEscapes(raw, found))
+    return noNumbers(s, noIDs(s, found))
+  }
+
+  #mask(raw: string, escaped: boolean, keep: readonly Range[], pass: Pass): { text: string; n: number } {
+    const o = this.#options
+    if (raw.length < 3 || (!o.secrets && !o.personal && !(o.words && o.words.length > 0))) return { text: raw, n: 0 }
+    const s = escaped ? unescapedView(raw) : raw
+    let found = this.#find(raw, s, escaped, pass)
+    if (found.length === 0) return { text: raw, n: 0 }
+    // nothing inside a placeholder already there: masking again changes nothing
+    const fixed: Range[] = [...keep]
+    if (raw.includes('{{')) {
+      for (const m of raw.matchAll(PLACEHOLDER_RE)) fixed.push({ start: m.index, end: m.index + m[0].length })
+    }
+    if (fixed.length > 0) found = found.filter((f) => !fixed.some((r) => overlaps(f, r)))
+    // the first to start, and of those the longest, wins where they overlap;
+    // of two the same, the one found first (a key in API_KEY=… is an API_KEY)
+    found.sort((a, b) => a.start - b.start || b.end - a.end)
+    const out: string[] = []
+    let last = 0
+    let next = 0
+    let n = 0
+    for (const f of found) {
+      if (f.start < next) continue
+      next = f.end
+      const written = raw.slice(f.start, f.end)
+      const v = escaped ? unescaped(written) : written
+      if (this.#allow.has(v.toLowerCase())) continue
+      const p = pass.preview ? tagOf(this.#key, f.kind, v) : this.placeholder(f.kind, v)
+      out.push(raw.slice(last, f.start), f.bare ? `"${p}"` : p)
+      const h = hint(f.kind, v, PERSONAL_KINDS.has(f.kind))
+      pass.hits.push({ placeholder: p, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len })
+      last = f.end
+      n++
+    }
+    if (n === 0) return { text: raw, n: 0 }
+    out.push(raw.slice(last))
+    return { text: out.join(''), n }
+  }
+
+  /**
+   * Masks the strings of a request body going to `route` (its host). Null
+   * when the body is not JSON or not a model request: the gateway sends those
+   * as they are. Ids, names and kinds, the request's own definitions (but
+   * their descriptions), the tool definitions and `<env>` blocks where
+   * protected (docs/adr/0004) are left.
+   */
+  maskJSON(body: string, route = ''): MaskResult | null {
+    let doc: unknown
+    try {
+      doc = JSON.parse(body)
+    } catch {
+      return null
+    }
+    if (!isModelRequest(doc)) return null
+    const args = argPaths(doc, body)
+    const defs = definitions(doc)
+    const { protectTools, protectEnvBlock } = this.#options
+    const pass: Pass = { route, preview: false, hits: [] }
+    let n = 0
+    const out = walkJSON(body, (path, key, s) => {
+      if (protectTools && under(path, TOOL_ROOTS)) return s
+      if (keepIn(path, key, s, args, defs)) return s
+      const r = this.#mask(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [], pass)
+      n += r.n
+      return r.text
+    })
+    // JSON.parse took it, so the walker must too: anything else is our bug
+    if (out === null) throw new Error('request body is JSON but could not be walked')
+    const model = typeof doc.model === 'string' ? doc.model : undefined
+    return model === undefined ? { text: out, n, hits: pass.hits } : { text: out, n, hits: pass.hits, model }
   }
 }

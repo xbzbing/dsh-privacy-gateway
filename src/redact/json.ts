@@ -127,3 +127,19 @@ export function jsonEscape(s: string): string {
 export function asJSON(key: string, eventType: string): boolean {
   return key === 'arguments' || key === 'partial_json' || (key === 'delta' && eventType.includes('arguments'))
 }
+
+/**
+ * Keys whose strings the vendor needs as they are: ids, names and kinds, and
+ * what is sealed or encoded. magpie json.go `kept`: a tool's name masked is a
+ * 400 on every turn that replays the call.
+ */
+export const KEPT = new Set([
+  'signature', 'encrypted_content', 'data', 'thoughtSignature', 'thought_signature',
+  'model', 'id', 'tool_use_id', 'call_id', 'item_id', 'type', 'role',
+  'name', 'namespace', 'server_label', 'server_name', 'previous_response_id', 'prompt_cache_key', 'media_type', 'mime_type',
+  'mimeType', 'url', 'image_url', 'file_id', 'reasoning_effort', 'effort',
+  'stop_reason', 'finish_reason', 'status', 'object', 'event',
+])
+
+/** Keys whose strings a vendor sealed with a signature: they go back exactly as it wrote them. */
+export const SIGNATURE_KEYS = new Set(['signature', 'thoughtSignature', 'thought_signature', 'encrypted_content'])
