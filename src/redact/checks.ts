@@ -9,8 +9,6 @@ export const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 export const TOKEN_CH = ALNUM + '_-'
 export const DIGITS = '0123456789'
 
-const has = (set: string, c: string | undefined): boolean => c !== undefined && c !== '' && set.includes(c)
-const isLetter = (c: string): boolean => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 const hasLetter = (v: string): boolean => /[A-Za-z]/.test(v)
 const hasDigit = (v: string): boolean => /[0-9]/.test(v)
 const onlyOf = (v: string, set: string): boolean => [...v].every((c) => set.includes(c))
@@ -229,7 +227,7 @@ export function fieldAt(s: string, a: number, b: number): boolean {
   return !fileField(s, a) && !LINE_REF.test(v) && !pathValue(v) && !namesASecret(v) && !skillName(s, a, b) && !versionValue(v)
 }
 
-export { has, isLetter, trimEnd, trimStart }
+export { trimEnd, trimStart }
 
 /** A field's name's words in lower case: next_page_token, nextPageToken and X-Next-Page-Token are next, page, token. */
 export function nameWords(name: string): string[] {

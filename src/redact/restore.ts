@@ -1,3 +1,4 @@
+import { isWordChar } from './checks.ts'
 import { externalHosts } from './guard.ts'
 import type { ValueTable } from './known.ts'
 import { asJSON, jsonEscape, KEPT, SIGNATURE_KEYS, walkJSON } from './json.ts'
@@ -59,10 +60,6 @@ const TOOL_PATH = /(?:^|\.)(?:tool_calls|function_call|functionCall|tool_use|arg
  */
 export function inToolCall(path: string, key: string, type: string): boolean {
   return asJSON(key, type) || TOOL_PATH.test(path) || (key === 'delta' && type.includes('custom_tool_call_input'))
-}
-
-function isWordChar(c: string | undefined): boolean {
-  return c !== undefined && /[A-Za-z0-9_]/.test(c)
 }
 
 /** The placeholder the masker wrote for `body`, whatever its case. */
@@ -348,7 +345,8 @@ export class Restorer {
     let i = s.length
     while (i > 0 && isWordChar(s[i - 1])) i--
     const w = s.slice(i)
-    if (w === '' || w.length > 24 + 9 || !/[A-Z]/.test(w[0] as string)) return 0
+    // any case: a body typed back as api_key_… is still a placeholder, and a stream may split it
+    if (w === '' || w.length > 24 + 9 || !/[A-Za-z]/.test(w[0] as string)) return 0
     const u = w.toUpperCase()
     for (const kind of this.#table.kinds()) {
       const k = `${kind}_`

@@ -223,6 +223,19 @@ test('a placeholder split across two SSE deltas is put back whole, at every spli
   }
 })
 
+test('a lowercase body split across two SSE deltas is held and put back whole', () => {
+  const { masker, restorer } = setup()
+  const body = masker.placeholder('API_KEY', OPENAI).slice(2, -2).toLowerCase()
+  const ev = (text: string) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text } }] })}\n\n`
+  for (let cut = 1; cut < body.length; cut++) {
+    const sse = `${ev(`key ${body.slice(0, cut)}`)}${ev(`${body.slice(cut)} done`)}data: [DONE]\n\n`
+    const s = restorer.stream()
+    const out = s.push(Buffer.from(sse)) + s.end()
+    const text = [...out.matchAll(/^data: (\{.*\})$/gm)].map((m) => (JSON.parse(m[1] as string) as { choices: Array<{ delta: { content: string } }> }).choices[0]?.delta.content).join('')
+    assert.equal(text, `key ${OPENAI} done`, `cut at ${cut}`)
+  }
+})
+
 test('a held tail goes out as it came when the next event is another text', () => {
   const { masker, restorer } = setup()
   masker.placeholder('API_KEY', OPENAI)

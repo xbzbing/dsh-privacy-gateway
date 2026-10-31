@@ -190,4 +190,3 @@ export const rules: readonly Rule[] = [
 ]
 
 /** The secret rules alone: the three P0 key forms and the rest (kept for callers that want only them). */
-export const secretRules: readonly Rule[] = rules.filter((r) => r.cat === 'secret')

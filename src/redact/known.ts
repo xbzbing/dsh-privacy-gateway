@@ -82,9 +82,6 @@ export class ValueTable {
   #shapeBits = new Uint32Array(BITS / 32)
   /** The made-up keys in order, for the stream's tail; undefined until asked for after a change. */
   #shapeSorted: string[] | undefined
-  /** Changes whenever the known index does: a remembered known match is good only at the generation it was made at. */
-  generation = 0
-
   constructor(maxValues: number) {
     this.maxValues = maxValues
   }
@@ -230,7 +227,6 @@ export class ValueTable {
         // one value under two kinds: the same one wins whichever came first
         if (p < (bucket[i] as KnownValue).p) {
           bucket[i] = { v, p, kind }
-          this.generation++
         }
         return
       }
@@ -240,7 +236,6 @@ export class ValueTable {
     }
     const g = gram(v, 0)
     this.#bits[g >>> 5] = ((this.#bits[g >>> 5] as number) | (1 << (g & 31))) >>> 0
-    this.generation++
   }
 
   #makeRoom(): void {
@@ -257,7 +252,6 @@ export class ValueTable {
     this.#shapeHeads = new Map()
     this.#shapeBits.fill(0)
     this.#shapeSorted = undefined
-    this.generation++
     for (const [p, v] of this.#values) {
       const shapeKind = shapes.get(p)
       if (shapeKind !== undefined) this.#addShape(p, shapeKind)
