@@ -9,8 +9,8 @@
 
 ## Decision
 
-- 配置 `showPanel`，默认 `false`。打开后，会话顶部的视图标签里多一个「隐私保护」（英文 Privacy），排在「对话」「轨迹」「Git」之后（`conversation.view`，order 40）；内容与详情页的统计卡相同，只是去掉卡片边框和标题，并只统计本会话。
-- 注册照 dsh-git-panel 的三步：标签类型（`sidebarRightTabs.register`）、`sidebar.right.pane.tab` 的主体、`sidebar.right.pane.tab.title` 的标题，三者一起注册、一起撤销。
+- 配置 `showPanel`，默认 `false`。打开后，会话顶部的视图标签里多一个「隐私保护」（英文 Privacy），排在「对话」「轨迹」「Git」之后（`conversation.view`，order 35，在 Stats 的 40 之前）；内容与详情页的统计卡相同，只是去掉卡片边框和标题，并只统计本会话。
+- 视图和它的标题（`label`）在 `conversation.view` 里一次注册、一次撤销。
 - 视图走 `conversation.view` 这个槽，和 Git 面板同一个座位；槽由会话视图条提供，不存在「宿主没有」的版本，所以不需要延迟注入或额外 service。
 - 配置画在两处，共用同一个组件：bundle 详情页内联的一节（`plugins.bundle.config`，键为包名），以及插件管理器行页（`plugins.row.config`，键为 `包名#行 id`）。前者在视野里，后者是官方给行的入口——只放在行页时，配置入口只是行标题旁的一个箭头，不明显。
 - 行页那一份由插件管理器把该 entry 的表单作为 `form`（`{state, mutate}`）交过来；bundle 页那一份没有 `form`，从设置镜像里用 `schemaFields` 认领命名空间后取同一份表单。两处写入都走带 revision 的 `mutate`。
@@ -31,3 +31,10 @@
 - 标签页是否出现，以**宿主**的答案为准（`overview.showPanel`，就是网关真正在用的那个值），设置镜像只用来加快「开」——镜像还没跟上时不能把标签页挡住。两者都说「关」才真正撤销。宿主每 60 秒复核一次，在别处改了配置也能跟上。
 - 面板内容是**当前会话**的：视图主体拿到 `sessionId`，`overview({ session })` 只回这个会话的记录与合计。按天的合计是落盘的、不分会话，所以会话视图以内存里保留的记录为界（默认最近 500 条）。
 - 配置页在开关下面直接说明视图注册失败的原因（注册抛错或没拿到 disposer），而不是让人去猜。
+
+## 补充（2026-10-31）：位置、设置服务与「关」的判定
+
+- 标签页在会话顶部的视图条里（`conversation.view`，order 35），不在右侧栏。早先的版本照 dsh-git-panel 注册在右侧栏，后来改到视图条，本 ADR 的标题与正文已按现状改写；`showPanel` 的描述也改为「在会话顶部显示『隐私保护』标签页」，客户端认命名空间用的那句英文（`DESCRIPTION_MARK`）随之改为 `Show the Privacy tab at the top of the session`，由测试核对两处一致。
+- 设置服务 `configForms` 用 cordis 的延迟注入（`ctx.inject(['configForms'], …)`）取得，不写进插件的必需依赖：没有它时统计卡和标签页照常工作；它晚到或被替换时，配置页和标签页的跟随会重新接上。
+- 没有设置镜像（或镜像里找不到本插件的命名空间）时，标签页只听宿主的：宿主说「关」就撤销。早先的判定在这种情况下要求「两者都说关」，而镜像永远不说话，标签页就再也撤不掉了。
+- 注册失败的原因以错误码记下（视图条没交回撤销函数，或注册抛错），配置页按当前语言显示，并在原因变化时自动刷新。

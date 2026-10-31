@@ -29,7 +29,7 @@
 | [ADR-0014](0014-tool-guard.md) | 工具参数外带守卫：告警或不还原 | Accepted | 脱敏 |
 | [ADR-0015](0015-shape.md) | shape：密钥伪装成同形假密钥 | Accepted | 脱敏 |
 | [ADR-0016](0016-vendor-view.md) | 厂商视角对照：内存里留发出的 body，不出真值 | Accepted | 界面 |
-| [ADR-0017](0017-sidebar-panel.md) | 会话右侧栏的「隐私保护」标签页，默认不出现 | Accepted | 界面 |
+| [ADR-0017](0017-sidebar-panel.md) | 会话顶部的「隐私保护」标签页，默认不出现 | Accepted | 界面 |
 | [ADR-0018](0018-exclude-providers.md) | 按 provider 放行，指定的 provider 不脱敏 | Accepted | 架构 |
 | [ADR-0019](0019-hint.md) | 记录里的提示保留首尾几个字符，人能认出被换掉的是哪个值 | Accepted | 界面 |
 | [ADR-0020](0020-record-attribution.md) | 记录带上工作区与会话名称 | Accepted | 架构 |

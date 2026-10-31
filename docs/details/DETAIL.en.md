@@ -10,7 +10,7 @@ Adds a redaction gateway to the dsh process. When a request to a model has a sec
 - **An action per kind**: mask, send as written and record (warn), or not send the request at all (block).
 - **Exfiltration guard**: when a tool call's arguments would get a real value back and name a host off this machine, warn, or leave the placeholder in.
 - **Look-alike keys**: optionally send a key as a made-up one with the same prefix, length and kinds of character, so the model cannot tell it was masked.
-- **Records and statistics**: only requests with something masked or restored are recorded, and a record never holds a value. The `/privacy` command shows the state and a preview; the plugin's detail page has a statistics card, and a Privacy tab can be turned on in the session's right sidebar.
+- **Records and statistics**: only requests with something masked or restored are recorded, and a record never holds a value. The `/privacy` command shows the state and a preview; the plugin's detail page has a statistics card, and a Privacy tab can be turned on at the top of the session.
 - **Fails closed**: when masking fails, the request is not sent; `/privacy off` turns masking off for the moment.
 
 ## Repository
