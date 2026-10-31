@@ -37,3 +37,4 @@
 | [ADR-0022](0022-reset.md) | 统计卡重新排版；「清空数据」二次确认后清空历史 | Accepted | 界面 |
 | [ADR-0023](0023-session-switch.md) | 会话的「隐私保护」标签页可以关闭本会话的脱敏 | Accepted | 界面 |
 | [ADR-0024](0024-record-context.md) | 记录里的每个值带上位置和前后文字 | Accepted | 界面 |
+| [ADR-0025](0025-compression-and-upgrades.md) | 压缩的请求与回复解压后处理；WebSocket 升级不放行 | Accepted | 架构 |

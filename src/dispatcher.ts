@@ -1,3 +1,6 @@
+import type { Transform } from 'node:stream'
+import zlib from 'node:zlib'
+
 import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
@@ -135,19 +138,20 @@ function incomingValue(headers: IncomingHeaders, name: string): string {
   return Array.isArray(v) ? v.join(', ') : (v ?? '')
 }
 
-function withoutLength(headers: IncomingHeaders): IncomingHeaders {
+/** `headers` without the headers in `names` (lower case). */
+function withoutHeaders(headers: IncomingHeaders, names: readonly string[]): IncomingHeaders {
   const out: Record<string, unknown> = { ...(headers as Record<string, unknown>) }
-  delete out['content-length']
+  for (const n of names) delete out[n]
   return out as IncomingHeaders
 }
 
-/** `controller` with `content-length` taken out of its raw headers, which fetch reads in place of `headers`. */
-function lengthless(controller: Controller): Controller {
+/** `controller` with the headers in `names` (lower case) taken out of its raw headers, which fetch reads in place of `headers`. */
+function withoutRaw(controller: Controller, names: readonly string[]): Controller {
   const raw = controller.rawHeaders
   if (!Array.isArray(raw)) return controller
   const kept: Array<Buffer | string> = []
   for (let i = 0; i + 1 < raw.length; i += 2) {
-    if (String(raw[i]).toLowerCase() === 'content-length') continue
+    if (names.includes(String(raw[i]).toLowerCase())) continue
     kept.push(raw[i] as Buffer | string, raw[i + 1] as Buffer | string)
   }
   return new Proxy(controller, {
@@ -157,6 +161,139 @@ function lengthless(controller: Controller): Controller {
       return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
     },
   })
+}
+
+// ---- content codings -----------------------------------------------------------
+
+/** The content codings a body was encoded with, in the order they were applied; identity left out (docs/adr/0025). */
+export function codingsOf(value: string | undefined): string[] {
+  if (value === undefined) return []
+  return value
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => c !== '' && c !== 'identity')
+}
+
+/** A coding the gateway cannot take off a body: the request it is on is not sent. */
+class UnknownCoding extends Error {
+  constructor(coding: string) {
+    // a header value, not body text; cut and kept to token characters all the same
+    super(`unsupported content-encoding ${coding.replace(/[^\w.+-]/g, '?').slice(0, 32)}`)
+    this.name = 'UnknownCoding'
+  }
+}
+
+type ZstdZlib = typeof zlib & { zstdDecompressSync?: (b: Buffer) => Buffer; createZstdDecompress?: () => Transform }
+
+/** Takes one coding off `body`; throws when the coding is unknown or the body is not in it. */
+function decodeOnce(body: Buffer, coding: string): Buffer {
+  switch (coding) {
+    case 'gzip':
+    case 'x-gzip':
+      return zlib.gunzipSync(body)
+    case 'deflate':
+      // "deflate" is meant to be zlib-wrapped; some clients send it raw
+      try {
+        return zlib.inflateSync(body)
+      } catch {
+        return zlib.inflateRawSync(body)
+      }
+    case 'br':
+      return zlib.brotliDecompressSync(body)
+    case 'zstd': {
+      const z = zlib as ZstdZlib
+      if (typeof z.zstdDecompressSync !== 'function') throw new UnknownCoding(coding)
+      return z.zstdDecompressSync(body)
+    }
+    default:
+      throw new UnknownCoding(coding)
+  }
+}
+
+/** `body` with every coding in `codings` taken off, the last applied first. */
+export function decodeBody(body: Buffer, codings: readonly string[]): Buffer {
+  let out = body
+  for (let i = codings.length - 1; i >= 0; i--) out = decodeOnce(out, codings[i] as string)
+  return out
+}
+
+/** As fetch sets its own decoders up: whatever has arrived comes out, a stream cut short is no error at its end. */
+const STREAM_FLUSH = { flush: zlib.constants.Z_SYNC_FLUSH, finishFlush: zlib.constants.Z_SYNC_FLUSH }
+
+/** A streaming decoder for one coding, or undefined when there is none for it. */
+function decoderFor(coding: string): Transform | undefined {
+  switch (coding) {
+    case 'gzip':
+    case 'x-gzip':
+      return zlib.createGunzip(STREAM_FLUSH)
+    case 'deflate':
+      return zlib.createInflate(STREAM_FLUSH)
+    case 'br':
+      return zlib.createBrotliDecompress({ flush: zlib.constants.BROTLI_OPERATION_FLUSH, finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH })
+    case 'zstd': {
+      const z = zlib as ZstdZlib
+      return typeof z.createZstdDecompress === 'function' ? z.createZstdDecompress() : undefined
+    }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Takes the codings off a reply as it streams. What comes out goes to
+ * `onData`, in order; `onEnd` once all of it has, `onError` (once, and then
+ * nothing else) when the reply is not in its codings.
+ */
+class ReplyDecoder {
+  readonly #first: Transform
+  readonly #all: Transform[]
+  #settled = false
+
+  private constructor(chain: Transform[], onData: (b: Buffer) => void, onEnd: () => void, onError: (err: Error) => void) {
+    this.#all = chain
+    this.#first = chain[0] as Transform
+    for (let i = 0; i + 1 < chain.length; i++) (chain[i] as Transform).pipe(chain[i + 1] as Transform)
+    const last = chain.at(-1) as Transform
+    last.on('data', (b: Buffer) => {
+      if (!this.#settled) onData(b)
+    })
+    last.on('end', () => {
+      if (this.#settled) return
+      this.#settled = true
+      onEnd()
+    })
+    for (const t of chain) {
+      t.on('error', (err: Error) => {
+        if (this.#settled) return
+        this.destroy()
+        onError(err)
+      })
+    }
+  }
+
+  /** A decoder for `codings`, or undefined when one of them has no streaming decoder. */
+  static for(codings: readonly string[], onData: (b: Buffer) => void, onEnd: () => void, onError: (err: Error) => void): ReplyDecoder | undefined {
+    const chain: Transform[] = []
+    for (let i = codings.length - 1; i >= 0; i--) {
+      const d = decoderFor(codings[i] as string)
+      if (d === undefined) return undefined
+      chain.push(d)
+    }
+    return chain.length === 0 ? undefined : new ReplyDecoder(chain, onData, onEnd, onError)
+  }
+
+  write(chunk: Buffer): void {
+    if (!this.#settled) this.#first.write(chunk)
+  }
+
+  end(): void {
+    if (!this.#settled) this.#first.end()
+  }
+
+  destroy(): void {
+    this.#settled = true
+    for (const t of this.#all) t.destroy()
+  }
 }
 
 // ---- request body --------------------------------------------------------------
@@ -200,21 +337,38 @@ function failRequest(handler: Handler, err: Error): void {
 
 // ---- reply ---------------------------------------------------------------------
 
+/** The reply kinds that are restored: `whole` at its end, `stream` event by event, `lines` one JSON document per line. */
+type ReplyMode = 'pass' | 'stream' | 'lines' | 'whole'
+
+function replyMode(type: string): ReplyMode {
+  if (type.includes('event-stream')) return 'stream'
+  if (type.includes('ndjson') || type.includes('jsonl') || type.includes('json-seq')) return 'lines'
+  return type.includes('json') ? 'whole' : 'pass'
+}
+
 /**
  * Passes a model reply on with the placeholders in it put back: a
- * `text/event-stream` line by line as it arrives (backpressure is the
- * downstream handler's own, through the same controller), a JSON body whole
- * at its end. A compressed reply goes on as it is: the placeholders reach the
- * agent, the secrets never left.
+ * `text/event-stream` line by line as it arrives, an `application/x-ndjson`
+ * reply one line (one JSON document) at a time, a JSON body whole at its end.
+ * Backpressure is the downstream handler's own, through the same controller.
+ * The gateway asks for an unencoded reply (docs/adr/0025); one that comes
+ * compressed all the same is decoded here and goes on unencoded. A coding
+ * there is no decoder for goes on as it is, with a warning: the placeholders
+ * reach the agent, the secrets never left.
  */
 class RestoringHandler implements Handler {
   readonly #next: Handler
   readonly #exchange: Exchange
   readonly #logger: GatewayLogger | undefined
-  #mode: 'pass' | 'stream' | 'whole' = 'pass'
+  #mode: ReplyMode = 'pass'
   #stream: ReturnType<Exchange['streamRestorer']> | undefined
+  #lines: { decoder: InstanceType<typeof TextDecoder>; buf: string } | undefined
   #chunks: Buffer[] = []
   #view: Controller | undefined
+  #decoder: ReplyDecoder | undefined
+  #trailers: IncomingHeaders | undefined
+  /** The reply ended or failed, as the downstream handler was told: nothing more goes to it. */
+  #done = false
 
   constructor(next: Handler, exchange: Exchange, logger: GatewayLogger | undefined) {
     this.#next = next
@@ -243,15 +397,22 @@ class RestoringHandler implements Handler {
   }
 
   onResponseStart(controller: Controller, statusCode: number, headers: IncomingHeaders, statusMessage?: string): void {
-    const type = incomingValue(headers, 'content-type').toLowerCase()
-    const encoding = incomingValue(headers, 'content-encoding').trim().toLowerCase()
-    const kind = type.includes('event-stream') ? 'stream' : type.includes('json') ? 'whole' : 'pass'
+    const kind = replyMode(incomingValue(headers, 'content-type').toLowerCase())
+    const codings = codingsOf(incomingValue(headers, 'content-encoding') || undefined)
     if (statusCode >= 200 && kind !== 'pass' && this.#exchange.restoring()) {
-      if (encoding === '' || encoding === 'identity') {
+      if (codings.length > 0) {
+        this.#decoder = ReplyDecoder.for(
+          codings,
+          (b) => this.#plain(b),
+          () => this.#end(),
+          () => this.#fail(new PrivacyGatewayError('the reply is not in the content-encoding it names')),
+        )
+        if (this.#decoder === undefined) this.#logger?.warn(`dsh-privacy-gateway: reply is ${codings.join(', ')}-encoded, placeholders in it are not restored`)
+      }
+      if (codings.length === 0 || this.#decoder !== undefined) {
         this.#mode = kind
         if (kind === 'stream') this.#stream = this.#exchange.streamRestorer()
-      } else {
-        this.#logger?.warn(`dsh-privacy-gateway: reply is ${encoding}-encoded, placeholders in it are not restored`)
+        if (kind === 'lines') this.#lines = { decoder: new TextDecoder('utf-8'), buf: '' }
       }
     }
     if (this.#mode === 'pass') {
@@ -259,30 +420,78 @@ class RestoringHandler implements Handler {
       this.#next.onResponseStart?.(controller, statusCode, headers, statusMessage)
       return
     }
-    // the restored body has another length
-    this.#view = lengthless(controller)
-    this.#next.onResponseStart?.(this.#view, statusCode, withoutLength(headers), statusMessage)
+    // the restored body has another length, and goes on unencoded
+    const drop = this.#decoder === undefined ? ['content-length'] : ['content-length', 'content-encoding']
+    this.#view = withoutRaw(controller, drop)
+    this.#next.onResponseStart?.(this.#view, statusCode, withoutHeaders(headers, drop), statusMessage)
   }
 
   onResponseData(controller: Controller, chunk: Buffer): void {
-    const view = this.#view ?? controller
+    if (this.#done) return
     if (this.#mode === 'pass') {
-      this.#next.onResponseData?.(view, chunk)
+      this.#next.onResponseData?.(this.#view ?? controller, chunk)
       return
     }
+    if (this.#decoder) this.#decoder.write(chunk)
+    else this.#plain(chunk)
+  }
+
+  /** One piece of the reply as the vendor wrote it, before any coding. */
+  #plain(chunk: Buffer): void {
+    if (this.#done) return
     if (this.#mode === 'whole') {
       this.#chunks.push(chunk)
       return
     }
-    const out = this.#stream?.push(chunk) ?? ''
-    if (out !== '') this.#next.onResponseData?.(view, Buffer.from(out, 'utf8'))
+    const out = this.#mode === 'lines' ? this.#pushLines(chunk) : (this.#stream?.push(chunk) ?? '')
+    this.#send(out)
+  }
+
+  #send(out: string): void {
+    if (out !== '' && this.#view) this.#next.onResponseData?.(this.#view, Buffer.from(out, 'utf8'))
+  }
+
+  #pushLines(chunk: Buffer | undefined): string {
+    const l = this.#lines
+    if (!l) return ''
+    l.buf += chunk === undefined ? l.decoder.decode() : l.decoder.decode(chunk, { stream: true })
+    const cut = chunk === undefined ? l.buf.length : l.buf.lastIndexOf('\n') + 1
+    if (cut === 0) return ''
+    const ready = l.buf.slice(0, cut)
+    l.buf = l.buf.slice(cut)
+    return ready
+      .split(/(?<=\n)/)
+      .map((line) => this.#restoreLine(line))
+      .join('')
+  }
+
+  #restoreLine(line: string): string {
+    const m = /\r?\n$/.exec(line)
+    const doc = m ? line.slice(0, m.index) : line
+    if (doc.trim() === '') return line
+    try {
+      return this.#exchange.restoreBody(doc) + (m?.[0] ?? '')
+    } catch (err) {
+      this.#logger?.warn(`dsh-privacy-gateway: a reply line could not be restored (${errorName(err)}); it goes on with its placeholders`)
+      return line
+    }
   }
 
   onResponseEnd(controller: Controller, trailers: IncomingHeaders): void {
-    const view = this.#view ?? controller
+    if (this.#done) return
+    this.#view ??= controller
+    this.#trailers = trailers
+    if (this.#decoder) this.#decoder.end()
+    else this.#end()
+  }
+
+  #end(): void {
+    if (this.#done) return
+    const view = this.#view as Controller
     if (this.#mode === 'stream') {
-      const out = this.#stream?.end() ?? ''
-      if (out !== '') this.#next.onResponseData?.(view, Buffer.from(out, 'utf8'))
+      this.#send(this.#stream?.end() ?? '')
+    } else if (this.#mode === 'lines') {
+      this.#send(this.#pushLines(undefined))
     } else if (this.#mode === 'whole') {
       const raw = Buffer.concat(this.#chunks)
       this.#chunks = []
@@ -295,11 +504,29 @@ class RestoringHandler implements Handler {
       }
       if (body.length > 0) this.#next.onResponseData?.(view, body)
     }
+    this.#done = true
     this.#exchange.finish()
-    this.#next.onResponseEnd?.(view, trailers)
+    this.#next.onResponseEnd?.(view, this.#trailers ?? {})
+  }
+
+  /** The decoder failed: the reply is cut off upstream and fails downstream. */
+  #fail(err: Error): void {
+    if (this.#done) return
+    this.#done = true
+    this.#chunks = []
+    this.#exchange.finish()
+    try {
+      this.#view?.abort(err)
+    } catch {
+      // the connection is gone already
+    }
+    this.#next.onResponseError?.(this.#view as Controller, err)
   }
 
   onResponseError(controller: Controller, err: Error): void {
+    if (this.#done) return
+    this.#done = true
+    this.#decoder?.destroy()
     this.#chunks = []
     this.#exchange.finish()
     this.#next.onResponseError?.(this.#view ?? controller, err)
@@ -336,6 +563,16 @@ function requestInfo(opts: Options): RequestInfo {
     // as it came
   }
   return { host: t?.host ?? '', path, ...(session ? { session: session.slice(0, 128) } : {}) }
+}
+
+/** An upgrade (a WebSocket's handshake, undici's `upgrade()`) or a CONNECT tunnel: after it, the bytes go past the dispatcher. */
+function isTunnel(opts: Options): boolean {
+  return Boolean(opts.upgrade) || String(opts.method).toUpperCase() === 'CONNECT'
+}
+
+function tunnelName(opts: Options): string {
+  const u = typeof opts.upgrade === 'string' ? opts.upgrade : ''
+  return /^[\w.+-]{1,32}$/.test(u) ? u : String(opts.method).toUpperCase() === 'CONNECT' ? 'CONNECT' : 'upgraded'
 }
 
 function isClosed(d: Dispatcher): boolean {
@@ -479,6 +716,13 @@ export class MaskingDispatcher extends Dispatcher {
       return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
     }
     if (!this.bypass) this.heal?.()
+    if (!this.bypass && isTunnel(opts) && !this.#passes(opts)) {
+      // a WebSocket (or any upgraded or tunnelled connection) carries its messages past the
+      // dispatcher, where they cannot be masked: it is not opened (docs/adr/0025); Codex falls back to SSE
+      this.#logger?.warn(`dsh-privacy-gateway: a ${tunnelName(opts)} connection to ${targetHost(opts)?.host ?? 'an unknown host'} was refused: its messages cannot be masked`)
+      failRequest(wrapHandler(handler), new PrivacyGatewayError('a WebSocket or other upgraded connection cannot be masked, it was not opened', undefined, 'DSH_PRIVACY_GATEWAY_UPGRADE_REFUSED'))
+      return true
+    }
     const next = this.downstream()
     if (this.bypass || !this.#candidate(opts)) return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
     void this.#intercept(opts, wrapHandler(handler))
@@ -509,16 +753,19 @@ export class MaskingDispatcher extends Dispatcher {
     return Promise.resolve()
   }
 
+  /** Whether `opts` goes on as it is whatever it holds: skip says so (enabled off, an excluded provider, a session with masking off), or its host is in excludeHosts. */
+  #passes(opts: Options): boolean {
+    if (this.#skip?.() === true) return true
+    if (this.#excludeHosts.length === 0) return false
+    const t = targetHost(opts)
+    return t !== undefined && (this.#excludeHosts.includes(t.host) || this.#excludeHosts.includes(t.hostname))
+  }
+
   #candidate(opts: Options): boolean {
-    if (String(opts.method).toUpperCase() !== 'POST' || opts.upgrade || !isReadableBody(opts.body)) return false
-    if (this.#skip?.() === true) return false
+    if (String(opts.method).toUpperCase() !== 'POST' || isTunnel(opts) || !isReadableBody(opts.body)) return false
     const type = headerValue(opts.headers, 'content-type')
     if (type !== undefined && !type.toLowerCase().includes('json')) return false
-    if (this.#excludeHosts.length > 0) {
-      const t = targetHost(opts)
-      if (t && (this.#excludeHosts.includes(t.host) || this.#excludeHosts.includes(t.hostname))) return false
-    }
-    return true
+    return !this.#passes(opts)
   }
 
   /**
@@ -539,11 +786,31 @@ export class MaskingDispatcher extends Dispatcher {
         failRequest(handler, err instanceof Error ? err : new Error(String(err)))
         return
       }
+      // a compressed body (Codex sends zstd) is masked as the text it holds and goes on as that text (docs/adr/0025)
+      const codings = codingsOf(headerValue(opts.headers, 'content-encoding'))
+      let plain = raw
+      if (codings.length > 0) {
+        try {
+          plain = decodeBody(raw, codings)
+        } catch (err) {
+          const what = err instanceof UnknownCoding ? err.message : `a body that is not ${codings.join(', ')}-encoded as it says`
+          this.#logger?.warn(`dsh-privacy-gateway: ${what}, request not sent`)
+          failRequest(handler, new PrivacyGatewayError(`${what}, request not sent`))
+          return
+        }
+      }
       let text: string | undefined
       try {
-        text = utf8.decode(raw)
+        text = utf8.decode(plain)
       } catch {
-        text = undefined // not UTF-8: no model request
+        text = undefined
+      }
+      if (text === undefined && headerValue(opts.headers, 'content-type') !== undefined) {
+        // a candidate's content type is JSON, and JSON is UTF-8 (RFC 8259): one that is not cannot
+        // be read, so it is not sent unread; with no content type it is no model request
+        this.#logger?.warn('dsh-privacy-gateway: a JSON request body is not UTF-8, request not sent')
+        failRequest(handler, new PrivacyGatewayError('the JSON request body is not UTF-8, request not sent'))
+        return
       }
       if (text !== undefined) {
         try {
@@ -558,9 +825,16 @@ export class MaskingDispatcher extends Dispatcher {
           throw err
         }
       }
-      const body = exchange === null || exchange.text === text ? raw : Buffer.from(exchange.text, 'utf8')
+      // nothing changed: the body goes as it came, coding and all
+      const changed = exchange !== null && exchange.text !== text
+      const body = changed ? Buffer.from((exchange as Exchange).text, 'utf8') : raw
+      const set: Record<string, string | null> = { 'content-length': String(body.length) }
+      if (changed && codings.length > 0) set['content-encoding'] = null
+      // a reply with placeholders in it is restored as it comes: it is asked for unencoded
+      if (exchange !== null) set['accept-encoding'] = 'identity'
+      const headers = editHeaders(opts.headers, set, ['accept-encoding'])
       to = this.downstream()
-      next = { ...opts, body, headers: withContentLength(opts.headers, body.length), [kHop]: to } as Options
+      next = { ...opts, body, headers, [kHop]: to } as Options
     } catch (err) {
       exchange?.finish()
       this.#logger?.warn(`dsh-privacy-gateway: masking failed (${errorName(err)}), request not sent`)

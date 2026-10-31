@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { Readable } from 'node:stream'
-import { gzipSync } from 'node:zlib'
+import zlib, { gzipSync } from 'node:zlib'
 
 import { Agent, Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, request, setGlobalDispatcher } from 'undici'
 
@@ -21,6 +21,7 @@ interface Seen {
   url: string
   headers: IncomingMessage['headers']
   body: string
+  raw: Buffer
 }
 
 type Reply = (seen: Seen, res: ServerResponse) => unknown
@@ -32,7 +33,8 @@ async function origin(reply: Reply) {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
-      const s: Seen = { method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks).toString('utf8') }
+      const raw = Buffer.concat(chunks)
+      const s: Seen = { method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: raw.toString('utf8'), raw }
       seen.push(s)
       void reply(s, res)
     })
@@ -181,10 +183,11 @@ test('masking that throws fails the request and the origin never sees it (fail-c
   }
 })
 
-test('a compressed reply goes on as it is, with a warning', async () => {
+test('a masked request asks for an unencoded reply; one compressed all the same is decoded and restored', async () => {
   let placeholder = ''
   const o = await origin((s, res) => {
     placeholder = PLACEHOLDER.exec(s.body)?.[0] ?? ''
+    // an origin that compresses whatever it was asked for
     const body = gzipSync(JSON.stringify({ content: placeholder }))
     res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip', 'content-length': body.length })
     res.end(body)
@@ -192,11 +195,204 @@ test('a compressed reply goes on as it is, with a warning', async () => {
   try {
     const warnings = await withGateway(async () => {
       const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
-      assert.deepEqual(await res.json(), { content: placeholder })
+      assert.deepEqual(await res.json(), { content: OPENAI })
+      assert.equal(res.headers.get('content-encoding'), null)
     })
-    assert.equal(warnings.length, 1)
+    assert.ok(placeholder)
+    assert.equal(o.seen[0]?.headers['accept-encoding'], 'identity')
+    assert.deepEqual(warnings, [])
   } finally {
     await o.close()
+  }
+})
+
+test('a compressed event-stream reply is decoded and restored as it streams', async () => {
+  let placeholder = ''
+  const o = await origin((s, res) => {
+    placeholder = PLACEHOLDER.exec(s.body)?.[0] ?? ''
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'content-encoding': 'br' })
+    const enc = zlib.createBrotliCompress()
+    enc.pipe(res)
+    enc.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `key ${placeholder}` } }] })}\n\n`)
+    enc.flush(zlib.constants.BROTLI_OPERATION_FLUSH, () => enc.end('data: [DONE]\n\n'))
+  })
+  try {
+    await withGateway(async () => {
+      const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(`key ${OPENAI}`) })
+      const text = await res.text()
+      assert.ok(text.includes(`"content":"key ${OPENAI}"`), text)
+      assert.ok(!text.includes(placeholder))
+      assert.ok(text.endsWith('data: [DONE]\n\n'))
+    })
+  } finally {
+    await o.close()
+  }
+})
+
+test('a reply in a coding there is no decoder for goes on as it is, with a warning', async () => {
+  const o = await origin((_s, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'x-unknown' })
+    res.end('{"content":"{{API_KEY_abcdefgh}}"}')
+  })
+  try {
+    const warnings = await withGateway(async () => {
+      const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
+      assert.equal(await res.body.text(), '{"content":"{{API_KEY_abcdefgh}}"}')
+    })
+    assert.equal(warnings.length, 1)
+    assert.match(String(warnings[0]?.[0]), /x-unknown-encoded/)
+  } finally {
+    await o.close()
+  }
+})
+
+test('an x-ndjson reply is restored line by line as it streams', async () => {
+  let release!: () => void
+  const firstSeen = new Promise<void>((resolve) => (release = resolve))
+  let placeholder = ''
+  let early = false
+  const o = await origin(async (s, res) => {
+    placeholder = PLACEHOLDER.exec(s.body)?.[0] ?? ''
+    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+    res.write(`${JSON.stringify({ message: { content: 'thinking' } })}\n`)
+    // a reply held whole would never let the client see the first line: give up waiting after a while
+    early = await Promise.race([firstSeen.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 1_000))])
+    const line = `${JSON.stringify({ message: { content: `key ${placeholder}` } })}\n`
+    const cut = line.indexOf(placeholder) + 6
+    res.write(line.slice(0, cut))
+    setTimeout(() => res.end(`${line.slice(cut)}${JSON.stringify({ done: true })}\n`), 20)
+  })
+  try {
+    await withGateway(async () => {
+      const res = await fetch(`${o.url}/api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(`key ${OPENAI}`) })
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+      const decoder = new TextDecoder()
+      let text = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        text += decoder.decode(value, { stream: true })
+        // the first line arrives before the reply ends: it is not held to the end
+        if (text.includes('thinking')) release()
+      }
+      const lines = text.trimEnd().split('\n').map((l) => JSON.parse(l) as { message?: { content: string } })
+      assert.equal(lines.length, 3)
+      assert.equal(lines[1]?.message?.content, `key ${OPENAI}`)
+      assert.ok(!text.includes(placeholder))
+      assert.ok(early, 'the first line came before the reply ended')
+    })
+  } finally {
+    release()
+    await o.close()
+  }
+})
+
+/** A fetch to `url` with `body` sent in coding `encoding`. */
+const sendEncoded = (url: string, body: Buffer, encoding: string, type = 'application/json') =>
+  fetch(url, { method: 'POST', headers: { 'content-type': type, 'content-encoding': encoding }, body })
+
+test('a compressed request body is masked and goes as plain text; one with nothing to mask goes as it came', async () => {
+  const o = await emptyOrigin()
+  try {
+    const plain = chat(`key ${OPENAI}`)
+    const zstd = (zlib as unknown as { zstdCompressSync(b: string): Buffer }).zstdCompressSync(plain)
+    const quiet = gzipSync(chat('nothing secret here'))
+    await withGateway(async () => {
+      for (const [body, enc] of [[zstd, 'zstd'], [gzipSync(plain), 'gzip'], [zlib.deflateSync(plain), 'deflate'], [zlib.brotliCompressSync(plain), 'br'], [gzipSync(zlib.brotliCompressSync(plain)), 'br, gzip']] as const) {
+        await (await sendEncoded(`${o.url}/v1/responses`, body, enc)).text()
+      }
+      await (await sendEncoded(`${o.url}/v1/responses`, quiet, 'gzip')).text()
+    })
+    for (const s of o.seen.slice(0, 5)) {
+      assert.ok(!s.body.includes(OPENAI))
+      assert.match(s.body, PLACEHOLDER)
+      assert.equal(s.headers['content-encoding'], undefined)
+      assert.equal(Number(s.headers['content-length']), s.raw.length)
+    }
+    const last = o.seen[5]
+    assert.equal(last?.headers['content-encoding'], 'gzip')
+    assert.ok(last?.raw.equals(quiet), 'nothing masked: the compressed bytes as they came')
+  } finally {
+    await o.close()
+  }
+})
+
+test('a request body in an unknown coding, one not in the coding it names, or JSON that is not UTF-8 is not sent', async () => {
+  const o = await emptyOrigin()
+  try {
+    const warnings = await withGateway(async () => {
+      const cases: Array<[Buffer, string | undefined]> = [
+        [Buffer.from(chat(OPENAI)), 'compress'],
+        [Buffer.from(chat(OPENAI)), 'gzip'],
+        [Buffer.concat([Buffer.from(chat(OPENAI)), Buffer.from([0xff, 0xfe])]), undefined],
+      ]
+      for (const [body, enc] of cases) {
+        const err = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', ...(enc ? { 'content-encoding': enc } : {}) }, body }).then(
+          () => assert.fail('request was sent'),
+          (e: unknown) => e as Error & { cause?: Error & { code?: string } },
+        )
+        assert.equal(err.cause?.code, 'DSH_PRIVACY_GATEWAY_FAIL_CLOSED')
+        assert.ok(!String(err.cause?.message).includes(OPENAI))
+      }
+    })
+    assert.equal(o.seen.length, 0)
+    assert.equal(warnings.length, 3)
+    assert.ok(!JSON.stringify(warnings.map((w) => w.map(String))).includes(OPENAI))
+  } finally {
+    await o.close()
+  }
+})
+
+/** A WebSocket opened with Node's own WebSocket, which goes through the global dispatcher: whether it opened. */
+function openSocket(url: string): Promise<'open' | 'error'> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url)
+    ws.addEventListener('open', () => {
+      ws.close()
+      resolve('open')
+    })
+    ws.addEventListener('error', () => resolve('error'))
+  })
+}
+
+test('a WebSocket is not opened unless the request is let by', async () => {
+  let upgrades = 0
+  const server = createServer()
+  server.on('upgrade', (req, socket) => {
+    upgrades++
+    const accept = createHash('sha1').update(`${String(req.headers['sec-websocket-key'])}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    socket.on('error', () => {})
+    setTimeout(() => socket.destroy(), 50)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  const url = `ws://127.0.0.1:${port}/v1/responses`
+  const before = getGlobalDispatcher()
+  try {
+    // masked: refused before any byte goes out
+    let warnings: unknown[] = []
+    let gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn: (...a: unknown[]) => warnings.push(a) } })
+    assert.equal(await openSocket(url), 'error')
+    assert.equal(upgrades, 0)
+    assert.equal(warnings.length, 1)
+    gateway.dispose()
+    setGlobalDispatcher(before)
+    // an explicit bypass (skip: enabled off, an excluded provider, a session with masking off) opens it
+    warnings = []
+    gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, skip: () => true })
+    assert.equal(await openSocket(url), 'open')
+    assert.equal(upgrades, 1)
+    gateway.dispose()
+    setGlobalDispatcher(before)
+    // so does excludeHosts
+    gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, excludeHosts: [`127.0.0.1:${port}`] })
+    assert.equal(await openSocket(url), 'open')
+    assert.equal(upgrades, 2)
+    gateway.dispose()
+  } finally {
+    setGlobalDispatcher(before)
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
 
