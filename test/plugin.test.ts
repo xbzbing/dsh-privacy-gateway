@@ -41,6 +41,16 @@ test('package icon is a shipped SVG within the 256 KiB limit', () => {
   assert.ok(Buffer.byteLength(svg) <= 256 * 1024)
 })
 
+test('manifest declares no install-time lifecycle scripts', () => {
+  // docs/adr/0006: installs never build, so no hook may run during install or pack.
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string>
+  }
+  for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'prepublishOnly', 'prepack', 'postpack']) {
+    assert.equal(manifest.scripts?.[hook], undefined, `scripts.${hook}`)
+  }
+})
+
 test('Config defaults to enabled and round-trips through toJSON', () => {
   assert.deepEqual(Config({}), { enabled: true })
   assert.deepEqual(resolveConfig({ enabled: false }), { enabled: false })

@@ -6,6 +6,14 @@
   "description": "Process-wide HTTP redaction gateway for DSH: masks secrets in outgoing model requests and restores placeholders in the replies, for every provider.",
   "icon": "./assets/icon.svg",
   "license": "MIT",
+  "author": "xbzbing <xbzbing@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xbzbing/dsh-privacy-gateway.git"
+  },
+  "homepage": "https://github.com/xbzbing/dsh-privacy-gateway#readme",
+  "bugs": "https://github.com/xbzbing/dsh-privacy-gateway/issues",
+  "packageManager": "pnpm@12.5.1",
   "engines": {
     "node": ">=22.19.0"
   },

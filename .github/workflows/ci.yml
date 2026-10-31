@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }})
+    # Pinned, not `ubuntu-latest`, so an image swap never moves the baseline
+    # silently. Bump this line deliberately.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines: >=22.19.0 (undici 8's floor)
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v7
+
+      # Reads the pnpm version from package.json `packageManager`.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      # lib/ is not committed (docs/adr/0006): build and pack it here so a
+      # broken `files` list or entry point fails the PR, not the release.
+      - name: Build and pack
+        run: |
+          set -euo pipefail
+          pnpm build
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/pkg"
+          tar -xzf "$RUNNER_TEMP"/dsh-privacy-gateway-*.tgz -C "$RUNNER_TEMP/pkg"
+          node scripts/assert-pack.mjs "$RUNNER_TEMP/pkg/package"

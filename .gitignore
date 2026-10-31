@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# lib/ is TRACKED on purpose: `dsh plugin add file:<repo>` / `github:<owner>/<repo>`
-# run no lifecycle scripts, so the built files must exist in the checkout.
+# Build output (not committed; release tarballs carry it via pnpm pack).
+# `pnpm build` regenerates it. See docs/adr/0006.
+lib/
 
 # Logs / packs
 *.log

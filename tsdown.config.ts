@@ -1,8 +1,7 @@
 /**
- * Build for the shipped plugin artifacts (`lib/`). `lib/` is committed: `dsh
- * plugin add file:<repo>` and `github:<owner>/<repo>` install the root package
- * without running lifecycle scripts, so the built files must already exist in
- * the checkout. Rebuild with `pnpm build` after every source change.
+ * Build for the shipped plugin artifacts (`lib/`). `lib/` is not committed:
+ * the release workflow builds it and ships it inside the `pnpm pack` tarball
+ * (docs/adr/0006). Run `pnpm build` before installing from a local checkout.
  */
 import { defineConfig } from 'tsdown'
 
