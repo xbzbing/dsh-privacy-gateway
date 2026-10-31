@@ -99,14 +99,22 @@ export function anyCase(w: string): string {
 
 const RELEASE_WORDS = 'alpha beta rc pre preview post dev canary next nightly snapshot release final ga stable build incubating'.split(' ')
 
+/**
+ * A digit run after a release word or a letter needs no separator, but one
+ * after another digit run does: one digit run beside another could split it
+ * every way there is, and a long one with no match took exponential time.
+ */
 const VERSION_RANGE = new RegExp(
   '^(?:[~^]|[<>=!~]=?|==)?[vV]?\\d+(?:\\.\\d+)+' +
-    `(?:[-+._]?(?:(?:${RELEASE_WORDS.map(anyCase).join('|')})\\d*|[abcmABCM]\\d+|\\d+))*$`,
+    `(?:[-+._]?(?:${RELEASE_WORDS.map(anyCase).join('|')})\\d*|[-+._]?[abcmABCM]\\d+|[-+._]\\d+)*$`,
 )
+
+/** The longest version looked at: no release's version is longer, and the test stays cheap. */
+const MAX_VERSION = 64
 
 /** A release's version (^4.0.0-beta.1, 9.2.0-beta1): published for anyone to read, no secret. */
 export function versionValue(v: string): boolean {
-  return VERSION_RANGE.test(v)
+  return v.length <= MAX_VERSION && VERSION_RANGE.test(v)
 }
 
 const SKILL_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)+$/

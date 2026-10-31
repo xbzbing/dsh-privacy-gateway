@@ -4,9 +4,11 @@ import { asJSON, jsonEscape, KEPT, SIGNATURE_KEYS, walkJSON } from './json.ts'
 
 /**
  * A placeholder's body, without its braces, as a model may write one back:
- * API_KEY_k3v9x2mq, api_key_k3v9x2mq, API_KEY_K3V9X2MQ.
+ * API_KEY_k3v9x2mq, api_key_k3v9x2mq, API_KEY_K3V9X2MQ. A whole word, with a
+ * kind of 24 characters at most: tried from every place in a long word, an
+ * unbounded kind read the rest of it each time.
  */
-const PLACEHOLDER_BODY = /[A-Za-z][A-Za-z0-9_]*_[A-Za-z2-7]{8}/g
+const PLACEHOLDER_BODY = /(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_]{0,23}_[A-Za-z2-7]{8}(?![A-Za-z0-9_])/g
 
 /** A placeholder as the masker writes it: one the table lacks is counted as unmapped (design §13 R11). */
 const STRICT = /\{\{[A-Z][A-Z0-9_]*_[a-z2-7]{8}\}\}/g
@@ -248,7 +250,7 @@ export class Restorer {
     for (const m of s.matchAll(PLACEHOLDER_BODY)) {
       let a = m.index
       let z = a + m[0].length
-      if (a < last || isWordChar(s[a - 1]) || isWordChar(s[z])) continue
+      if (a < last) continue
       const p = canonical(m[0])
       const v = this.#table.get(p)
       if (v === undefined) continue

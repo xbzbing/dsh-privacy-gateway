@@ -41,6 +41,11 @@ const p = (r: Omit<Rule, 'cat'>): Rule => ({ ...r, cat: 'personal' })
 const QUOTE = `(?:\\\\?["'])?`
 /** The characters of a secret's value. */
 const SECRET_CH = `[A-Za-z0-9_\\-./+=~!@#%^&*]`
+/**
+ * The most of them a value after a name is read to: = is one of them, so in
+ * token=token=… the value from every name ran to the end of the text.
+ */
+const MAX_SECRET = 1024
 /** What a field holding a secret has in its name: DB_PASSWORD, apiKey, x-api-key, client_secret. */
 const SECRET_NAMES = ['password', 'passwd', 'secret', 'token', 'api[_-]?key', 'access[_-]?key', 'private[_-]?key', 'credential']
 
@@ -104,13 +109,14 @@ export const rules: readonly Rule[] = [
     markers: ['hf_', 'gsk_', 'xai-', 'npm_', 'pypi-', 'dop_v1_', 'SG.'],
     bound: TOKEN_CH,
   }),
-  s({ kind: 'TOKEN', re: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, markers: ['eyJ'], bound: TOKEN_CH }),
+  // from where a run of token characters starts only: from each eyJ in a long run, the pattern read the rest of it
+  s({ kind: 'TOKEN', re: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, markers: ['eyJ'], bound: TOKEN_CH }),
   // the password of user:password@host, or of :password@host as a Redis URL has it with no user
   s({ kind: 'PASSWORD', re: /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:@/?#"'<>]*:([^\s@/?#"'<>]{3,})@/dy, fold: ['://'], anchor: scheme, ok: notAVariable, at: hiddenInURL }),
   // password = …, API_KEY: "…", as .env files and configs have them
   s({
     kind: 'SECRET',
-    re: new RegExp(`(?:${SECRET_NAMES.join('|')})[A-Za-z0-9_.-]{0,64}${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}(${SECRET_CH}{8,})`, 'yid'),
+    re: new RegExp(`(?:${SECRET_NAMES.join('|')})[A-Za-z0-9_.-]{0,64}${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}(${SECRET_CH}{8,${MAX_SECRET}})`, 'yid'),
     fold: SECRET_STARTS,
     anchor: at,
     ok: secretValue,
@@ -119,7 +125,7 @@ export const rules: readonly Rule[] = [
   // a field called key and nothing more ("key": "oc_sk_…"): only a long value of letters and digits both
   s({
     kind: 'SECRET',
-    re: new RegExp(`${QUOTE}key${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}(${SECRET_CH}{16,})`, 'yid'),
+    re: new RegExp(`${QUOTE}key${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}(${SECRET_CH}{16,${MAX_SECRET}})`, 'yid'),
     fold: ['key'],
     anchor: bareKey,
     ok: secretValue,
@@ -133,7 +139,7 @@ export const rules: readonly Rule[] = [
   s({
     kind: 'SECRET',
     re: new RegExp(
-      `(?:${SECRET_NAMES.join('|')}|pwd|api[ ]key|access[ ]key|secret[ ]key|key|\\bpin(?:[ ]?code)?)${QUOTE}[ \\t]*(?:[为為是][ \\t]*[:：]?|：)[ \\t]*(?:\\\\?["'“「])?(${SECRET_CH}{3,}[A-Za-z0-9_\\-/+=~!@#%^&*])`,
+      `(?:${SECRET_NAMES.join('|')}|pwd|api[ ]key|access[ ]key|secret[ ]key|key|\\bpin(?:[ ]?code)?)${QUOTE}[ \\t]*(?:[为為是][ \\t]*[:：]?|：)[ \\t]*(?:\\\\?["'“「])?(${SECRET_CH}{3,${MAX_SECRET}}[A-Za-z0-9_\\-/+=~!@#%^&*])`,
       'yid',
     ),
     markers: ['为', '為', '是', '：'],

@@ -29,6 +29,8 @@ const TOKEN = /[!#$%&'*+.^_`|~0-9A-Za-z-]/
 const VALUE_END = ';\t\n\r "\'`\\'
 /** Where an unquoted cookie string ends: its line's end or a quote around it. */
 const REGION_END = '\n\r"\'`\\'
+/** Where a named cookie's value ends: as a pair's does, or at a query's & or markup. */
+const NAMED_END = VALUE_END + '&<>,'
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -36,6 +38,47 @@ interface Ctx {
   s: string
   keep: Set<string>
   out: Found[]
+  next: Next
+}
+
+/**
+ * Where the next of some characters is in one string, remembered: asked again
+ * from a later place that is not past the one found, the answer is the same.
+ * A text with a cookie field on every line asks from each of them, and
+ * scanning to the end each time was quadratic.
+ */
+class Next {
+  readonly #s: string
+  readonly #memo = new Map<string, [from: number, at: number]>()
+
+  constructor(s: string) {
+    this.#s = s
+  }
+
+  /** s.indexOf(needle, i), or s.length where there is none. */
+  index(needle: string, i: number): number {
+    return this.#find(`=${needle}`, i, () => {
+      const at = this.#s.indexOf(needle, i)
+      return at < 0 ? this.#s.length : at
+    })
+  }
+
+  /** The first place at or after i whose character is one of `set`, or s.length. */
+  any(set: string, i: number): number {
+    return this.#find(`[${set}`, i, () => {
+      let k = i
+      while (k < this.#s.length && !set.includes(this.#s[k] as string)) k++
+      return k
+    })
+  }
+
+  #find(key: string, i: number, scan: () => number): number {
+    const m = this.#memo.get(key)
+    if (m && i >= m[0] && i <= m[1]) return m[1]
+    const at = scan()
+    this.#memo.set(key, [i, at])
+    return at
+  }
 }
 
 /** The value s[a:b] of cookie `name`, masked unless kept or short; an outer pair of double quotes stays. */
@@ -51,12 +94,12 @@ function value(c: Ctx, name: string, a: number, b: number): void {
 /**
  * The pairs of a cookie string in s[from:to] (a Cookie: header's, curl -b's):
  * name=value; name=value … until a piece that is no pair (the prose after
- * it). `first` takes only the first, as Set-Cookie's attributes are no cookies.
+ * it). `first` takes only the first, as Set-Cookie's attributes are no
+ * cookies. Where it stopped reading.
  */
 function pairs(c: Ctx, from: number, to: number, first: boolean): number {
   const s = c.s
   let i = from
-  let n = 0
   while (i < to) {
     while (i < to && (s[i] === ' ' || s[i] === '\t' || s[i] === ';')) i++
     const ns = i
@@ -65,41 +108,43 @@ function pairs(c: Ctx, from: number, to: number, first: boolean): number {
     const name = s.slice(ns, i)
     const vs = ++i
     if (s[i] === '"') {
-      const q = s.indexOf('"', i + 1)
-      i = q >= 0 && q < to ? q + 1 : to
+      const q = c.next.index('"', i + 1)
+      i = q < to ? q + 1 : to
     } else {
-      while (i < to && !VALUE_END.includes(s[i] as string)) i++
+      i = Math.min(c.next.any(VALUE_END, i), to)
     }
     value(c, name, vs, i)
-    n++
     if (first) break
   }
-  return n
-}
-
-/** The end of an unquoted cookie string that starts at s[i]. */
-function regionEnd(s: string, i: number): number {
-  while (i < s.length && !REGION_END.includes(s[i] as string)) i++
   return i
 }
 
-/** The end of the quoted string whose opening quote ends at s[i-1]: its closing quote (`quote`, \" for \"), or the line's end. */
-function quotedEnd(s: string, i: number, quote: string): number {
-  const q = s.indexOf(quote, i)
-  const nl = s.indexOf('\n', i)
-  if (q < 0) return nl < 0 ? s.length : nl
-  return nl >= 0 && nl < q ? nl : q
+/** The end of an unquoted cookie string that starts at s[i]. */
+function regionEnd(c: Ctx, i: number): number {
+  return c.next.any(REGION_END, i)
 }
 
-const NAMED_FIELD = /([A-Za-z0-9_.$-]*cookies?[A-Za-z0-9_$-]*)(\\?["'])?[ \t]*[:=][ \t]*/gi
+/** The end of the quoted string whose opening quote ends at s[i-1]: its closing quote (`quote`, \" for \"), or the line's end. */
+function quotedEnd(c: Ctx, i: number, quote: string): number {
+  return Math.min(c.next.index(quote, i), c.next.index('\n', i))
+}
+
+/**
+ * A name starts where a run of name characters does, and is at most 64 of
+ * them on each side of cookie: tried from every place in a long run, the
+ * pattern read the rest of it each time.
+ */
+const NAMED_FIELD = /(?<![A-Za-z0-9_.$-])([A-Za-z0-9_.$-]{0,64}cookies?[A-Za-z0-9_$-]{0,64})(\\?["'])?[ \t]*[:=][ \t]*/gi
 const DICT_PAIR = /\\?["']([^"'\\\n]{1,128})\\?["'][ \t]*:[ \t]*\\?["']([^"'\\\n]*)\\?["']/dg
 
 /** A field whose name has cookie in it: Cookie: …, Set-Cookie: …, "cookie": "…", BAIDU_COOKIE=…, document.cookie = "…", cookies={"BDUSS": "…"}. */
 function namedFields(c: Ctx): void {
   const s = c.s
+  // a field inside the cookie string read before is one of its pairs, read already
+  let read = 0
   for (const m of s.matchAll(NAMED_FIELD)) {
+    if (m.index < read) continue
     const name = (m[1] as string).toLowerCase()
-    if (m.index > 0 && /[A-Za-z0-9_]/.test(s[m.index - 1] as string)) continue
     const first = name.endsWith('set-cookie')
     let i = m.index + m[0].length
     if (s[i] === '{') {
@@ -110,13 +155,14 @@ function namedFields(c: Ctx): void {
         const g = (d.indices as Array<[number, number]>)[2] as [number, number]
         value(c, d[1] as string, i + g[0], i + g[1])
       }
+      read = end
       continue
     }
     let quote = ''
     if (s[i] === '\\' && (s[i + 1] === '"' || s[i + 1] === "'")) quote = s.slice(i, i + 2)
     else if (s[i] === '"' || s[i] === "'" || s[i] === '`') quote = s[i] as string
     i += quote.length
-    pairs(c, i, quote ? quotedEnd(s, i, quote) : regionEnd(s, i), first)
+    read = pairs(c, i, quote ? quotedEnd(c, i, quote) : regionEnd(c, i), first)
   }
 }
 
@@ -128,7 +174,7 @@ function curlCookies(c: Ctx): void {
   for (const m of s.matchAll(CURL_COOKIE)) {
     const quote = m[1] ?? ''
     const i = m.index + m[0].length
-    const end = quote ? quotedEnd(s, i, quote) : (() => { let k = i; while (k < s.length && !/\s/.test(s[k] as string)) k++; return k })()
+    const end = quote ? quotedEnd(c, i, quote) : (() => { let k = i; while (k < s.length && !/\s/.test(s[k] as string)) k++; return k })()
     if (!s.slice(i, end).includes('=')) continue
     pairs(c, i, end, false)
   }
@@ -184,16 +230,19 @@ function namedCookies(c: Ctx, names: readonly string[]): void {
     `(?:^|[^A-Za-z0-9_.-])(${names.map(escapeRe).join('|')}|__Secure-[A-Za-z0-9_.-]+|__Host-[A-Za-z0-9_.-]+)(?:=|\\\\?["'][ \\t]*:[ \\t]*\\\\?["'])`,
     'g',
   )
+  // a name inside the value read before is part of that value
+  let read = 0
   for (const m of s.matchAll(re)) {
+    if (m.index < read) continue
     const vs = m.index + m[0].length
     let i = vs
     if (m[0].endsWith('=') && s[i] === '"') {
-      const q = s.indexOf('"', i + 1)
-      i = q < 0 ? s.length : q + 1
+      i = Math.min(c.next.index('"', i + 1) + 1, s.length)
     } else {
-      while (i < s.length && !(VALUE_END + '&<>,').includes(s[i] as string)) i++
+      i = c.next.any(NAMED_END, i)
     }
     value(c, m[1] as string, vs, i)
+    read = i
   }
 }
 
@@ -201,7 +250,7 @@ function namedCookies(c: Ctx, names: readonly string[]): void {
 export function cookieSpans(s: string, options: CookieOptions | undefined, lower: () => string): Found[] {
   const names = [...COOKIE_NAMES, ...(options?.names ?? []).map((n) => n.trim()).filter((n) => n !== '')]
   const keep = new Set((options?.keep ?? DEFAULT_COOKIE_KEEP).map((n) => n.trim().toLowerCase()))
-  const c: Ctx = { s, keep, out: [] }
+  const c: Ctx = { s, keep, out: [], next: new Next(s) }
   const l = lower()
   if (l.includes('cookie')) {
     namedFields(c)
