@@ -7,6 +7,7 @@ import type { Overview } from '../remote.ts'
 import type { Key, T } from './locales.ts'
 import { fetchOverview, type ClientCtx } from './rpc.ts'
 import { bars, timeLabel, took, warnings, type Range } from './view.ts'
+import { VendorView } from './VendorView.ts'
 
 const REFRESH_MS = 15_000
 const LIMIT = 50
@@ -83,13 +84,23 @@ function Totals_(props: { t: Totals; tr: T }): ReactNode {
     h(Stat, { label: tr('stat.restored'), value: t.restored, ...(t.restoredInTools > 0 ? { sub: tr('stat.inTools', { n: t.restoredInTools }) } : {}) }),
     h(Stat, { label: tr('stat.unmapped'), value: t.unmapped, ...(t.unmapped > 0 ? { tone: 'warn' as const } : {}) }),
     h(Stat, { label: tr('stat.failed'), value: t.failed, ...(t.failed > 0 ? { tone: 'error' as const } : {}) }),
+    (t.warned ?? 0) > 0 ? h(Stat, { label: tr('stat.warned'), value: t.warned, tone: 'warn' }) : null,
+    (t.blocked ?? 0) > 0 ? h(Stat, { label: tr('stat.blocked'), value: t.blocked, tone: 'warn' }) : null,
+    (t.exfil ?? 0) > 0
+      ? h(Stat, { label: tr('stat.exfil'), value: t.exfil, tone: 'error', ...((t.exfilBlocked ?? 0) > 0 ? { sub: tr('stat.exfilBlocked', { n: t.exfilBlocked }) } : {}) })
+      : null,
   )
 }
 
-function Record_(props: { r: MaskRecord; open: boolean; toggle: () => void; tr: T }): ReactNode {
+function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: () => void; tr: T; viewable: boolean }): ReactNode {
   const { r, tr } = props
+  const [viewing, setViewing] = useState(false)
   const where = [r.host, r.model].filter(Boolean).join(' · ')
-  const right = r.failed ? h('span', { className: 'pgw-row__fail' }, tr('recent.failed')) : h('span', null, tr('recent.places', { n: r.n }))
+  const right = r.failed
+    ? h('span', { className: 'pgw-row__fail' }, tr('recent.failed'))
+    : r.blocked
+      ? h('span', { className: 'pgw-row__fail' }, tr('recent.blocked'))
+      : h('span', { className: r.exfil ? 'pgw-row__fail' : undefined }, tr('recent.places', { n: r.n }))
   return h(
     Fragment,
     null,
@@ -105,48 +116,63 @@ function Record_(props: { r: MaskRecord; open: boolean; toggle: () => void; tr: 
       ? h(
           'div',
           { className: 'pgw-detail' },
+          r.exfil ? h('div', { className: 'pgw-warn pgw-warn--error' }, tr('recent.exfil', { hosts: (r.exfilHosts ?? []).join(', ') })) : null,
           r.values.length === 0
             ? h('div', { className: 'pgw-empty' }, tr('recent.noValues'))
             : h(
                 'table',
                 null,
-                h('thead', null, h('tr', null, ...(['col.placeholder', 'col.kind', 'col.finder', 'col.head', 'col.len', 'col.n'] as Key[]).map((k) => h('th', { key: k }, tr(k))))),
+                h('thead', null, h('tr', null, ...(['col.placeholder', 'col.kind', 'col.finder', 'col.head', 'col.len', 'col.n', 'col.action'] as Key[]).map((k) => h('th', { key: k }, tr(k))))),
                 h(
                   'tbody',
                   null,
                   r.values.map((v) =>
-                    h('tr', { key: v.placeholder }, h('td', null, v.placeholder), h('td', null, v.kind), h('td', null, v.finder), h('td', null, v.head ? `${v.head}…` : ''), h('td', null, v.len), h('td', null, v.n)),
+                    h(
+                      'tr',
+                      { key: v.placeholder },
+                      h('td', null, v.placeholder),
+                      h('td', null, v.kind),
+                      h('td', null, v.finder),
+                      h('td', null, v.head ? `${v.head}…` : ''),
+                      h('td', null, v.len),
+                      h('td', null, v.n),
+                      h('td', null, v.action ? tr(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
+                    ),
                   ),
                 ),
               ),
+          props.viewable && !viewing ? h('button', { type: 'button', className: 'pgw-btn pgw-detail__btn', onClick: () => setViewing(true) }, tr('view.open')) : null,
+          props.viewable && viewing ? h(VendorView, { ctx: props.ctx, t: tr, record: r, onClose: () => setViewing(false) }) : null,
         )
       : null,
   )
 }
 
-export function StatsCard(props: { ctx: ClientCtx; t: T }): ReactNode {
+export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean }): ReactNode {
   const { t } = props
   const [state, reload, busy] = useOverview(props.ctx)
   const [range, setRange] = useState<Range>('today')
   const [open, setOpen] = useState<number | null>(null)
+  const cardClass = `pgw-card${props.panel ? ' pgw-card--panel' : ''}`
   const head = (extra: ReactNode[]): ReactNode =>
     h(
       'div',
       { className: 'pgw-head' },
-      h('h3', { className: 'pgw-title' }, t('card.title')),
+      props.panel ? null : h('h3', { className: 'pgw-title' }, t('card.title')),
       ...extra,
       h('span', { className: 'pgw-spacer' }),
       h('button', { type: 'button', className: 'pgw-btn', onClick: reload, disabled: busy }, t('card.refresh')),
     )
   if (state.status !== 'ready') {
-    return h('section', { className: 'pgw-card' }, head([]), h('div', { className: 'pgw-empty' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
+    return h('section', { className: cardClass }, head([]), h('div', { className: 'pgw-empty' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
   }
   const o = state.data
   const totals = o.stats[range]
   const time = took(totals)
+  const viewable = new Set(o.vendorView ? (o.views ?? []) : [])
   return h(
     'section',
-    { className: 'pgw-card' },
+    { className: cardClass },
     head([
       h('span', { key: 'b', className: `pgw-badge pgw-badge--${o.active ? 'on' : 'off'}` }, t(o.active ? 'card.on' : 'card.off')),
       h('span', { key: 'v', className: 'pgw-meta' }, t('card.values', { n: o.values })),
@@ -173,7 +199,9 @@ export function StatsCard(props: { ctx: ClientCtx; t: T }): ReactNode {
       : h(
           'div',
           { className: 'pgw-list' },
-          o.recent.map((r) => h(Record_, { key: r.key, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), tr: t })),
+          o.recent.map((r) =>
+            h(Record_, { key: r.key, ctx: props.ctx, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), tr: t, viewable: viewable.has(r.key) }),
+          ),
         ),
   )
 }

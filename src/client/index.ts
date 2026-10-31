@@ -1,12 +1,17 @@
 /**
- * dsh-privacy-gateway client half: the statistics card, in the
- * `plugins.detail.section` slot of this bundle's detail page. It sits under
- * the page's own content, so the config form the host renders stays as it is.
+ * dsh-privacy-gateway client half:
+ *  - the statistics card, in the `plugins.detail.section` slot of this
+ *    bundle's detail page, under the page's own content (the config form the
+ *    host renders stays as it is);
+ *  - the Privacy tab of the session's right sidebar, while the config's
+ *    showPanel is on (docs/adr/0017).
  */
 import { createElement as h } from 'react'
 
 import { DICTIONARIES, NS, type T } from './locales.ts'
+import { watchShowPanel } from './panelConfig.ts'
 import type { ClientCtx } from './rpc.ts'
+import { registerSidebarTab, registryOf } from './sidebar.ts'
 import { StatsCard } from './StatsCard.ts'
 import { ensureStyles } from './styles.ts'
 
@@ -32,6 +37,41 @@ function apply(ctx: ClientCtx): void {
     )
     return typeof handle === 'function' ? (handle as () => void) : undefined
   }, 'dsh-privacy-gateway: statistics card')
+
+  // the sidebar tab: registered while showPanel is on and the sidebar's registry is there
+  let want = false
+  let release: (() => void) | undefined
+  let sidebarCtx: ClientCtx | undefined
+  const unmount = (): void => {
+    const r = release
+    release = undefined
+    r?.()
+  }
+  const reconcile = (): void => {
+    const target = sidebarCtx ?? ctx
+    if (want && !release && registryOf(target)) release = registerSidebarTab(target, t)
+    else if (!want) unmount()
+  }
+  ctx.effect(() => {
+    const stop = watchShowPanel(ctx, (on) => {
+      want = on
+      reconcile()
+    })
+    return () => {
+      stop()
+      want = false
+      unmount()
+    }
+  }, 'dsh-privacy-gateway: sidebar tab')
+  // the registry may come after this plugin, or never: waited for apart from the plugin's own inject list
+  ctx.inject?.(['sidebarRightTabs'], (child) => {
+    sidebarCtx = child
+    reconcile()
+    child.effect(() => () => {
+      if (sidebarCtx === child) sidebarCtx = undefined
+      unmount()
+    }, 'dsh-privacy-gateway: sidebar registry')
+  })
 }
 
 module.exports = { name, inject, apply }

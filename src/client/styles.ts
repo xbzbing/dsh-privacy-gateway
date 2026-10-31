@@ -45,6 +45,19 @@ const CSS = `
 .pgw-detail table{border-collapse:collapse;width:100%}
 .pgw-detail th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:3px 8px 3px 0}
 .pgw-detail td{padding:3px 8px 3px 0;font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:nowrap}
+.pgw-tab-icon{flex:none;vertical-align:-3px;margin-right:4px}
+.pgw-card--panel{border:none;border-radius:0;background:transparent;padding:12px}
+.pgw-detail__btn{margin-top:8px}
+.pgw-check{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.pgw-view{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}
+.pgw-view__scroll{max-height:420px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1,transparent)}
+.pgw-view__table{border-collapse:collapse;width:100%;table-layout:fixed}
+.pgw-view__table th{position:sticky;top:0;background:var(--dsw-alias-bg-layer-2);font-weight:500;color:var(--dsw-alias-label-tertiary);text-align:left;padding:4px 8px}
+.pgw-view__table th:first-child,.pgw-view__n{width:44px}
+.pgw-view__n{color:var(--dsw-alias-label-tertiary);text-align:right;font-variant-numeric:tabular-nums;padding:2px 8px;vertical-align:top}
+.pgw-detail .pgw-view__code{font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:pre-wrap;word-break:break-all;padding:2px 8px;vertical-align:top;border-left:1px solid var(--dsw-alias-border-l2)}
+.pgw-view__mark{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 18%,transparent);color:inherit;border-radius:3px;padding:0 2px}
+.pgw-view__mark--agent{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e0982e) 18%,transparent)}
 `
 
 const ID = 'dsh-privacy-gateway-styles'

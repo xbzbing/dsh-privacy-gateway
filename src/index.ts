@@ -7,6 +7,7 @@ import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
+import { ViewStore } from './views.ts'
 import { loadKey } from './redact/key.ts'
 
 /**
@@ -82,7 +83,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     keepRecords: cfg.keepRecords,
     logger: ctx.logger,
   })
-  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger })
+  // the vendor view keeps the bodies as they went, in memory only
+  const views = cfg.vendorView ? new ViewStore() : undefined
+  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, ...(views ? { views } : {}) })
   const face: PrivacyFace = {
     get active() {
       return engine.active
@@ -124,7 +127,14 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         values: engine.values,
         stats: records.stats(),
         recent: records.recent(limit),
+        vendorView: cfg.vendorView,
+        views: views?.keys() ?? [],
+        showPanel: cfg.showPanel,
       }),
+      vendorView: (key) => {
+        const body = views?.get(key)
+        return body === undefined ? null : { key, body }
+      },
     }
     let disposed = false
     ctx.effect(() => () => {

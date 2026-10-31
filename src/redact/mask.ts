@@ -45,6 +45,8 @@ export interface MaskResult {
   hits: Hit[]
   /** The request body's `model`, where it names one (maskJSON). */
   model?: string
+  /** Each warned value as written in its string, with its placeholder: for the vendor view only, never kept (docs/adr/0016). */
+  warned?: Array<[written: string, placeholder: string]>
 }
 
 /** A placeholder as the masker writes it. */
@@ -147,6 +149,7 @@ interface Pass {
   route: string
   preview: boolean
   hits: Hit[]
+  warned?: Array<[string, string]>
 }
 
 /**
@@ -268,7 +271,9 @@ export class Masker {
       const action = o.actions?.[f.kind]
       const h = hint(f.kind, v, PERSONAL_KINDS.has(f.kind))
       if (action !== undefined) {
-        pass.hits.push({ placeholder: tagOf(this.#key, f.kind, v), kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len, action })
+        const tag = tagOf(this.#key, f.kind, v)
+        pass.hits.push({ placeholder: tag, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len, action })
+        if (action === 'warn' && pass.warned) pass.warned.push([written, tag])
         // a preview never shows a value: it has the placeholder there still
         if (!pass.preview) continue
       }
@@ -301,7 +306,7 @@ export class Masker {
     const args = argPaths(doc, body)
     const defs = definitions(doc)
     const { protectTools, protectEnvBlock } = this.#options
-    const pass: Pass = { route, preview: false, hits: [] }
+    const pass: Pass = { route, preview: false, hits: [], warned: [] }
     let n = 0
     const out = walkJSON(body, (path, key, s) => {
       if (protectTools && under(path, TOOL_ROOTS)) return s
@@ -313,6 +318,9 @@ export class Masker {
     // JSON.parse took it, so the walker must too: anything else is our bug
     if (out === null) throw new Error('request body is JSON but could not be walked')
     const model = typeof doc.model === 'string' ? doc.model : undefined
-    return model === undefined ? { text: out, n, hits: pass.hits } : { text: out, n, hits: pass.hits, model }
+    const r: MaskResult = { text: out, n, hits: pass.hits }
+    if (model !== undefined) r.model = model
+    if (pass.warned && pass.warned.length > 0) r.warned = pass.warned
+    return r
   }
 }

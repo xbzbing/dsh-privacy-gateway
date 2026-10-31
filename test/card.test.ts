@@ -26,11 +26,18 @@ test('the service answers privacyGateway/overview with the latest records capped
       asked.push(limit)
       return overview()
     },
+    vendorView: (key: number) => (key === 7 ? { key, body: '{}' } : null),
   })
   await fiber
   const svc = ctx.get(NAMESPACE) as PrivacyGatewayService
   assert.ok(svc)
-  assert.deepEqual(remoteMethods(svc), [{ method: 'overview', invocation: { kind: 'direct' } }])
+  assert.deepEqual(
+    remoteMethods(svc).map((m) => m.method).sort(),
+    ['overview', 'vendorView'],
+  )
+  assert.deepEqual(await svc.vendorView({ key: 7 }), { key: 7, body: '{}' })
+  assert.equal(await svc.vendorView({ key: 8 }), null)
+  assert.equal(await svc.vendorView({ key: 'x' as never }), null)
   assert.equal((svc as unknown as { typertRemote: { namespace: string } }).typertRemote.namespace, 'privacyGateway')
   assert.ok(isOverview(await svc.overview({ limit: 1000 })))
   await svc.overview({})
@@ -91,4 +98,27 @@ test('the manifest ships the client half for the web platform', () => {
   assert.ok(pkg.dsh.client?.inject?.includes('@deepseek-ai/dsh-client-connection'))
   const client = readFileSync(join(root, 'src/client/index.ts'), 'utf8')
   assert.match(client, new RegExp(`PACKAGE = '${pkg.name}'`))
+})
+
+test('the side-by-side view pretty-prints JSON, picks out each replaced place, and keeps the changed lines only when asked', async () => {
+  const { viewLines } = await import('../src/client/view.ts')
+  const body = JSON.stringify({ messages: [{ role: 'user', content: 'key {{API_KEY_aaaabbbb}} and sk-proj-FAKEfake1234' }, { role: 'assistant', content: 'ok' }] })
+  const all = viewLines(body, ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], false)
+  assert.ok(all.lines.length > 3)
+  const only = viewLines(body, ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], true)
+  assert.equal(only.lines.length, 1)
+  assert.deepEqual(
+    only.lines[0]?.parts.filter((p) => p.id).map((p) => p.id),
+    ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'],
+  )
+  assert.equal(only.lines[0]?.parts.map((p) => p.text).join('').trim(), '"content": "key {{API_KEY_aaaabbbb}} and sk-proj-FAKEfake1234"')
+  assert.equal(viewLines(body, [], false, 2).truncated, true)
+})
+
+test('showPanel is read from the namespace whose schema has this plugin\'s fields', async () => {
+  const { showPanelOf } = await import('../src/client/panelConfig.ts')
+  const ours = { dict: { protectEnvBlock: {}, cookieKeep: {}, showPanel: {} } }
+  assert.equal(showPanelOf([{ ns: 'other', schema: { dict: { showPanel: {} } }, value: { showPanel: true } }]), undefined)
+  assert.equal(showPanelOf([{ ns: 'x', schema: ours, value: { showPanel: true } }]), true)
+  assert.equal(showPanelOf([{ ns: 'x', schema: ours, value: {} }]), false)
 })

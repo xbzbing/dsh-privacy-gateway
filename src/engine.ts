@@ -2,7 +2,9 @@ import type { ResolvedConfig } from './config.ts'
 import { valuesOf, whatOf, RecordStore, type MaskRecord } from './records.ts'
 import { ValueTable } from './redact/known.ts'
 import { Masker, type Hit, type MaskResult } from './redact/mask.ts'
+import { jsonEscape } from './redact/json.ts'
 import { newTally, Restorer, type StreamRestorer, type Tally } from './redact/restore.ts'
+import { hideWarned, type ViewStore } from './views.ts'
 
 /** Where a request goes, as the record keeps it. */
 export interface RequestInfo {
@@ -61,6 +63,8 @@ export interface EngineOptions {
   /** Where the records go; a memory-only one by default. */
   records?: RecordStore
   logger?: EngineLogger
+  /** Where the bodies as they went are kept for the vendor view (config vendorView); none keeps none. */
+  views?: ViewStore
 }
 
 function isLoopback(host: string): boolean {
@@ -80,6 +84,7 @@ export class PrivacyEngine implements RedactionEngine {
   readonly #restorer: Restorer
   readonly records: RecordStore
   readonly #logger: EngineLogger | undefined
+  readonly views: ViewStore | undefined
   /** `/privacy off` turns masking off until `/privacy on` or a restart; the config stays as it is. */
   active = true
 
@@ -98,6 +103,7 @@ export class PrivacyEngine implements RedactionEngine {
     })
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#logger = options.logger
+    this.views = options.views
     this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
   }
 
@@ -139,6 +145,7 @@ export class PrivacyEngine implements RedactionEngine {
       throw new RequestBlocked(blocks)
     }
     const tally: Tally = newTally()
+    const sentText = r.text
     let done = false
     return {
       text: r.text,
@@ -157,7 +164,7 @@ export class PrivacyEngine implements RedactionEngine {
           const left = tally.exfilBlocked > 0 ? `; ${tally.exfilBlocked} placeholders were left in them` : ''
           this.#logger?.warn(`dsh-privacy-gateway: ${tally.exfil} tool calls had a value put back in arguments that name ${hosts.join(', ')}${left}`)
         }
-        this.records.add({
+        const rec = this.records.add({
           ...record,
           restored,
           ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}),
@@ -165,9 +172,21 @@ export class PrivacyEngine implements RedactionEngine {
           ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
           ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
         })
+        if (this.views) this.views.put(rec.key, hideWarned(sentText, warnedForms(r.warned)))
       },
     }
   }
+}
+
+/** Each warned value in the forms a body may have it in: as it is, escaped once (a JSON string) and twice (a tool call's arguments). */
+function warnedForms(warned: MaskResult['warned']): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  for (const [w, p] of warned ?? []) {
+    const once = jsonEscape(w)
+    out.push([w, p])
+    if (once !== w) out.push([once, p], [jsonEscape(once), p])
+  }
+  return out
 }
 
 /** The actions that leave a value unmasked. */

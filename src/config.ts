@@ -61,6 +61,10 @@ export interface PrivacyGatewayConfig {
   keepMegabytes?: number
   /** Records kept in memory for the command and the settings card. */
   keepRecords?: number
+  /** Keep in memory what the vendor got for the latest recorded requests, for the side-by-side view (docs/adr/0016). */
+  vendorView?: boolean
+  /** Offer a Privacy tab in the session's right sidebar (docs/adr/0017). */
+  showPanel?: boolean
 }
 
 export const Config: Schema<PrivacyGatewayConfig> = Schema.object({
@@ -82,6 +86,8 @@ export const Config: Schema<PrivacyGatewayConfig> = Schema.object({
   keepDays: Schema.number().step(1).min(1).default(30),
   keepMegabytes: Schema.number().step(1).min(1).default(100),
   keepRecords: Schema.number().step(1).min(10).default(500),
+  vendorView: Schema.boolean().default(false),
+  showPanel: Schema.boolean().default(false),
 })
 
 export type ResolvedConfig = Required<PrivacyGatewayConfig>
@@ -105,6 +111,8 @@ export const defaults: ResolvedConfig = {
   keepDays: 30,
   keepMegabytes: 100,
   keepRecords: 500,
+  vendorView: false,
+  showPanel: false,
 }
 
 function int(v: unknown, min: number, fallback: number): number {
@@ -153,5 +161,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     keepDays: int(c.keepDays, 1, defaults.keepDays),
     keepMegabytes: int(c.keepMegabytes, 1, defaults.keepMegabytes),
     keepRecords: int(c.keepRecords, 10, defaults.keepRecords),
+    vendorView: bool(c.vendorView, defaults.vendorView),
+    showPanel: bool(c.showPanel, defaults.showPanel),
   }
 }

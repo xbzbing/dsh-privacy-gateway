@@ -5,6 +5,8 @@ import { isOverview } from './view.ts'
 export interface ClientCtx {
   get(key: string): unknown
   effect(cb: () => void | (() => void), label?: string): void
+  /** Runs `callback` once every named service is there (cordis deferred injection). */
+  inject?(deps: string[], callback: (child: ClientCtx) => void): unknown
   slots: {
     inject(name: string, provider: () => unknown): unknown
     register(registration: Record<string, unknown>, component: unknown): unknown
@@ -34,6 +36,27 @@ export async function fetchOverview(ctx: ClientCtx, limit: number, signal?: Abor
     const r = (await rpc.call('/api', 'privacyGateway/overview', { args: { request: { limit } } }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
     if (r?.ok === true && isOverview(r.value)) return { ok: true, value: r.value }
     return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export type VendorViewResult = { ok: true; body: string | null } | { ok: false; message: string }
+
+/** The body kept for record `key` (docs/adr/0016): null when it is no longer kept; never throws. */
+export async function fetchVendorView(ctx: ClientCtx, key: number, signal?: AbortSignal): Promise<VendorViewResult> {
+  let rpc: ConnectionFace['rpc']
+  try {
+    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
+  } catch {
+    rpc = undefined
+  }
+  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
+  try {
+    const r = (await rpc.call('/api', 'privacyGateway/vendorView', { args: { request: { key } } }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
+    if (r?.ok !== true) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+    const v = r.value as { body?: unknown } | null
+    return { ok: true, body: v !== null && typeof v === 'object' && typeof v.body === 'string' ? v.body : null }
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) }
   }

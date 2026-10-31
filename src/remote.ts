@@ -26,11 +26,30 @@ export interface Overview {
   stats: Stats
   /** The latest records, newest first. */
   recent: MaskRecord[]
+  /** The vendor view is on (config vendorView). */
+  vendorView?: boolean
+  /** The keys of the records whose body as it went is kept. */
+  views?: number[]
+  /** The sidebar tab is offered (config showPanel). */
+  showPanel?: boolean
+}
+
+export interface VendorViewRequest {
+  /** The record's key. */
+  key: number
+}
+
+/** A recorded request's body as the vendor got it, a warned value as its placeholder (docs/adr/0016). */
+export interface VendorView {
+  key: number
+  body: string
 }
 
 /** What the service reads from the plugin. */
 export interface OverviewSource {
   overview(limit: number): Overview
+  /** The body kept for `key`, or null when the view is off or it is not kept. */
+  vendorView?(key: number): VendorView | null
 }
 
 export const NAMESPACE = 'privacyGateway'
@@ -51,6 +70,13 @@ export class PrivacyGatewayService extends TypertRemoteService {
   /** The state, the sums and the latest records. */
   async overview(request: OverviewRequest): Promise<Overview> {
     return this.source.overview(clampLimit(request?.limit))
+  }
+
+  /** One recorded request as the vendor got it, or null. */
+  async vendorView(request: VendorViewRequest): Promise<VendorView | null> {
+    const key = request?.key
+    if (typeof key !== 'number' || !Number.isSafeInteger(key)) return null
+    return this.source.vendorView?.(key) ?? null
   }
 }
 
@@ -77,3 +103,4 @@ function markRemote(cls: { prototype: object }, method: string): void {
 }
 
 markRemote(PrivacyGatewayService, 'overview')
+markRemote(PrivacyGatewayService, 'vendorView')

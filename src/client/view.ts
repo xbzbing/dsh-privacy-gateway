@@ -26,14 +26,15 @@ export function bars(m: Record<string, number>, max = 6, others = '…'): Bar[] 
   return shown.map(([label, value]) => ({ label, value, pct: top > 0 ? Math.max(2, Math.round((value / top) * 100)) : 0 }))
 }
 
-export type WarningKey = 'warn.streak' | 'warn.unmapped' | 'warn.inTools'
+export type WarningKey = 'warn.streak' | 'warn.unmapped' | 'warn.inTools' | 'warn.exfil'
 
 /** The signals worth a line of their own (design §7.3), for the range shown. */
 export function warnings(o: Overview, t: Totals): Array<{ key: WarningKey; n: number; tone: 'error' | 'warn' }> {
   const out: Array<{ key: WarningKey; n: number; tone: 'error' | 'warn' }> = []
   if (o.stats.failStreak > 0) out.push({ key: 'warn.streak', n: o.stats.failStreak, tone: 'error' })
   if (t.unmapped > 0) out.push({ key: 'warn.unmapped', n: t.unmapped, tone: 'warn' })
-  if (t.restoredInTools > 0) out.push({ key: 'warn.inTools', n: t.restoredInTools, tone: 'warn' })
+  if ((t.exfil ?? 0) > 0) out.push({ key: 'warn.exfil', n: t.exfil, tone: 'error' })
+  else if (t.restoredInTools > 0) out.push({ key: 'warn.inTools', n: t.restoredInTools, tone: 'warn' })
   return out
 }
 
@@ -56,4 +57,51 @@ export function timeLabel(iso: string, now = new Date()): string {
 export function isOverview(o: unknown): o is Overview {
   const v = o as Partial<Overview> | null
   return typeof v === 'object' && v !== null && typeof v.active === 'boolean' && typeof v.stats === 'object' && v.stats !== null && Array.isArray(v.recent)
+}
+
+/** One line of the side-by-side view: its number, and its pieces, each plain or a replaced place. */
+export interface ViewLine {
+  n: number
+  parts: Array<{ text: string; id?: string }>
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The lines of a body as the side-by-side view shows them (docs/adr/0016):
+ * JSON pretty-printed, each placeholder or made-up key in `ids` a piece of its
+ * own; with `onlyChanged`, the lines that have one. At most `max` lines.
+ */
+export function viewLines(body: string, ids: readonly string[], onlyChanged: boolean, max = 400): { lines: ViewLine[]; truncated: boolean } {
+  let text = body
+  try {
+    text = JSON.stringify(JSON.parse(body), null, 2)
+  } catch {
+    // not JSON: shown as it is
+  }
+  const wanted = [...new Set(ids.filter((id) => id !== ''))].sort((a, b) => b.length - a.length)
+  const re = wanted.length > 0 ? new RegExp(wanted.map(escapeRe).join('|'), 'g') : undefined
+  const lines: ViewLine[] = []
+  let truncated = false
+  const all = text.split('\n')
+  for (let i = 0; i < all.length; i++) {
+    const line = all[i] as string
+    const parts: ViewLine['parts'] = []
+    let last = 0
+    if (re) {
+      for (const m of line.matchAll(re)) {
+        if (m.index > last) parts.push({ text: line.slice(last, m.index) })
+        parts.push({ text: m[0], id: m[0] })
+        last = m.index + m[0].length
+      }
+    }
+    if (onlyChanged && last === 0) continue
+    if (last < line.length || parts.length === 0) parts.push({ text: line.slice(last) })
+    if (lines.length >= max) {
+      truncated = true
+      break
+    }
+    lines.push({ n: i + 1, parts })
+  }
+  return { lines, truncated }
 }
