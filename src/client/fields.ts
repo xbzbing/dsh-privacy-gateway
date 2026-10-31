@@ -32,7 +32,7 @@ interface Base<K extends string> {
 export type FieldSpec =
   | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
   | (Base<'toolGuard'> & { kind: 'choice'; choices: readonly string[]; default: string })
-  | (Base<'words' | 'allow'> & { kind: 'list'; default: readonly string[]; anyCase: boolean })
+  | (Base<'words' | 'allow'> & { kind: 'list'; default: readonly string[]; anyCase: boolean; risky: 'add' | 'remove' })
   | (Base<'keepDays'> & { kind: 'count'; min: number; default: number })
   | (Base<'excludeProviders'> & { kind: 'providers'; default: readonly string[] })
 
@@ -45,8 +45,9 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'shape', group: 'mask', kind: 'switch', default: false, half: true },
   { key: 'toolGuard', group: 'mask', kind: 'choice', choices: ['off', 'warn', 'block'], default: 'off', half: true },
   // words are matched as written, allow in any case (README, config.ts)
-  { key: 'words', group: 'lists', kind: 'list', default: [], anyCase: false, half: true },
-  { key: 'allow', group: 'lists', kind: 'list', default: [], anyCase: true, half: true, risk: 'send' },
+  // a word taken out of words, like a value put into allow, goes as it is from then on
+  { key: 'words', group: 'lists', kind: 'list', default: [], anyCase: false, half: true, risk: 'send', risky: 'remove' },
+  { key: 'allow', group: 'lists', kind: 'list', default: [], anyCase: true, half: true, risk: 'send', risky: 'add' },
   // off drops the records still waiting to be written; fewer days deletes the older day files
   { key: 'record', group: 'record', kind: 'switch', default: true, half: true, risk: 'delete' },
   { key: 'keepDays', group: 'record', kind: 'count', min: 1, default: 30, half: true, risk: 'delete' },
@@ -57,18 +58,19 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'excludeProviders', group: 'view', kind: 'providers', default: [], risk: 'send' },
 ]
 
-/** A change that needs confirming: its risk, and what the confirmation names (the entries added, or the counts before and after). */
+/** A change that needs confirming: its risk, and what the confirmation names (the entries added or taken out, or the counts before and after). */
 export interface RiskyChange {
   risk: Risk
   added?: string[]
+  removed?: string[]
   from?: number
   to?: number
 }
 
 /**
  * Whether changing `f` from `before` to `after` needs confirming: a switch
- * turned off, a list or provider choice that gains an entry, a count made
- * smaller. Both values are the form's, read with the field's default.
+ * turned off, a provider choice that gains an entry, a list that gains or
+ * loses one (as its `risky` says), a count made smaller. Both values are the form's, read with the field's default.
  */
 export function riskOf(f: FieldSpec, before: unknown, after: unknown): RiskyChange | undefined {
   if (!f.risk) return undefined
@@ -80,8 +82,17 @@ export function riskOf(f: FieldSpec, before: unknown, after: unknown): RiskyChan
       // provider ids, like allow values, match in any case
       const anyCase = f.kind === 'providers' || f.anyCase
       const norm = (x: string): string => (anyCase ? x.trim().toLowerCase() : x.trim())
-      const had = new Set(listValue(before, f.default).map(norm))
-      const added = listValue(after, f.default).filter((x) => !had.has(norm(x)))
+      const diff = (from: readonly string[], to: readonly string[]): string[] => {
+        const had = new Set(from.map(norm))
+        return to.filter((x) => !had.has(norm(x)))
+      }
+      const old = listValue(before, f.default)
+      const now = listValue(after, f.default)
+      if (f.kind === 'list' && f.risky === 'remove') {
+        const removed = diff(now, old)
+        return removed.length > 0 ? { risk: f.risk, removed } : undefined
+      }
+      const added = diff(old, now)
       return added.length > 0 ? { risk: f.risk, added } : undefined
     }
     case 'count': {

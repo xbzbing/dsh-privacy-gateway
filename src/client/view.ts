@@ -108,7 +108,10 @@ export function readOverview(o: unknown): Overview | undefined {
     ...(o as unknown as Overview),
     values: count(o.values),
     stats: { today, week, month, failStreak: count(o.stats.failStreak) },
-    recent: o.recent.filter(isRecord).map((r) => ({ ...r, n: count(r.n), restored: count(r.restored), unmapped: count(r.unmapped) })),
+    recent: o.recent.filter(isRecord).map(({ valuesOmitted, ...r }) => {
+      const omitted = count(valuesOmitted)
+      return { ...r, n: count(r.n), restored: count(r.restored), unmapped: count(r.unmapped), ...(omitted > 0 ? { valuesOmitted: omitted } : {}) }
+    }),
     ...(Array.isArray(o.views) ? { views: o.views.filter((k): k is number => typeof k === 'number') } : {}),
   }
 }

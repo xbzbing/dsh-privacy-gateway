@@ -270,6 +270,10 @@ test('an overview from another host version is filled in, not trusted as it is',
   assert.equal(odd.stats.failStreak, 0)
   assert.equal(odd.recent.length, 1)
   assert.equal(odd.recent[0]?.n, 0)
+  assert.equal('valuesOmitted' in (odd.recent[0] ?? {}), false)
+  const capped = readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [], valuesOmitted: 12 }, { key: 2, time: 't', values: [], valuesOmitted: 'x' }] })
+  assert.equal(capped?.recent[0]?.valuesOmitted, 12)
+  assert.equal(capped?.recent[1]?.valuesOmitted, undefined)
 })
 
 test('a call fails with a code the page words itself, or the host’s own message', async () => {

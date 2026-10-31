@@ -292,7 +292,8 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
 function riskWords(a: Asking, t: T, name: (entry: string) => string): { title: string; body: string; ack: string } {
   const { change } = a
   const params: Record<string, string | number> = {}
-  if (change.added) params.names = change.added.map(name).join(t('cfg.sep'))
+  const names = change.added ?? change.removed
+  if (names) params.names = names.map(name).join(t('cfg.sep'))
   if (change.from !== undefined) params.from = change.from
   if (change.to !== undefined) params.to = change.to
   return {

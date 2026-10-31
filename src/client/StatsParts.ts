@@ -180,6 +180,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                   ]),
                 ),
               ),
+          r.valuesOmitted ? h('div', { className: 'pgw-meta' }, t('recent.omitted', { n: r.valuesOmitted.toLocaleString() })) : null,
           props.viewable && !viewing ? h('div', null, h(Button, { variant: 'outline', size: 'sm', onClick: () => setViewing(true) }, t('view.open'))) : null,
           props.viewable && viewing ? h(VendorView, { ctx: props.ctx, t, record: r, onClose: () => setViewing(false) }) : null,
         )

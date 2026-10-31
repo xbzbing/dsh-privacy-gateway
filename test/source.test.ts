@@ -74,7 +74,8 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
     await new Promise<void>((resolve) => server.close(() => resolve()))
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
     else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
-    rmSync(home, { recursive: true, force: true })
+    // the disposer flushes the records without waiting, so a last write may still be landing
+    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 })
   }
 }
 
