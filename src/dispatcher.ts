@@ -25,6 +25,8 @@ export interface GatewayLogger {
 export interface MaskingDispatcherOptions {
   /** Lower-case `host` or `host:port` entries never rewritten. */
   excludeHosts?: readonly string[]
+  /** True for a request that goes on as it is, whatever it holds: one a provider in excludeProviders sends (docs/adr/0018). */
+  skip?: () => boolean
   logger?: GatewayLogger
 }
 
@@ -345,6 +347,7 @@ const RANK: Record<LayerRole, number> = { route: 0, proxy: 1 }
 export class MaskingDispatcher extends Dispatcher {
   readonly #engine: RedactionEngine
   readonly #excludeHosts: readonly string[]
+  readonly #skip: (() => boolean) | undefined
   readonly #logger: GatewayLogger | undefined
   #layers: Layer[]
   #seq = 0
@@ -359,6 +362,7 @@ export class MaskingDispatcher extends Dispatcher {
     this.#layers = [{ d: downstream, role: 'proxy', seq: 0 }]
     this.#engine = engine
     this.#excludeHosts = options.excludeHosts ?? []
+    this.#skip = options.skip
     this.#logger = options.logger
   }
 
@@ -471,6 +475,7 @@ export class MaskingDispatcher extends Dispatcher {
 
   #candidate(opts: Options): boolean {
     if (String(opts.method).toUpperCase() !== 'POST' || opts.upgrade || !isReadableBody(opts.body)) return false
+    if (this.#skip?.() === true) return false
     const type = headerValue(opts.headers, 'content-type')
     if (type !== undefined && !type.toLowerCase().includes('json')) return false
     if (this.#excludeHosts.length > 0) {

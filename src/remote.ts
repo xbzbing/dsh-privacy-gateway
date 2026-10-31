@@ -32,6 +32,8 @@ export interface Overview {
   views?: number[]
   /** The sidebar tab is offered (config showPanel). */
   showPanel?: boolean
+  /** Providers whose requests go on unmasked (config excludeProviders). */
+  excludeProviders?: string[]
 }
 
 export interface VendorViewRequest {

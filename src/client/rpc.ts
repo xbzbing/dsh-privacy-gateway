@@ -61,3 +61,40 @@ export async function fetchVendorView(ctx: ClientCtx, key: number, signal?: Abor
     return { ok: false, message: err instanceof Error ? err.message : String(err) }
   }
 }
+
+export interface ProviderEntry {
+  id: string
+  name: string
+}
+
+export type ProvidersResult = { ok: true; providers: ProviderEntry[] } | { ok: false; message: string }
+
+/** The providers with an adapter (`llm/listProviders`), for the excludeProviders choice; never throws. */
+export async function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Promise<ProvidersResult> {
+  let list: unknown
+  try {
+    // the typed remote the models settings page uses, else the raw channel
+    const remote = (ctx as { remote?: { llm?: { listProviders?(): Promise<unknown> } } }).remote
+    if (typeof remote?.llm?.listProviders === 'function') list = await remote.llm.listProviders()
+    else {
+      let rpc: ConnectionFace['rpc']
+      try {
+        rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
+      } catch {
+        rpc = undefined
+      }
+      if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
+      const r = (await rpc.call('/api', 'llm/listProviders', { args: {} }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
+      if (r?.ok !== true) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+      list = r.value
+    }
+    if (!Array.isArray(list)) return { ok: false, message: 'malformed reply' }
+    const providers = list.flatMap((p: unknown) => {
+      const e = p as { id?: unknown; name?: unknown } | null
+      return e !== null && typeof e === 'object' && typeof e.id === 'string' && e.id !== '' ? [{ id: e.id, name: typeof e.name === 'string' && e.name !== '' ? e.name : e.id }] : []
+    })
+    return { ok: true, providers }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+}

@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 
 import { langOf, runPrivacyCommand, type PrivacyFace } from './command.ts'
-import { liveBool, resolveConfig, type PrivacyGatewayConfig } from './config.ts'
+import { liveBool, liveStrings, resolveConfig, type PrivacyGatewayConfig } from './config.ts'
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
+import { bypassedProvider, routeStream } from './providers.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
 import { ViewStore } from './views.ts'
@@ -30,6 +31,8 @@ export interface PluginContext {
   get?(name: string): unknown
   /** cordis: load a plugin (here the card's Remote service) under this one. */
   plugin?(plugin: unknown, config?: unknown): unknown
+  /** cordis: listen to an event; `llm/stream` is a waterfall around each model call. */
+  on?(name: 'llm/stream', listener: (options: { provider?: unknown }, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>): unknown
 }
 
 /** The slice of dsh-commands the plugin uses. */
@@ -116,6 +119,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       })
     })
   })
+  // excluded providers: read on each call, as the detail page's list changes it without remounting
+  const excludedProviders = (): string[] => liveStrings(config.excludeProviders)
   // the settings card's Remote service; the gateway does not depend on it
   if (ctx.plugin) {
     const source: OverviewSource = {
@@ -131,6 +136,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         views: views?.keys() ?? [],
         // read now: the detail page's switch changes it without remounting the plugin
         showPanel: liveBool(config.showPanel, cfg.showPanel),
+        excludeProviders: excludedProviders(),
       }),
       vendorView: (key) => {
         const body = views?.get(key)
@@ -148,8 +154,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       (err: unknown) => ctx.logger.warn('dsh-privacy-gateway: the settings card has no data (typert is not there)', err),
     )
   }
+  ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next))
   ctx.effect(() => {
-    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, logger: ctx.logger })
+    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => bypassedProvider() !== undefined, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
     return () => {
       gateway.dispose()

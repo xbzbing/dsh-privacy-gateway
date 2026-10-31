@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { getGlobalDispatcher } from 'undici'
 
-import { Config, defaults, liveBool, resolveConfig } from '../src/config.ts'
+import { Config, defaults, liveBool, liveStrings, resolveConfig } from '../src/config.ts'
 import { MaskingDispatcher } from '../src/dispatcher.ts'
 import { apply, name } from '../src/index.ts'
 import { stateDir } from '../src/paths.ts'
@@ -56,9 +56,9 @@ test('manifest declares no install-time lifecycle scripts', () => {
 
 test('Config defaults and round-trips through toJSON', () => {
   const parsed = Config({}) as Record<string, unknown>
-  // showPanel is volatile: it comes as a live reference
+  // showPanel and excludeProviders are volatile: they come as live references
   assert.equal(liveBool(parsed.showPanel, true), false)
-  assert.deepEqual({ ...parsed, showPanel: liveBool(parsed.showPanel, true) }, defaults)
+  assert.deepEqual({ ...parsed, showPanel: liveBool(parsed.showPanel, true), excludeProviders: liveStrings(parsed.excludeProviders) }, defaults)
   assert.equal(resolveConfig(Config({ showPanel: true })).showPanel, true)
   assert.equal(resolveConfig({ enabled: false }).enabled, false)
   assert.doesNotThrow(() => JSON.stringify(Config.toJSON()))

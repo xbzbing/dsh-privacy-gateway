@@ -17,6 +17,9 @@ export const ACTIONS: readonly Action[] = ['mask', 'warn', 'block']
 export type ToolGuard = 'off' | 'warn' | 'block'
 
 /** showPanel's description: the client half also knows this plugin's settings by it. */
+/** excludeProviders' description. */
+export const EXCLUDE_PROVIDERS_DESCRIPTION = '不脱敏的 provider / Providers whose requests are not masked'
+
 export const SHOW_PANEL_DESCRIPTION = '在会话右侧栏显示「隐私保护」面板 / Show the Privacy panel in the right sidebar'
 
 /** A volatile config field as cordis hands it over (cosmokit `Volatile`): its current value on each get(). */
@@ -24,17 +27,27 @@ export interface LiveValue<T> {
   get(): T | undefined
 }
 
-/** A boolean field's value now, whether it came as a value or as a live reference. */
-export function liveBool(v: unknown, fallback: boolean): boolean {
-  if (typeof v === 'object' && v !== null && typeof (v as { get?: unknown }).get === 'function') {
+/** A field's value now, whether it came as a value or as a live reference. */
+export function live(v: unknown): unknown {
+  if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof (v as { get?: unknown }).get === 'function') {
     try {
-      const now = (v as LiveValue<unknown>).get()
-      return typeof now === 'boolean' ? now : fallback
+      return (v as LiveValue<unknown>).get()
     } catch {
-      return fallback
+      return undefined
     }
   }
-  return typeof v === 'boolean' ? v : fallback
+  return v
+}
+
+/** A boolean field's value now, whether it came as a value or as a live reference. */
+export function liveBool(v: unknown, fallback: boolean): boolean {
+  const now = live(v)
+  return typeof now === 'boolean' ? now : fallback
+}
+
+/** A string list field's entries now, trimmed, the empty ones dropped. */
+export function liveStrings(v: unknown): string[] {
+  return strings(live(v))
 }
 
 export interface PrivacyGatewayConfig {
@@ -72,6 +85,12 @@ export interface PrivacyGatewayConfig {
   protectTools?: boolean
   /** Extra `host` or `host:port` entries whose requests are never rewritten. */
   excludeHosts?: string[]
+  /**
+   * Provider ids (deepseek, oc2dsh, …) whose model requests go on unmasked and
+   * whose replies are not restored (docs/adr/0018). Volatile: the detail
+   * page's list edits it live.
+   */
+  excludeProviders?: string[] | LiveValue<string[]>
   /** How many values the in-memory table holds before the half used longest ago is dropped. */
   maxValues?: number
   /** Write a record of each masked request to disk; off keeps the statistics in memory only. */
@@ -107,6 +126,7 @@ export const Config = Schema.object({
   protectEnvBlock: Schema.boolean().default(true),
   protectTools: Schema.boolean().default(true),
   excludeHosts: Schema.array(Schema.string()).default([]),
+  excludeProviders: Schema.array(Schema.string()).default([]).volatile().description(EXCLUDE_PROVIDERS_DESCRIPTION),
   maxValues: Schema.number().step(1).min(100).default(5000),
   record: Schema.boolean().default(true),
   keepDays: Schema.number().step(1).min(1).default(30),
@@ -117,7 +137,7 @@ export const Config = Schema.object({
   showPanel: Schema.boolean().default(false).volatile().description(SHOW_PANEL_DESCRIPTION),
 }) as unknown as Schema<PrivacyGatewayConfig>
 
-export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel'>> & { showPanel: boolean }
+export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders'>> & { showPanel: boolean; excludeProviders: string[] }
 
 export const defaults: ResolvedConfig = {
   enabled: true,
@@ -133,6 +153,7 @@ export const defaults: ResolvedConfig = {
   protectEnvBlock: true,
   protectTools: true,
   excludeHosts: [],
+  excludeProviders: [],
   maxValues: 5000,
   record: true,
   keepDays: 30,
@@ -183,6 +204,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     protectEnvBlock: bool(c.protectEnvBlock, defaults.protectEnvBlock),
     protectTools: bool(c.protectTools, defaults.protectTools),
     excludeHosts: strings(c.excludeHosts).map((h) => h.toLowerCase()),
+    excludeProviders: liveStrings(c.excludeProviders),
     maxValues: int(c.maxValues, 100, defaults.maxValues),
     record: bool(c.record, defaults.record),
     keepDays: int(c.keepDays, 1, defaults.keepDays),

@@ -49,13 +49,14 @@ In the default web profile a first install takes effect immediately, with no res
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them ([ADR-0004](docs/adr/0004-protected-regions.md)) |
 | `protectTools` | `true` | Send the request's `tools` array as written |
 | `excludeHosts` | `[]` | `host` or `host:port` entries that are never rewritten |
+| `excludeProviders` | `[]` | Provider ids whose requests are not masked; the Settings section of the plugin's detail page has a checkbox for each, and a change applies from the next model call ([ADR-0018](docs/adr/0018-exclude-providers.md)) |
 | `maxValues` | `5000` | Size of the in-memory value table; when full, the oldest half is dropped |
 | `record` | `true` | Write the masking records to disk; when off, the statistics stay in memory |
 | `keepDays` | `30` | Days of records kept |
 | `keepMegabytes` | `100` | Megabytes of records kept; past it, the oldest days are deleted |
 | `keepRecords` | `500` | Latest records kept in memory |
 | `vendorView` | `false` | Keep in memory the body each recorded request went out with, for the side-by-side view in the statistics card; at most 100 bodies and 64 MiB in all, never on disk ([ADR-0016](docs/adr/0016-vendor-view.md)) |
-| `showPanel` | `false` | Offer a Privacy tab in the session's right sidebar; the Panel section of the plugin's detail page has a switch for it that takes effect at once ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
+| `showPanel` | `false` | Offer a Privacy tab in the session's right sidebar; the Settings section of the plugin's detail page has a switch for it that takes effect at once ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
 
 ## The `/privacy` command
 
