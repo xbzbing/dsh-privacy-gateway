@@ -2,3 +2,7 @@
 # parent directory would otherwise capture `pnpm install`).
 packages:
   - .
+# esbuild's postinstall only checks its platform binary, which the optional
+# @esbuild/* package already ships.
+allowBuilds:
+  esbuild: false

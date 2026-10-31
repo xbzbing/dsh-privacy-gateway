@@ -21,5 +21,8 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "tsdown.config.ts"
+  ],
+  "exclude": [
+    "src/client/**"
   ]
 }

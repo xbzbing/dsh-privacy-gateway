@@ -6,6 +6,7 @@ import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
 import { RecordStore } from './records.ts'
+import type { OverviewSource } from './remote.ts'
 import { loadKey } from './redact/key.ts'
 
 /**
@@ -26,6 +27,8 @@ export interface PluginContext {
   inject?(deps: string[], callback: (child: PluginContext & { commands: CommandsService }) => void): unknown
   /** cordis: the named service, or undefined. */
   get?(name: string): unknown
+  /** cordis: load a plugin (here the card's Remote service) under this one. */
+  plugin?(plugin: unknown, config?: unknown): unknown
 }
 
 /** The slice of dsh-commands the plugin uses. */
@@ -108,6 +111,30 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       })
     })
   })
+  // the settings card's Remote service; the gateway does not depend on it
+  if (ctx.plugin) {
+    const source: OverviewSource = {
+      overview: (limit) => ({
+        active: engine.active,
+        secrets: cfg.secrets,
+        personal: cfg.personal,
+        record: cfg.record,
+        values: engine.values,
+        stats: records.stats(),
+        recent: records.recent(limit),
+      }),
+    }
+    let disposed = false
+    ctx.effect(() => () => {
+      disposed = true
+    })
+    import('./remote.ts').then(
+      ({ PrivacyGatewayService }) => {
+        if (!disposed) ctx.plugin?.(PrivacyGatewayService, source)
+      },
+      (err: unknown) => ctx.logger.warn('dsh-privacy-gateway: the settings card has no data (typert is not there)', err),
+    )
+  }
   ctx.effect(() => {
     const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')

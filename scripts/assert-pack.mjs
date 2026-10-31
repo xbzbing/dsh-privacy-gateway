@@ -26,6 +26,7 @@ const REQUIRED = [
   'cordis.patch.yml',
   'lib/index.js',
   'lib/index.d.ts',
+  'lib/client.js',
   'locale/en.json',
   'locale/zh.json',
   'assets/icon.svg',
