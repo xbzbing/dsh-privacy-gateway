@@ -55,7 +55,7 @@ export interface Hit {
 }
 
 /** How many characters of context each side keeps. */
-export const CONTEXT_CHARS = 32
+export const CONTEXT_CHARS = 80
 
 /** The last (`end`) or first `n` characters of `s` with its runs of white space made one space. */
 export function clip(s: string, n: number, end: boolean): string {

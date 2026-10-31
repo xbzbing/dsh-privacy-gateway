@@ -12,6 +12,7 @@ import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { defaults } from '../src/config.ts'
 import { installGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine } from '../src/engine.ts'
+import { CONTEXT_CHARS } from '../src/redact/mask.ts'
 import { dayOf, RecordStore, whatOf, type MaskRecord } from '../src/records.ts'
 
 const SENTINEL = 'sk-' + 'proj-SENTINELsentinel0123456789abcd'
@@ -296,7 +297,7 @@ test('the context around a value is short, flat, and never holds a value, a warn
   assert.ok(before.startsWith('…') && before.endsWith(' key '), before)
   assert.ok(!before.includes('\n'))
   assert.ok(after.endsWith('…'))
-  assert.ok([...before].length <= 33)
+  assert.ok([...before].length <= CONTEXT_CHARS + 1)
   assert.deepEqual(key.at, { path: 'messages.1.content', role: 'user' })
   // the warned email went as written, but the context shows its placeholder
   assert.ok(after.includes('{{EMAIL_'), after)

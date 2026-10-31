@@ -109,7 +109,7 @@ export interface PrivacyGatewayConfig {
   keepRecords?: number
   /** Keep in memory what the vendor got for the latest recorded requests, for the side-by-side view (docs/adr/0016). */
   vendorView?: boolean
-  /** Each value in a record keeps where it was and about 32 characters each side, as sent (docs/adr/0024). */
+  /** Each value in a record keeps where it was and about 80 characters each side, as sent (docs/adr/0024). */
   recordContext?: boolean
   /**
    * Offer a Privacy tab in the session's right sidebar (docs/adr/0017).
