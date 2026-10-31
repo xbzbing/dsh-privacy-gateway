@@ -94,51 +94,85 @@ export function wordSpans(s: string, words: readonly string[]): Found[] {
   return out
 }
 
+/** What a named secret's value has, beside the quote and the backslash an escape wrote in JSON text. */
+const VALUE_CH = /[A-Za-z0-9_\-./+=~!@#%^&*]/
+
 /**
- * `s`, JSON text, as long as `s` and read as the vendor reads it once
- * unescaped, as far as the finders tell: the letter of \n, \t, \r, \b, \f is
- * read as a line break and a \u escape's u and digits too, so none of them
- * starts or ends a value (magpie `unescapedView`).
+ * A JSON text read as the vendor reads it once unescaped, and where each of
+ * its code units is in the text as written.
  */
-export function unescapedView(s: string): string {
-  if (!s.includes('\\')) return s
-  const b = s.split('')
-  for (let i = 0; i + 1 < b.length; i++) {
-    if (b[i] !== '\\') continue
-    i++
-    switch (b[i]) {
-      case 'n': case 'b': case 'f': b[i] = '\n'; break
-      case 'r': b[i] = '\r'; break
-      case 't': b[i] = '\t'; break
-      case 'u':
-        for (let j = i; j < i + 5 && j < b.length; j++) b[j] = '\n'
-        i += 4
-        break
-    }
-  }
-  return b.join('')
+export interface DecodedView {
+  /** The text as the tool will get it: what a value known from before and a cookie are read in. */
+  text: string
+  /**
+   * `text` with a quote or a backslash an escape wrote read as a character a
+   * value holds (`~`) where the escape is followed by one, so a value with a
+   * quote inside it is read whole instead of ending there. What the rules
+   * are read in. The quote that closes a quoted value is followed by no
+   * value's character and stays as it is.
+   */
+  match: string
+  /** at[i]: where text[i] starts in the raw text; at[text.length] is the raw text's length. */
+  at: Int32Array
 }
 
-/** `found` with no value starting or ending inside one of the escapes of `s`: each is cut back to the escape's edge. */
-export function outsideEscapes(s: string, found: Found[]): Found[] {
-  if (found.length === 0 || !s.includes('\\')) return found
-  const inside: Array<[number, number] | undefined> = new Array(s.length + 1)
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] !== '\\') continue
-    const end = Math.min(i + (s[i + 1] === 'u' ? 6 : 2), s.length)
-    for (let j = i + 1; j < end; j++) inside[j] = [i + 1, end]
-    i = end - 1
+const ESCAPED: Record<string, string> = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' }
+
+/** What an escaped quote or backslash reads as where the rules are read, so one inside a value does not end it. */
+const IN_VALUE = '~'
+
+/**
+ * `raw`, JSON text (a tool call's arguments), with its escapes read: \/ as /,
+ * \u0026 as &, \n as a line break. The finders read a value as the tool will
+ * get it, so a key, a known value or a word written with escapes is found
+ * whole, and none starts or ends inside an escape. An escape JSON has not is
+ * left as written.
+ */
+export function decodedView(raw: string): DecodedView {
+  const text: string[] = []
+  const match: string[] = []
+  const at: number[] = []
+  let last = 0
+  let i = raw.indexOf('\\')
+  while (i >= 0 && i + 1 < raw.length) {
+    const c = raw[i + 1] as string
+    let d: string | undefined = ESCAPED[c]
+    let n = 2
+    if (c === 'u' && /^[0-9a-fA-F]{4}$/.test(raw.slice(i + 2, i + 6))) {
+      d = String.fromCharCode(parseInt(raw.slice(i + 2, i + 6), 16))
+      n = 6
+    }
+    if (d === undefined) {
+      // an escape JSON has not: as written
+      i = raw.indexOf('\\', i + 2)
+      continue
+    }
+    const literal = raw.slice(last, i)
+    text.push(literal, d)
+    match.push(literal, (d === '"' || d === '\\') && VALUE_CH.test(raw[i + n] ?? '') ? IN_VALUE : d)
+    for (let k = last; k <= i; k++) at.push(k)
+    last = i + n
+    i = raw.indexOf('\\', last)
   }
-  const out: Found[] = []
-  for (const f of found) {
-    let { start, end } = f
-    const a = inside[start]
-    if (a) start = a[1]
-    const z = inside[end]
-    if (z) end = z[0] - 1
-    if (start < end) out.push({ ...f, start, end })
-  }
-  return out
+  const tail = raw.slice(last)
+  text.push(tail)
+  match.push(tail)
+  for (let k = last; k <= raw.length; k++) at.push(k)
+  return { text: text.join(''), match: match.join(''), at: Int32Array.from(at) }
+}
+
+/**
+ * `found` in the decoded view, as places in the raw text. A match that opens
+ * on a quote an escape wrote leaves that quote outside it: the quote belongs
+ * to the text, not to the value.
+ */
+export function inRaw(raw: string, view: DecodedView, found: Found[]): Found[] {
+  return found.map((f) => {
+    let start = view.at[f.start] as number
+    const opened = raw[start] === '\\' && raw[start + 1] === '"' && VALUE_CH.test(raw[start + 2] ?? '')
+    if (opened) start = (view.at[f.start + 1] as number) ?? start
+    return { ...f, start, end: view.at[f.end] as number }
+  })
 }
 
 function isSpace(c: string | undefined): boolean {

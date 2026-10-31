@@ -36,7 +36,7 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 interface Ctx {
   s: string
-  keep: Set<string>
+  keep: ReadonlySet<string>
   out: Found[]
   next: Next
 }
@@ -224,15 +224,11 @@ function cookieObjects(c: Ctx): void {
   }
 }
 
-function namedCookies(c: Ctx, names: readonly string[]): void {
+function namedCookies(c: Ctx, plan: CookiePlan): void {
   const s = c.s
-  const re = new RegExp(
-    `(?:^|[^A-Za-z0-9_.-])(${names.map(escapeRe).join('|')}|__Secure-[A-Za-z0-9_.-]+|__Host-[A-Za-z0-9_.-]+)(?:=|\\\\?["'][ \\t]*:[ \\t]*\\\\?["'])`,
-    'g',
-  )
   // a name inside the value read before is part of that value
   let read = 0
-  for (const m of s.matchAll(re)) {
+  for (const m of s.matchAll(plan.named)) {
     if (m.index < read) continue
     const vs = m.index + m[0].length
     let i = vs
@@ -246,11 +242,44 @@ function namedCookies(c: Ctx, names: readonly string[]): void {
   }
 }
 
+/** What a set of cookie options comes to, made once for the run: the names to look for and the one regex matching them. */
+interface CookiePlan {
+  names: readonly string[]
+  keep: ReadonlySet<string>
+  named: RegExp
+}
+
+const planFor = (options: CookieOptions | undefined): CookiePlan => {
+  const names = [...COOKIE_NAMES, ...(options?.names ?? []).map((n) => n.trim()).filter((n) => n !== '')]
+  return {
+    names,
+    keep: new Set((options?.keep ?? DEFAULT_COOKIE_KEEP).map((n) => n.trim().toLowerCase())),
+    named: new RegExp(
+      `(?:^|[^A-Za-z0-9_.-])(${names.map(escapeRe).join('|')}|__Secure-[A-Za-z0-9_.-]+|__Host-[A-Za-z0-9_.-]+)(?:=|\\\\?["'][ \\t]*:[ \\t]*\\\\?["'])`,
+      'g',
+    ),
+  }
+}
+
+/** Plans by the options they were made for: a masker keeps one set for its whole run. */
+const plans = new WeakMap<CookieOptions, CookiePlan>()
+const planless = planFor(undefined)
+
+function planOf(options: CookieOptions | undefined): CookiePlan {
+  if (options === undefined) return planless
+  let plan = plans.get(options)
+  if (plan === undefined) {
+    plan = planFor(options)
+    plans.set(options, plan)
+  }
+  return plan
+}
+
 /** Where `s` has a cookie's value: by its context, then by its name. */
 export function cookieSpans(s: string, options: CookieOptions | undefined, lower: () => string): Found[] {
-  const names = [...COOKIE_NAMES, ...(options?.names ?? []).map((n) => n.trim()).filter((n) => n !== '')]
-  const keep = new Set((options?.keep ?? DEFAULT_COOKIE_KEEP).map((n) => n.trim().toLowerCase()))
-  const c: Ctx = { s, keep, out: [], next: new Next(s) }
+  const plan = planOf(options)
+  const names = plan.names
+  const c: Ctx = { s, keep: plan.keep, out: [], next: new Next(s) }
   const l = lower()
   if (l.includes('cookie')) {
     namedFields(c)
@@ -258,6 +287,6 @@ export function cookieSpans(s: string, options: CookieOptions | undefined, lower
   } else if (/\s-b[ \t=]/.test(s)) curlCookies(c)
   if (s.includes('\tTRUE\t') || s.includes('\tFALSE\t')) cookiesTxt(c)
   if (l.includes('"value') || l.includes('\\"value')) cookieObjects(c)
-  if (names.some((n) => s.includes(n)) || s.includes('__Secure-') || s.includes('__Host-')) namedCookies(c, names)
+  if (names.some((n) => s.includes(n)) || s.includes('__Secure-') || s.includes('__Host-')) namedCookies(c, plan)
   return c.out
 }

@@ -1,5 +1,5 @@
 import { cookieSpans, type CookieOptions } from './cookie.ts'
-import { hint, inStrings, lowerASCII, outsideEscapes, ruleSpans, SentMemo, unescapedView, wordSpans } from './find.ts'
+import { decodedView, hint, inRaw, inStrings, lowerASCII, ruleSpans, SentMemo, wordSpans, type DecodedView } from './find.ts'
 import { noIDs, noNumbers, PERSONAL_KINDS, type Finder, type Found } from './ids.ts'
 import { tagOf } from './key.ts'
 import type { KnownSpan, ValueTable } from './known.ts'
@@ -265,16 +265,25 @@ export class Masker {
     return { text, n, hits: pass.hits }
   }
 
-  #find(raw: string, s: string, escaped: boolean, pass: Pass): Found[] {
+  /**
+   * The values of a string; with `view` (escaped), the finders read its text
+   * and the values come back as places in `raw`. The rules read the view's
+   * match text, where a quote an escape wrote inside a value stays in it.
+   */
+  #find(raw: string, view: DecodedView | undefined, escaped: boolean, pass: Pass): Found[] {
     const o = this.#options
+    const s = view?.text ?? raw
+    const forRules = view?.match ?? raw
     let low: string | undefined
+    let lowRules: string | undefined
     const lower = (): string => (low ??= lowerASCII(s))
+    const lowerRules = (): string => (lowRules ??= lowerASCII(forRules))
     // a cookie's value is one value however else it reads (a JWT in it, token=…): by its context first
     const cookies = o.secrets ? cookieSpans(s, o.cookies, lower) : []
     let found: Found[] = o.words && o.words.length > 0 ? wordSpans(s, o.words) : []
     for (const r of rules) {
       if (r.cat === 'secret' ? !o.secrets : !o.personal) continue
-      found.push(...ruleSpans(r, s, lower))
+      found.push(...ruleSpans(r, forRules, lowerRules))
     }
     if (o.secrets || o.personal) {
       const known = (): KnownSpan[] => this.#table.knownSpans(s, this.#covers)
@@ -282,8 +291,9 @@ export class Masker {
       for (const k of spans) found.push({ ...k, by: 'known' })
     }
     if (cookies.length > 0) found = [...cookies, ...found.filter((f) => f.by === 'word' || !cookies.some((c) => overlaps(f, c)))]
-    if (escaped) found = inStrings(raw, outsideEscapes(raw, found))
-    return noNumbers(s, noIDs(s, found))
+    found = noNumbers(s, noIDs(s, found))
+    if (view) found = inRaw(raw, view, found)
+    return escaped ? inStrings(raw, found) : found
   }
 
   /** The masked string, how many values went, and each change as an edit of `raw`. */
@@ -291,8 +301,8 @@ export class Masker {
     const o = this.#options
     const none = { text: raw, n: 0, edits: [] }
     if (raw.length < 3 || (!o.secrets && !o.personal && !(o.words && o.words.length > 0))) return none
-    const s = escaped ? unescapedView(raw) : raw
-    let found = this.#find(raw, s, escaped, pass)
+    const view = escaped && raw.includes('\\') ? decodedView(raw) : undefined
+    let found = this.#find(raw, view, escaped, pass)
     if (found.length === 0) return none
     // nothing inside a placeholder already there: masking again changes nothing
     const fixed: Range[] = [...keep]

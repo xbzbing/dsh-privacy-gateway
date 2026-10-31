@@ -258,3 +258,31 @@ test('the tally tells the places put back inside a tool call’s arguments, stre
   assert.equal(streamed.restored.get(p), 2)
   assert.equal(streamed.inTools, 1)
 })
+
+test('in tool arguments a value written with JSON escapes is masked whole, and comes back as written', () => {
+  const words: MaskOptions = { ...all, words: ['Blue/bird'] }
+  const { masker, table, restorer } = setup(words)
+  masker.maskText('note Kn0wnVal/ue99 here', false)
+  masker.maskText('DB_PASSWORD=Kn0wnVal/ue99')
+  const cases: Array<[args: string, value: string]> = [
+    ['{"cmd":"export DB_PASSWORD=ab\\/cd1234xyz"}', 'ab/cd1234xyz'],
+    ['{"cmd":"export API_TOKEN=ab\\u0026cd1234xyz"}', 'ab&cd1234xyz'],
+    ['{"password":"abcd1234\\"xyz9"}', 'abcd1234"xyz9'],
+    ['{"cmd":"echo Kn0wnVal\\/ue99"}', 'Kn0wnVal/ue99'],
+    ['{"cmd":"deploy Blue\\/bird"}', 'Blue/bird'],
+    // a quote and a backslash in the value itself, each written as an escape
+    ['{"cmd":"export DB_PASSWORD=pa\\"ss9\\\\wo/rd run"}', 'pa"ss9\\wo/rd'],
+  ]
+  for (const [args, value] of cases) {
+    const out = masker.maskText(args, true)
+    assert.equal(out.n, 1, args)
+    assert.ok(JSON.parse(out.text), out.text)
+    const p = /\{\{[A-Z_]+_[a-z2-7]{8}\}\}/.exec(out.text)?.[0] ?? ''
+    assert.equal(table.get(p), value, args)
+    assert.ok(!out.text.includes('xyz') && !out.text.includes('ue99') && !out.text.includes('bird') && !out.text.includes('wo/rd'), out.text)
+    assert.deepEqual(JSON.parse(restorer.restoreText(out.text, true)), JSON.parse(args))
+  }
+  // the quote that closes a quoted value stays outside it
+  const quoted = masker.maskText('{"cmd":"PASSWORD=\\"abc12345x\\" next"}', true)
+  assert.match(quoted.text, /=\\"\{\{SECRET_[a-z2-7]{8}\}\}\\" next/)
+})
