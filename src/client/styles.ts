@@ -44,7 +44,7 @@ const CSS = `
 .pgw-bar__track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .pgw-bar__fill{height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary)}
 .pgw-recs{display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
-.pgw-rec{display:grid;grid-template-columns:16px 76px minmax(0,1.4fr) minmax(0,1fr) 56px 56px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
+.pgw-rec{box-sizing:border-box;display:grid;grid-template-columns:16px 76px minmax(0,1.4fr) minmax(0,1fr) 64px 64px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
 .pgw-rec--head{min-height:30px;border-top:none;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-weight:500;cursor:default}
 @media (hover:hover){.pgw-rec:not(.pgw-rec--head):hover{background:var(--dsw-alias-interactive-bg-hover)}}
 .pgw-rec--open{background:var(--dsw-alias-bg-layer-2)}
@@ -56,7 +56,7 @@ const CSS = `
 .pgw-rec__model,.pgw-rec__host,.pgw-rec__from{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pgw-rec__host{font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .pgw-rec__from{color:var(--dsw-alias-label-secondary)}
-.pgw-rec__num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pgw-rec__num{min-width:0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .pgw-rec__dim{color:var(--dsw-alias-label-secondary)}
 .pgw-rec__bad{color:var(--dsw-alias-state-error-primary);font-weight:600}
 .pgw-detail{display:flex;flex-direction:column;gap:8px;padding:8px 12px 12px 36px;background:var(--dsw-alias-bg-layer-2);font-size:12px;overflow-x:auto;border-top:.5px solid var(--dsw-alias-border-l1)}
@@ -70,7 +70,7 @@ const CSS = `
 .pgw-ctx__mark{margin:0 2px;padding:0 3px;border-radius:3px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 16%,transparent);color:var(--dsw-alias-label-primary)}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:2px}
 .pgw-pager__at{min-width:56px;text-align:center;font-variant-numeric:tabular-nums}
-@media (max-width:640px){.pgw-rec{grid-template-columns:16px 64px minmax(0,1fr) 48px 48px}.pgw-rec__from{display:none}.pgw-rec--head>:nth-child(4){display:none}}
+@media (max-width:640px){.pgw-rec{grid-template-columns:16px 64px minmax(0,1fr) 56px 56px}.pgw-rec__from{display:none}.pgw-rec--head>:nth-child(4){display:none}}
 .pgw-cfg{display:flex;flex-direction:column;gap:12px;container-type:inline-size}
 .pgw-cfg__folds{display:flex;flex-direction:column;gap:8px}
 .pgw-fold{border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg)}
