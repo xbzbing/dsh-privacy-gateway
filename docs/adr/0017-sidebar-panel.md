@@ -15,7 +15,8 @@
 - 插件详情页不会为 bundle 自动生成配置表单，只渲染登记在 `plugins.bundle.config`、键为包名的条目。所以开关由本插件自己画：详情页上多一节「面板」，里面一个「在会话右侧栏显示「隐私保护」面板」的开关。
 - `showPanel` 声明为 `.volatile()`：设置服务（`configForms`）只把 volatile 字段放进可在线编辑的表单，改了不重新挂载插件，网关不会因此重装。host 半拿到的是一个活引用，`overview` 每次读它的当前值。
 - 开关和标签页都从设置镜像读写 `showPanel`，并跟随它的变化，改完不用刷新页面。镜像里只有各插件的 volatile 字段，认自己的命名空间靠「有 `showPanel`，且命名空间名含 `privacy-gateway` 或 `showPanel` 的描述是本插件那一句」。没有镜像，或镜像里找不到时，标签页退回读 host 半 `overview` 里的 `showPanel`，每分钟问一次。
-- 其余配置项不是 volatile，改了要重新挂载网关，仍在 `cordis.patch.yml` 里改；「面板」一节里有一句提示。
+- 其余配置项不是 volatile，改了要重新挂载网关，仍在 `cordis.patch.yml` 里改；「设置」一节里有一句提示。
+- 设置镜像里一个命名空间的 `schema` 是 schemastery 的 `toJSON()`：一张引用表 `{uid, refs}`，根节点在 `refs[uid]`，字段名在根节点的 `dict` 里，值是别的节点的编号。不要假设嵌套的 `dict`——按嵌套读的话字段名永远是空的，认不出自己的命名空间，卡片会一直显示「读不到设置」。
 
 ## Consequences
 

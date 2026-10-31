@@ -150,3 +150,4 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T }): ReactNode {
 function stringsOf(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 }
+

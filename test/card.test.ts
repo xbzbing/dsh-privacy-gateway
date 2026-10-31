@@ -115,12 +115,22 @@ test('the side-by-side view pretty-prints JSON, picks out each replaced place, a
   assert.equal(viewLines(body, [], false, 2).truncated, true)
 })
 
+/** What the settings wire carries: schemastery's toJSON(), a reference table, not a nested dict. */
+const WIRE = {
+  uid: 4,
+  refs: {
+    '1': { type: 'boolean', meta: { default: false, description: '在会话右侧栏显示「隐私保护」面板 / Show the Privacy panel in the right sidebar' } },
+    '2': { type: 'array', meta: { default: [] }, inner: 3 },
+    '3': { type: 'string', meta: {} },
+    '4': { type: 'object', meta: { default: {} }, dict: { excludeProviders: 2, showPanel: 1 } },
+  },
+}
+
 test('showPanel is read from the namespace that is ours', async () => {
   const { showPanelOf } = await import('../src/client/panelConfig.ts')
-  const ours = { dict: { showPanel: {} } }
-  assert.equal(showPanelOf([{ ns: 'other', schema: { dict: { showPanel: {} } }, value: { showPanel: true } }]), undefined)
-  assert.equal(showPanelOf([{ ns: 'dsh-privacy-gateway', schema: ours, value: { showPanel: true } }]), true)
-  assert.equal(showPanelOf([{ ns: 'dsh-privacy-gateway', schema: ours, value: {} }]), false)
+  assert.equal(showPanelOf([{ ns: 'other', schema: { dict: { showPanel: { meta: { description: 'x' } } } }, value: { showPanel: true } }]), undefined)
+  assert.equal(showPanelOf([{ ns: 'dsh-privacy-gateway', schema: WIRE, value: { showPanel: true } }]), true)
+  assert.equal(showPanelOf([{ ns: 'dsh-privacy-gateway', schema: WIRE, value: {} }]), false)
 })
 
 test('the records go a page at a time, the page held within the pages there are', async () => {
@@ -132,9 +142,20 @@ test('the records go a page at a time, the page held within the pages there are'
   assert.deepEqual(pageOf([], 3, 10), { items: [], page: 0, pages: 1 })
 })
 
-test('the settings namespace is ours by its name or by showPanel\'s description', async () => {
+test("a namespace's fields are read from schemastery's reference table, and from a nested dict", async () => {
+  const { schemaFields } = await import('../src/client/panelConfig.ts')
+  assert.deepEqual(schemaFields(WIRE), ['excludeProviders', 'showPanel'])
+  assert.deepEqual(schemaFields({ dict: { showPanel: {} } }), ['showPanel'])
+  assert.deepEqual(schemaFields({ uid: 9, refs: {} }), [])
+  assert.deepEqual(schemaFields(undefined), [])
+})
+
+test('the settings namespace is ours by its name, its other field, or showPanel description', async () => {
   const { findNamespace } = await import('../src/client/panelConfig.ts')
-  assert.equal(findNamespace([{ ns: 'other', schema: { dict: { showPanel: { meta: { description: 'x' } } } } }]), undefined)
-  assert.equal(findNamespace([{ ns: 'include:dsh-privacy-gateway', schema: { dict: { showPanel: {} } } }]), 'include:dsh-privacy-gateway')
+  assert.equal(findNamespace([{ ns: 'other', schema: {} }]), undefined)
+  assert.equal(findNamespace([{ ns: 'other', schema: { dict: { showPanel: {} } } }]), undefined)
+  assert.equal(findNamespace([{ ns: 'include:dsh-privacy-gateway', schema: WIRE }]), 'include:dsh-privacy-gateway')
+  assert.equal(findNamespace([{ ns: 'n0', schema: WIRE }]), 'n0')
   assert.equal(findNamespace([{ ns: 'n1', schema: { dict: { showPanel: { meta: { description: '… / Show the Privacy panel in the right sidebar' } } } } }]), 'n1')
+  assert.equal(findNamespace([{ ns: 'n2', schema: { dict: { showPanel: { meta: { description: 'x' } } } } }]), undefined)
 })

@@ -74,7 +74,12 @@ export async function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Prom
   let list: unknown
   try {
     // the typed remote the models settings page uses, else the raw channel
-    const remote = (ctx as { remote?: { llm?: { listProviders?(): Promise<unknown> } } }).remote
+    let remote: { llm?: { listProviders?(): Promise<unknown> } } | undefined
+    try {
+      remote = ctx.get('remote') as typeof remote
+    } catch {
+      remote = undefined
+    }
     if (typeof remote?.llm?.listProviders === 'function') list = await remote.llm.listProviders()
     else {
       let rpc: ConnectionFace['rpc']
@@ -98,3 +103,4 @@ export async function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Prom
     return { ok: false, message: err instanceof Error ? err.message : String(err) }
   }
 }
+

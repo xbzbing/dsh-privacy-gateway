@@ -42,12 +42,30 @@ export interface ConfigForms {
  */
 const DESCRIPTION_MARK = 'Show the Privacy panel in the right sidebar'
 
-/** The namespace that is this plugin's: it has showPanel, and its name or showPanel's description says it is ours. */
+/**
+ * The fields a serialized settings schema declares. schemastery's toJSON()
+ * writes a reference table (`{uid, refs}`), not a nested one: the root node is
+ * `refs[uid]` and its `dict` holds the field names. A nested `dict` is read
+ * too, so a schema that arrives the plain way still works.
+ */
+export function schemaFields(schema: unknown): string[] {
+  const s = schema as { uid?: unknown; refs?: Record<string, unknown>; dict?: Record<string, unknown> } | undefined
+  const refs = s?.refs
+  const node = refs !== null && typeof refs === 'object' && typeof s?.uid !== 'undefined' ? (refs[String(s.uid)] as { dict?: Record<string, unknown> } | undefined) : undefined
+  const dict = (node?.dict ?? s?.dict) as Record<string, unknown> | undefined
+  return dict !== null && typeof dict === 'object' ? Object.keys(dict) : []
+}
+
+/**
+ * The namespace that is this plugin's: it declares showPanel, and its entry id,
+ * its other field or showPanel's description says it is ours.
+ */
 export function findNamespace(namespaces: readonly NamespaceView[]): string | undefined {
   for (const row of namespaces) {
-    const dict = (row.schema as { dict?: Record<string, unknown> } | undefined)?.dict
-    if (!dict || !('showPanel' in dict)) continue
-    if (row.ns.includes('privacy-gateway') || JSON.stringify(dict.showPanel ?? null).includes(DESCRIPTION_MARK)) return row.ns
+    const fields = schemaFields(row.schema)
+    if (!fields.includes('showPanel')) continue
+    if (row.ns.includes('privacy-gateway') || fields.includes('excludeProviders')) return row.ns
+    if (JSON.stringify(row.schema ?? null).includes(DESCRIPTION_MARK)) return row.ns
   }
   return undefined
 }
