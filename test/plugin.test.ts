@@ -29,6 +29,18 @@ test('locale dictionaries ship en + zh meta', () => {
   }
 })
 
+test('package icon is a shipped SVG within the 256 KiB limit', () => {
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+    icon?: string
+    files?: string[]
+  }
+  assert.equal(manifest.icon, './assets/icon.svg')
+  assert.ok(manifest.files?.includes('assets'), 'files includes assets')
+  const svg = readFileSync(join(root, manifest.icon), 'utf8')
+  assert.match(svg, /^<svg\b[^>]*\bxmlns="http:\/\/www\.w3\.org\/2000\/svg"/)
+  assert.ok(Buffer.byteLength(svg) <= 256 * 1024)
+})
+
 test('Config defaults to enabled and round-trips through toJSON', () => {
   assert.deepEqual(Config({}), { enabled: true })
   assert.deepEqual(resolveConfig({ enabled: false }), { enabled: false })

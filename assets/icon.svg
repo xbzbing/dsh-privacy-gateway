@@ -1,0 +1,16 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- A shield guarding a {•••} placeholder: secrets leave as placeholders
+       and come back as real values. -->
+  <path d="M18 6L28.5 9.6V17.4C28.5 23.3 24.2 28.3 18 30C11.8 28.3 7.5 23.3 7.5 17.4V9.6L18 6Z" fill="url(#dpg-shield)" fill-opacity="0.9" />
+  <path d="M14.4 14.2C13.5 14.2 13.1 14.7 13.1 15.6V16.7C13.1 17.5 12.7 18.1 12 18.1C12.7 18.1 13.1 18.7 13.1 19.5V20.6C13.1 21.5 13.5 22 14.4 22" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M21.6 14.2C22.5 14.2 22.9 14.7 22.9 15.6V16.7C22.9 17.5 23.3 18.1 24 18.1C23.3 18.1 22.9 18.7 22.9 19.5V20.6C22.9 21.5 22.5 22 21.6 22" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="15.7" cy="18.1" r="1.15" fill="#FFFFFF" />
+  <circle cx="18" cy="18.1" r="1.15" fill="#FFFFFF" />
+  <circle cx="20.3" cy="18.1" r="1.15" fill="#FFFFFF" />
+  <defs>
+    <linearGradient id="dpg-shield" x1="18" y1="6" x2="18" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5B5BF0" />
+      <stop offset="1" stop-color="#8E44D9" />
+    </linearGradient>
+  </defs>
+</svg>

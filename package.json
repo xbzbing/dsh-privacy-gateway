@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Process-wide HTTP redaction gateway for DSH: masks secrets in outgoing model requests and restores placeholders in the replies, for every provider.",
+  "icon": "./assets/icon.svg",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
   },
   "main": "./lib/index.js",
   "exports": {
@@ -18,7 +19,8 @@
   "files": [
     "cordis.patch.yml",
     "lib",
-    "locale"
+    "locale",
+    "assets"
   ],
   "dsh": {
     "bundle": {
