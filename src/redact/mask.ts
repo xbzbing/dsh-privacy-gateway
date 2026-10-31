@@ -117,9 +117,9 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-/** A chat (`messages`) or Responses (`input`) request: the shape this gateway rewrites. */
+/** A chat (`messages`), Responses (`input`) or Gemini and Vertex (`contents`) request: the shapes this gateway rewrites. */
 export function isModelRequest(doc: unknown): doc is Record<string, unknown> {
-  return isObject(doc) && (Array.isArray(doc.messages) || Array.isArray(doc.input))
+  return isObject(doc) && (Array.isArray(doc.messages) || Array.isArray(doc.input) || Array.isArray(doc.contents))
 }
 
 function definitions(doc: Record<string, unknown>): string[] {
