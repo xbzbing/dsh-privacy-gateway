@@ -4,7 +4,21 @@
 
 A DeepSeek Harness plugin that adds a redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
-Status: P0 (interception point proven) is implemented; not released yet. Only three kinds of secret are recognised so far: `sk-…`, GitHub / GitLab tokens (`ghp_…`, `github_pat_…`, `glpat-…`), and AWS `AKIA…` / `ASIA…`.
+Status: P1 is implemented; not released yet.
+
+## What is masked
+
+| Kind | What | Switch |
+| --- | --- | --- |
+| `API_KEY` | OpenAI / Anthropic `sk-…`, GitHub / GitLab tokens, Google `AIza…`, Slack `xox…`, Stripe, AWS `AKIA…`, Alibaba Cloud `LTAI…`, Tencent Cloud `AKID…`, Hugging Face, Groq, xAI, npm, PyPI, DigitalOcean, SendGrid and other prefixes | `secrets` |
+| `TOKEN` | JWTs | `secrets` |
+| `PRIVATE_KEY` | PEM private key blocks | `secrets` |
+| `PASSWORD` / `SECRET` | Passwords in URLs, fields named password / secret / token, Chinese phrases such as 「密码为…」「密钥是…」 | `secrets` |
+| `COOKIE` | `Cookie` / `Set-Cookie` headers, `curl -b`, cookies.txt, Playwright storageState, HAR, common session cookie names (`BDUSS`, `JSESSIONID` and others) | `secrets` |
+| `EMAIL` / `PHONE` / `ID_CARD` / `BANK_CARD` | Email addresses, mainland China mobile numbers, ID card numbers (check digit), bank card numbers (Luhn) | `personal` |
+| `TERM` | The words listed in the `words` config | whenever there are words |
+
+A value masked once is masked with the same placeholder wherever else the request has it (its finder is `known`). History sent to the same host again keeps the bytes it went with before, so the prompt cache still hits.
 
 ## Install
 
@@ -16,31 +30,61 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 Each version's GitHub Release also carries the same tgz, which can be installed by its asset URL. The repository source has no build output `lib/`, so a `github:` install without a ref will not load ([ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)).
 
-In the default web profile a first install takes effect immediately, with no restart. This plugin has a host half only, so after upgrading an installed version, restart dsh to load the new code.
+In the default web profile a first install takes effect immediately, with no restart. The plugin has a host half, so after upgrading an installed version, restart dsh to load the new code.
 
 ## Configuration
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `enabled` | `true` | Master switch; when off, the gateway is not installed |
-| `secrets` | `true` | Mask secrets |
+| `secrets` | `true` | Mask secrets, tokens, passwords, private keys and cookies |
+| `personal` | `false` | Mask email addresses, phone numbers, ID card and bank card numbers |
+| `words` | `[]` | Your own words (a project's code name, a customer's name), masked as written as `TERM` |
+| `allow` | `[]` | Values never masked: whole values, in any case |
+| `cookieNames` | `[]` | More cookie names to mask |
+| `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | Cookie names never masked |
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them ([ADR-0004](docs/adr/0004-protected-regions.md)) |
 | `protectTools` | `true` | Send the request's `tools` array as written |
 | `excludeHosts` | `[]` | `host` or `host:port` entries that are never rewritten |
 | `maxValues` | `5000` | Size of the in-memory value table; when full, the oldest half is dropped |
+| `record` | `true` | Write the masking records to disk; when off, the statistics stay in memory |
+| `keepDays` | `30` | Days of records kept |
+| `keepMegabytes` | `100` | Megabytes of records kept; past it, the oldest days are deleted |
+| `keepRecords` | `500` | Latest records kept in memory |
+
+## The `/privacy` command
+
+| Usage | What it does |
+| --- | --- |
+| `/privacy` or `/privacy status` | On or off, the value table's size, today's / 7 days' / 30 days' requests and places replaced, the counts by kind and finder, and warning signals |
+| `/privacy off` | Stops masking for this run: requests go as written. The config is unchanged; a restart turns masking back on |
+| `/privacy on` | Turns masking back on |
+| `/privacy test <text>` | Shows how the text would go: the masked text, and each value's kind, finder, head and length. Nothing goes into the value table, and the text is not written to the session log |
+
+No answer of the command has a value in it.
+
+## Records and statistics
+
+Every model request through the gateway makes one record, whether or not anything was masked: the time, how long masking took, the host, the model, the session id, the places replaced, each value's placeholder / kind / finder / head / length, the places the reply had restored (with those in tool call arguments counted apart), and the placeholders the reply had that the value table has no value for. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md)).
+
+Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
+
+The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 50 records; open one to see each of its values.
 
 ## Notes
 
 - The session log holds the real values: replies are restored before the log is written ([ADR-0003](docs/adr/0003-restore-before-session-log.md)). Session sync, backups and shares carry the real values.
 - Only traffic through the global `fetch()` is covered; direct `node:http`, worker threads and separate processes bypass the gateway ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)).
-- When masking fails, the request is not sent and fails with `dsh-privacy-gateway: masking failed, request not sent` ([ADR-0005](docs/adr/0005-fail-closed.md)). To recover, disable the plugin on the Plugins page, or set `enabled` to `false`.
+- The value table is in memory only ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)). After a restart, a value no rule finds, masked only because it was remembered, goes as written the first time it is sent again.
+- Replies are restored everywhere, tool call arguments included: a model led into writing a placeholder into a command such as `curl` runs the tool with the real value. The plugin counts these places (the tool-argument count on the card and in `/privacy status`) and does not block them ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)).
+- When masking fails, the request is not sent and fails with `dsh-privacy-gateway: masking failed, request not sent` ([ADR-0005](docs/adr/0005-fail-closed.md)). To recover, run `/privacy off`, or disable the plugin on the Plugins page or set `enabled` to `false`.
 
 ## Development
 
 ```sh
 pnpm install
 pnpm verify   # typecheck + test
-pnpm build    # builds lib/ (not committed)
+pnpm build    # builds lib/: the host half index.js and the client half client.js (not committed)
 ```
 
 Run `pnpm build` before installing from a local directory:

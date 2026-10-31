@@ -22,3 +22,5 @@
 | [ADR-0007](0007-release-process.md) | 发布流程：GitHub Actions 驱动 | Accepted | 发布 |
 | [ADR-0008](0008-masking-records.md) | 脱敏记录按天 JSONL 落盘，写失败放行 | Accepted | 记录 |
 | [ADR-0009](0009-value-table-and-restore-exfiltration.md) | 值表只留内存；还原外带先记账不拦截 | Accepted | 脱敏 |
+| [ADR-0010](0010-cookie-recognition.md) | COOKIE 按上下文识别，一个 cookie 值是一个值 | Accepted | 脱敏 |
+| [ADR-0011](0011-command-and-statistics-card.md) | `/privacy` 命令与统计卡 | Accepted | 界面 |
