@@ -162,9 +162,6 @@ test('masking that throws fails the request and the origin never sees it (fail-c
     maskRequest() {
       throw new Error('boom')
     },
-    restoring: () => false,
-    restoreBody: (t) => t,
-    streamRestorer: () => ({ push: () => '', end: () => '' }),
   }
   try {
     const warnings = await withGateway(async () => {

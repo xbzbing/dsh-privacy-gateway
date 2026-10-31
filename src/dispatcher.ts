@@ -1,6 +1,6 @@
 import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
-import type { RedactionEngine } from './engine.ts'
+import type { Exchange, RedactionEngine, RequestInfo } from './engine.ts'
 
 type Options = Dispatcher.DispatchOptions
 type Handler = Dispatcher.DispatchHandler
@@ -173,16 +173,16 @@ function failRequest(handler: Handler, err: Error): void {
  */
 class RestoringHandler implements Handler {
   readonly #next: Handler
-  readonly #engine: RedactionEngine
+  readonly #exchange: Exchange
   readonly #logger: GatewayLogger | undefined
   #mode: 'pass' | 'stream' | 'whole' = 'pass'
-  #stream: ReturnType<RedactionEngine['streamRestorer']> | undefined
+  #stream: ReturnType<Exchange['streamRestorer']> | undefined
   #chunks: Buffer[] = []
   #view: Controller | undefined
 
-  constructor(next: Handler, engine: RedactionEngine, logger: GatewayLogger | undefined) {
+  constructor(next: Handler, exchange: Exchange, logger: GatewayLogger | undefined) {
     this.#next = next
-    this.#engine = engine
+    this.#exchange = exchange
     this.#logger = logger
   }
 
@@ -210,10 +210,10 @@ class RestoringHandler implements Handler {
     const type = incomingValue(headers, 'content-type').toLowerCase()
     const encoding = incomingValue(headers, 'content-encoding').trim().toLowerCase()
     const kind = type.includes('event-stream') ? 'stream' : type.includes('json') ? 'whole' : 'pass'
-    if (statusCode >= 200 && kind !== 'pass' && this.#engine.restoring()) {
+    if (statusCode >= 200 && kind !== 'pass' && this.#exchange.restoring()) {
       if (encoding === '' || encoding === 'identity') {
         this.#mode = kind
-        if (kind === 'stream') this.#stream = this.#engine.streamRestorer()
+        if (kind === 'stream') this.#stream = this.#exchange.streamRestorer()
       } else {
         this.#logger?.warn(`dsh-privacy-gateway: reply is ${encoding}-encoded, placeholders in it are not restored`)
       }
@@ -252,17 +252,19 @@ class RestoringHandler implements Handler {
       this.#chunks = []
       let body: Buffer = raw
       try {
-        body = Buffer.from(this.#engine.restoreBody(utf8.decode(raw)), 'utf8')
+        body = Buffer.from(this.#exchange.restoreBody(utf8.decode(raw)), 'utf8')
       } catch {
         // not UTF-8: on as it came
       }
       if (body.length > 0) this.#next.onResponseData?.(view, body)
     }
+    this.#exchange.finish()
     this.#next.onResponseEnd?.(view, trailers)
   }
 
   onResponseError(controller: Controller, err: Error): void {
     this.#chunks = []
+    this.#exchange.finish()
     this.#next.onResponseError?.(this.#view ?? controller, err)
   }
 }
@@ -276,6 +278,25 @@ function targetHost(opts: Options): { host: string; hostname: string } | undefin
   } catch {
     return undefined
   }
+}
+
+/** Headers a session id may come in (oc2dsh sends x-opencode-session). */
+const SESSION_HEADERS = ['x-opencode-session', 'x-session-id', 'session_id']
+
+function requestInfo(opts: Options): RequestInfo {
+  const t = targetHost(opts)
+  let session: string | undefined
+  for (const name of SESSION_HEADERS) {
+    session = headerValue(opts.headers, name)
+    if (session) break
+  }
+  let path = String(opts.path ?? '')
+  try {
+    path = new URL(path, 'http://x').pathname
+  } catch {
+    // as it came
+  }
+  return { host: t?.host ?? '', path, ...(session ? { session: session.slice(0, 128) } : {}) }
 }
 
 function isClosed(d: Dispatcher): boolean {
@@ -390,7 +411,7 @@ export class MaskingDispatcher extends Dispatcher {
       failRequest(handler, err instanceof Error ? err : new Error(String(err)))
       return
     }
-    let masked: string | null = null
+    let exchange: Exchange | null = null
     let text: string | undefined
     try {
       text = utf8.decode(raw)
@@ -399,20 +420,21 @@ export class MaskingDispatcher extends Dispatcher {
     }
     if (text !== undefined) {
       try {
-        masked = this.#engine.maskRequest(text)
+        exchange = this.#engine.maskRequest(text, requestInfo(opts))
       } catch (err) {
         this.#logger?.warn('dsh-privacy-gateway: masking failed, request not sent', err)
         failRequest(handler, new PrivacyGatewayError('masking failed, request not sent', { cause: err }))
         return
       }
     }
-    const body = masked === null || masked === text ? raw : Buffer.from(masked, 'utf8')
+    const body = exchange === null || exchange.text === text ? raw : Buffer.from(exchange.text, 'utf8')
     const i = this.#pick()
     const next = { ...opts, body, headers: withContentLength(opts.headers, body.length), [kHop]: i } as Options
-    const h = masked === null ? handler : new RestoringHandler(handler, this.#engine, this.#logger)
+    const h = exchange === null ? handler : new RestoringHandler(handler, exchange, this.#logger)
     try {
       ;(this.#downstream[i] as Dispatcher).dispatch(next, h)
     } catch (err) {
+      exchange?.finish()
       failRequest(handler, err instanceof Error ? err : new Error(String(err)))
     }
   }

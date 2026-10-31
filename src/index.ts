@@ -4,6 +4,7 @@ import { resolveConfig, type PrivacyGatewayConfig } from './config.ts'
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
+import { RecordStore } from './records.ts'
 import { loadKey } from './redact/key.ts'
 
 /**
@@ -37,10 +38,21 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   if (!persisted) {
     ctx.logger.warn(`dsh-privacy-gateway: could not keep the placeholder key at ${keyPath}; placeholders change on restart`)
   }
-  const engine = new PrivacyEngine(key, cfg)
+  const records = new RecordStore({
+    // record: false keeps the statistics in memory only
+    ...(cfg.record ? { dir: join(stateDir(), 'masking') } : {}),
+    keepDays: cfg.keepDays,
+    keepBytes: cfg.keepMegabytes * 1024 * 1024,
+    keepRecords: cfg.keepRecords,
+    logger: ctx.logger,
+  })
+  const engine = new PrivacyEngine(key, cfg, { records })
   ctx.effect(() => {
     const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
-    return () => gateway.dispose()
+    return () => {
+      gateway.dispose()
+      void records.close()
+    }
   })
 }
