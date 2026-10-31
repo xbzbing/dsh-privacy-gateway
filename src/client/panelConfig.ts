@@ -1,9 +1,10 @@
 /**
  * Whether the config's showPanel is on, followed as it changes (docs/adr/0017):
- * from the settings mirror (configForms) where the host has one, else from the
+ * from the settings mirror (configForms) where the host has one, and from the
  * overview the host half answers, asked again every minute.
  */
 import { fetchOverview, type ClientCtx } from './rpc.ts'
+import { createStore, type Store } from './store.ts'
 
 interface NamespaceView {
   readonly ns: string
@@ -40,10 +41,11 @@ export interface ConfigForms {
 
 /**
  * The words of showPanel's description (host src/config.ts
- * SHOW_PANEL_DESCRIPTION): the mirror has only the volatile fields of each
- * schema, and another plugin may have a showPanel of its own.
+ * SHOW_PANEL_DESCRIPTION, which test/card.test.ts checks holds them): the
+ * mirror has only the volatile fields of each schema, and another plugin may
+ * have a showPanel of its own.
  */
-const DESCRIPTION_MARK = 'Show the Privacy panel in the right sidebar'
+export const DESCRIPTION_MARK = 'Show the Privacy tab at the top of the session'
 
 /**
  * The fields a serialized settings schema declares. schemastery's toJSON()
@@ -81,40 +83,69 @@ export function showPanelOf(namespaces: readonly NamespaceView[]): boolean | und
   return typeof v === 'object' && v !== null && v.showPanel === true
 }
 
-export function formsOf(ctx: ClientCtx): ConfigForms | undefined {
-  try {
-    const f = ctx.get('configForms') as ConfigForms | undefined
-    return f !== undefined && typeof f.describe === 'function' ? f : undefined
-  } catch {
-    return undefined
-  }
+function asForms(v: unknown): ConfigForms | undefined {
+  const f = v as ConfigForms | undefined
+  return f !== undefined && f !== null && typeof f.describe === 'function' && typeof f.get === 'function' ? f : undefined
+}
+
+/** The settings service, while dsh-client-ui-settings provides it; undefined before it arrives and after it goes. */
+export const configForms: Store<ConfigForms | undefined> = createStore<ConfigForms | undefined>(undefined)
+
+/**
+ * Follows the `configForms` service into the store above for as long as `ctx`
+ * lives. It is asked for through cordis' deferred injection, so the plugin
+ * loads without it (the card and the tab need no settings service) and picks
+ * it up whenever it arrives or is replaced.
+ */
+export function followConfigForms(ctx: ClientCtx): void {
+  const hold = (scope: ClientCtx): void =>
+    scope.effect(() => {
+      let forms: ConfigForms | undefined
+      try {
+        forms = asForms(scope.get('configForms'))
+      } catch {
+        forms = undefined
+      }
+      configForms.set(forms)
+      return () => {
+        if (configForms.get() === forms) configForms.set(undefined)
+      }
+    }, 'dsh-privacy-gateway: settings service')
+  if (typeof ctx.inject === 'function') ctx.inject(['configForms'], hold)
+  else hold(ctx)
 }
 
 /** How often the host is asked again, to notice a config change made elsewhere. */
 const RECHECK_MS = 60_000
 
-/** How often the host is asked again while the panel is on, to notice a config change made elsewhere. */
-
+/**
+ * Whether the tab should be there, from what each source last said
+ * (undefined: it has not said yet). With a settings mirror, either saying on
+ * is enough and off needs both, since a mirror that has not caught up must
+ * not keep the tab away; without one, the host decides.
+ */
+export function panelDecision(fromHost: boolean | undefined, fromMirror: boolean | undefined): boolean | undefined {
+  if (fromMirror === undefined) return fromHost
+  if (fromMirror || fromHost === true) return true
+  return fromHost === false ? false : undefined
+}
 
 /**
  * Calls `onChange` with showPanel now and whenever it changes; returns a
  * function that stops following.
  *
- * The host's own answer (`overview.showPanel`) decides, because that is the
- * value the gateway runs with; the settings mirror only speeds up "on", since
- * a mirror that has not caught up must not keep the tab away. A mirror reading
- * of "off" is therefore never reported on its own — it is reported as off only
- * once the host says so too.
+ * The host's own answer (`overview.showPanel`) is the value the gateway runs
+ * with; the settings mirror, while there is one, only speeds up "on"
+ * (`panelDecision`).
  */
-export function watchShowPanel(ctx: ClientCtx, onChange: (on: boolean) => void): () => void {
+export function watchShowPanel(ctx: ClientCtx, onChange: (on: boolean) => void, forms: Store<ConfigForms | undefined> = configForms): () => void {
   let stopped = false
   let reported: boolean | undefined
   let fromHost: boolean | undefined
   let fromMirror: boolean | undefined
   const settle = (): void => {
     if (stopped) return
-    // either source saying on is enough; off needs both to say so
-    const on = fromMirror === true || fromHost === true ? true : fromMirror === false && fromHost === false ? false : undefined
+    const on = panelDecision(fromHost, fromMirror)
     if (on === undefined || on === reported) return
     reported = on
     onChange(on)
@@ -126,34 +157,48 @@ export function watchShowPanel(ctx: ClientCtx, onChange: (on: boolean) => void):
       settle()
     })
   }
-  const forms = formsOf(ctx)
-  let mirror: Mirror | undefined
-  try {
-    mirror = forms?.describe()
-  } catch {
-    mirror = undefined
-  }
   let offMirror: (() => void) | undefined
-  if (mirror) {
-    const m = mirror
-    const read = (): void => {
-      const view = m.getSnapshot().view
-      if (!view) return
-      const on = showPanelOf(view.namespaces)
-      // an unknown namespace says nothing; only a real reading counts
-      if (on === undefined) return
-      fromMirror = on
-      settle()
+  const follow = (f: ConfigForms | undefined): void => {
+    try {
+      offMirror?.()
+    } catch {
+      // already gone
     }
-    offMirror = m.subscribe(read)
-    void Promise.resolve(m.ensure()).then(read, read)
-    read()
+    offMirror = undefined
+    // a mirror that went away says nothing any more: the host decides again
+    fromMirror = undefined
+    let m: Mirror | undefined
+    try {
+      m = f?.describe()
+    } catch {
+      m = undefined
+    }
+    if (m) {
+      const mirror = m
+      const read = (): void => {
+        if (stopped) return
+        const view = mirror.getSnapshot().view
+        if (!view) return
+        const on = showPanelOf(view.namespaces)
+        // an unknown namespace says nothing; only a real reading counts
+        if (on === undefined) return
+        fromMirror = on
+        settle()
+      }
+      offMirror = mirror.subscribe(read)
+      void Promise.resolve(mirror.ensure()).then(read, read)
+      read()
+    }
+    settle()
   }
+  const offForms = forms.subscribe(() => follow(forms.get()))
+  follow(forms.get())
   askHost()
   const timer = setInterval(askHost, RECHECK_MS)
   return () => {
     stopped = true
     clearInterval(timer)
+    offForms()
     try {
       offMirror?.()
     } catch {

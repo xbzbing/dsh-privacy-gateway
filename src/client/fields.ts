@@ -13,11 +13,20 @@
 
 export type GroupId = 'mask' | 'lists' | 'record' | 'view'
 
+/**
+ * What a change to a field can cost, asked about before it is written (as the
+ * session switch asks, docs/adr/0023): `send`, content goes to the model
+ * service as it is; `delete`, kept data is thrown away. Which way of changing
+ * the field is the risky one follows from its kind (`riskOf`).
+ */
+export type Risk = 'send' | 'delete'
+
 interface Base<K extends string> {
   key: K
   group: GroupId
   /** Takes one of the group's two columns when the page is wide enough; otherwise the whole width. */
   half?: true
+  risk?: Risk
 }
 
 export type FieldSpec =
@@ -30,21 +39,60 @@ export type FieldSpec =
 export const GROUPS: readonly GroupId[] = ['mask', 'lists', 'record', 'view']
 
 export const FIELDS: readonly FieldSpec[] = [
-  { key: 'enabled', group: 'mask', kind: 'switch', default: true },
-  { key: 'secrets', group: 'mask', kind: 'switch', default: true, half: true },
-  { key: 'personal', group: 'mask', kind: 'switch', default: false, half: true },
+  { key: 'enabled', group: 'mask', kind: 'switch', default: true, risk: 'send' },
+  { key: 'secrets', group: 'mask', kind: 'switch', default: true, half: true, risk: 'send' },
+  { key: 'personal', group: 'mask', kind: 'switch', default: false, half: true, risk: 'send' },
   { key: 'shape', group: 'mask', kind: 'switch', default: false, half: true },
   { key: 'toolGuard', group: 'mask', kind: 'choice', choices: ['off', 'warn', 'block'], default: 'off', half: true },
   // words are matched as written, allow in any case (README, config.ts)
   { key: 'words', group: 'lists', kind: 'list', default: [], anyCase: false, half: true },
-  { key: 'allow', group: 'lists', kind: 'list', default: [], anyCase: true, half: true },
-  { key: 'record', group: 'record', kind: 'switch', default: true, half: true },
-  { key: 'keepDays', group: 'record', kind: 'count', min: 1, default: 30, half: true },
+  { key: 'allow', group: 'lists', kind: 'list', default: [], anyCase: true, half: true, risk: 'send' },
+  // off drops the records still waiting to be written; fewer days deletes the older day files
+  { key: 'record', group: 'record', kind: 'switch', default: true, half: true, risk: 'delete' },
+  { key: 'keepDays', group: 'record', kind: 'count', min: 1, default: 30, half: true, risk: 'delete' },
   { key: 'recordContext', group: 'record', kind: 'switch', default: true },
-  { key: 'vendorView', group: 'record', kind: 'switch', default: false },
+  // off clears the copies kept so far
+  { key: 'vendorView', group: 'record', kind: 'switch', default: false, risk: 'delete' },
   { key: 'showPanel', group: 'view', kind: 'switch', default: false },
-  { key: 'excludeProviders', group: 'view', kind: 'providers', default: [] },
+  { key: 'excludeProviders', group: 'view', kind: 'providers', default: [], risk: 'send' },
 ]
+
+/** A change that needs confirming: its risk, and what the confirmation names (the entries added, or the counts before and after). */
+export interface RiskyChange {
+  risk: Risk
+  added?: string[]
+  from?: number
+  to?: number
+}
+
+/**
+ * Whether changing `f` from `before` to `after` needs confirming: a switch
+ * turned off, a list or provider choice that gains an entry, a count made
+ * smaller. Both values are the form's, read with the field's default.
+ */
+export function riskOf(f: FieldSpec, before: unknown, after: unknown): RiskyChange | undefined {
+  if (!f.risk) return undefined
+  switch (f.kind) {
+    case 'switch':
+      return switchValue(before, f.default) && !switchValue(after, f.default) ? { risk: f.risk } : undefined
+    case 'list':
+    case 'providers': {
+      // provider ids, like allow values, match in any case
+      const anyCase = f.kind === 'providers' || f.anyCase
+      const norm = (x: string): string => (anyCase ? x.trim().toLowerCase() : x.trim())
+      const had = new Set(listValue(before, f.default).map(norm))
+      const added = listValue(after, f.default).filter((x) => !had.has(norm(x)))
+      return added.length > 0 ? { risk: f.risk, added } : undefined
+    }
+    case 'count': {
+      const from = countValue(before, f.min, f.default)
+      const to = countValue(after, f.min, f.default)
+      return to < from ? { risk: f.risk, from, to } : undefined
+    }
+    case 'choice':
+      return undefined
+  }
+}
 
 /** Whether a field's control sits beside its words (a switch, a choice, a count) or below them (a list, the provider picker). */
 export function inline(f: FieldSpec): boolean {

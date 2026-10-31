@@ -1,11 +1,11 @@
 /** The pieces of the statistics card (StatsCard.ts), drawn with the Web shell's own controls. */
 import { Button, IconChevronRightOutlineRegular, IconTrashOutlineRegular, IconWarningOutlineRegular, RiskConfirmation, Switch, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import { createElement as h, Fragment, useEffect, useState } from 'react'
+import { createElement as h, Fragment, useEffect, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
-import { resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
+import { failureText, resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
 import { bars, hintOf, placeKey, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
@@ -80,12 +80,12 @@ export function Dist(props: { title: string; data: Record<string, number>; empty
   )
 }
 
-/** The records' column heads, the same grid as each row. */
+/** The records' column heads, the same grid as each row; for the eye only, since each row names its columns itself. */
 export function RecordHead(props: { t: T }): ReactNode {
   const { t } = props
   return h(
     'div',
-    { className: 'pgw-rec pgw-rec--head', role: 'row' },
+    { className: 'pgw-rec pgw-rec--head', 'aria-hidden': true },
     h('span', null),
     h('span', null, t('recent.col.time')),
     h('span', null, t('recent.col.where')),
@@ -99,6 +99,7 @@ export function RecordHead(props: { t: T }): ReactNode {
 export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: () => void; t: T; viewable: boolean }): ReactNode {
   const { r, t } = props
   const [viewing, setViewing] = useState(false)
+  const detailId = useId()
   // who it came from: the workspace and the session, by name where the host could tell them (docs/adr/0020)
   const from = [r.workspace, r.title ?? r.session].filter((x): x is string => typeof x === 'string' && x !== '').join(' · ')
   const places = r.failed
@@ -106,12 +107,31 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
     : r.blocked
       ? h(Tag, { tone: 'danger' }, t('recent.blocked'))
       : h('span', { className: r.exfil ? 'pgw-rec__bad' : undefined }, r.n.toLocaleString())
+  const placesWords = r.failed ? t('recent.failed') : r.blocked ? t('recent.blocked') : r.n.toLocaleString()
+  // the row's name reads each column with its head, as the visual heads above it say them
+  const name = [
+    [t('recent.col.time'), timeLabel(r.time)],
+    [t('recent.col.where'), [r.model ?? r.what, r.host].filter(Boolean).join(' · ')],
+    [t('recent.col.from'), from],
+    [t('recent.col.places'), placesWords],
+    [t('recent.col.restored'), r.restored.toLocaleString()],
+  ]
+    .filter(([, v]) => v !== '')
+    .map(([k, v]) => t('recent.cell', { name: k as string, value: v as string }))
+    .join(t('recent.cellSep'))
   return h(
-    Fragment,
-    null,
+    'li',
+    { className: 'pgw-recs__item' },
     h(
       'button',
-      { type: 'button', className: `pgw-rec${r.n === 0 && !r.failed ? ' pgw-rec--zero' : ''}${props.open ? ' pgw-rec--open' : ''}`, 'aria-expanded': props.open, onClick: props.toggle },
+      {
+        type: 'button',
+        className: `pgw-rec${r.n === 0 && !r.failed ? ' pgw-rec--zero' : ''}${props.open ? ' pgw-rec--open' : ''}`,
+        'aria-expanded': props.open,
+        'aria-controls': props.open ? detailId : undefined,
+        'aria-label': name,
+        onClick: props.toggle,
+      },
       h(IconChevronRightOutlineRegular, { size: 12, className: 'pgw-rec__chevron' }),
       h('span', { className: 'pgw-rec__time' }, timeLabel(r.time)),
       h('span', { className: 'pgw-rec__where', title: [r.model, r.host].filter(Boolean).join(' · ') }, h('span', { className: 'pgw-rec__model' }, r.model ?? r.what), h('span', { className: 'pgw-rec__host' }, r.host)),
@@ -122,7 +142,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
     props.open
       ? h(
           'div',
-          { className: 'pgw-detail' },
+          { className: 'pgw-detail', id: detailId },
           r.exfil ? h('div', { className: 'pgw-notice pgw-notice--error' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), t('recent.exfil', { hosts: (r.exfilHosts ?? []).join(', ') })) : null,
           r.values.length === 0
             ? h('div', { className: 'pgw-empty' }, t('recent.noValues'))
@@ -182,7 +202,7 @@ export function ResetButton(props: { ctx: ClientCtx; t: T; onDone(message: strin
     void resetData(props.ctx).then((r) => {
       setBusy(false)
       close()
-      props.onDone(r.ok ? t('card.resetDone', { n: r.files }) : t('card.resetFailed', { message: r.message }), r.ok)
+      props.onDone(r.ok ? t('card.resetDone', { n: r.value }) : t('card.resetFailed', { message: failureText(r.failure, t) }), r.ok)
     })
   }
   return h(
@@ -227,19 +247,19 @@ export function SessionSwitch(props: { ctx: ClientCtx; t: T; session: string; on
     void setSessionMasking(props.ctx, props.session, next).then((r) => {
       setBusy(false)
       close()
-      if (r.ok) setOn(r.on)
-      props.onDone(r.ok ? null : t('session.failed', { message: r.message }))
+      if (r.ok) setOn(r.value)
+      props.onDone(r.ok ? null : t('session.failed', { message: failureText(r.failure, t) }))
     })
   }
-  const label = t('session.mask')
   return h(
     Fragment,
     null,
+    // the visible words are the switch's label: they name it, and a click on them flips it
     h(
-      'span',
+      'label',
       { className: 'pgw-session' },
-      h(Switch, { checked: on, label, disabled: busy, onChange: (next) => (next ? apply(true) : setAsking(true)) }),
-      h('span', { className: 'pgw-session__label', 'aria-hidden': true }, label),
+      h(Switch, { checked: on, disabled: busy, onChange: (next) => (next ? apply(true) : setAsking(true)) }),
+      h('span', { className: 'pgw-session__label' }, t('session.mask')),
     ),
     h(RiskConfirmation, {
       open: asking,

@@ -1,11 +1,14 @@
-/** The host's `privacyGateway/overview`, through the shared `/api` channel. */
-import type { Overview } from '../remote.ts'
-import { isOverview } from './view.ts'
+/** The host's `privacyGateway/*` methods, through the shared `/api` channel. */
+import type { Overview, ProviderEntry } from '../remote.ts'
+import type { Key, T } from './locales.ts'
+import { readOverview } from './view.ts'
+
+export type { ProviderEntry }
 
 export interface ClientCtx {
   get(key: string): unknown
   effect(cb: () => void | (() => void), label?: string): void
-  /** Runs `callback` once every named service is there (cordis deferred injection). */
+  /** Runs `callback` once every named service is there, and again whenever one is replaced (cordis deferred injection). */
   inject?(deps: string[], callback: (child: ClientCtx) => void): unknown
   slots: {
     inject(name: string, provider: () => unknown): unknown
@@ -21,116 +24,81 @@ interface ConnectionFace {
   rpc?: { call?(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<unknown> }
 }
 
-export type OverviewResult = { ok: true; value: Overview } | { ok: false; message: string }
+/**
+ * Why a call has no answer. `noConnection` and `malformed` are this page's own
+ * words; `remote` and `thrown` carry the message the host or the transport gave.
+ */
+export type Failure = { code: 'noConnection' } | { code: 'malformed' } | { code: 'remote' | 'thrown'; message: string }
 
-/** The overview, or why there is none; never throws. */
-export async function fetchOverview(ctx: ClientCtx, limit: number, signal?: AbortSignal, session?: string): Promise<OverviewResult> {
+export type Result<V> = { ok: true; value: V } | { ok: false; failure: Failure }
+
+/** A failure in the reader's language. */
+export function failureText(f: Failure, t: T): string {
+  const words: Record<Failure['code'], Key> = { noConnection: 'err.noConnection', malformed: 'err.malformed', remote: 'err.remote', thrown: 'err.thrown' }
+  return t(words[f.code], 'message' in f ? { message: f.message } : undefined)
+}
+
+/**
+ * One `privacyGateway/<method>` call: the reply's value read by `read`
+ * (undefined meaning it is not of the shape this page knows); never throws.
+ */
+export async function call<V>(ctx: ClientCtx, method: string, request: unknown, read: (value: unknown) => V | undefined, signal?: AbortSignal): Promise<Result<V>> {
   let rpc: ConnectionFace['rpc']
   try {
     rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
   } catch {
     rpc = undefined
   }
-  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
+  if (!rpc || typeof rpc.call !== 'function') return { ok: false, failure: { code: 'noConnection' } }
   try {
-    const request = session ? { limit, session } : { limit }
-    const r = (await rpc.call('/api', 'privacyGateway/overview', { args: { request } }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
-    if (r?.ok === true && isOverview(r.value)) return { ok: true, value: r.value }
-    return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+    const args = request === undefined ? {} : { request }
+    const r = (await rpc.call('/api', `privacyGateway/${method}`, { args }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: unknown } } | null
+    if (r?.ok !== true) {
+      const message = r?.error?.message
+      return { ok: false, failure: typeof message === 'string' && message !== '' ? { code: 'remote', message } : { code: 'malformed' } }
+    }
+    const value = read(r.value)
+    return value === undefined ? { ok: false, failure: { code: 'malformed' } } : { ok: true, value }
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+    return { ok: false, failure: { code: 'thrown', message: err instanceof Error ? err.message : String(err) } }
   }
 }
 
-export type VendorViewResult = { ok: true; body: string | null } | { ok: false; message: string }
-
-/** The body kept for record `key` (docs/adr/0016): null when it is no longer kept; never throws. */
-export async function fetchVendorView(ctx: ClientCtx, key: number, signal?: AbortSignal): Promise<VendorViewResult> {
-  let rpc: ConnectionFace['rpc']
-  try {
-    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
-  } catch {
-    rpc = undefined
-  }
-  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
-  try {
-    const r = (await rpc.call('/api', 'privacyGateway/vendorView', { args: { request: { key } } }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
-    if (r?.ok !== true) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
-    const v = r.value as { body?: unknown } | null
-    return { ok: true, body: v !== null && typeof v === 'object' && typeof v.body === 'string' ? v.body : null }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
-  }
+/** The overview, or why there is none. */
+export function fetchOverview(ctx: ClientCtx, limit: number, signal?: AbortSignal, session?: string): Promise<Result<Overview>> {
+  return call(ctx, 'overview', session ? { limit, session } : { limit }, readOverview, signal)
 }
 
-/** One provider route with an adapter, as the excludeProviders choice lists it. */
-export interface ProviderEntry {
-  id: string
-  name: string
+/** The body kept for record `key` (docs/adr/0016): null when it is no longer kept. */
+export function fetchVendorView(ctx: ClientCtx, key: number, signal?: AbortSignal): Promise<Result<string | null>> {
+  return call(ctx, 'vendorView', { key }, (v) => {
+    const body = (v as { body?: unknown } | null)?.body
+    return v !== null && typeof v === 'object' && typeof body === 'string' ? body : null
+  }, signal)
 }
 
-export type ResetResult = { ok: true; files: number } | { ok: false; message: string }
-
-/** Clears the history on the host (docs/adr/0022); never throws. */
-export async function resetData(ctx: ClientCtx): Promise<ResetResult> {
-  let rpc: ConnectionFace['rpc']
-  try {
-    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
-  } catch {
-    rpc = undefined
-  }
-  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
-  try {
-    const r = (await rpc.call('/api', 'privacyGateway/reset', { args: {} })) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
-    if (r?.ok !== true) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
-    const files = (r.value as { files?: unknown } | null)?.files
-    return { ok: true, files: typeof files === 'number' ? files : 0 }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
-  }
+/** Clears the history on the host (docs/adr/0022): the number of day files deleted. */
+export function resetData(ctx: ClientCtx): Promise<Result<number>> {
+  return call(ctx, 'reset', undefined, (v) => {
+    const files = (v as { files?: unknown } | null)?.files
+    return typeof files === 'number' ? files : 0
+  })
 }
 
-export type SessionMaskingResult = { ok: true; on: boolean } | { ok: false; message: string }
-
-/** Turns masking on or off for one session (docs/adr/0023); never throws. */
-export async function setSessionMasking(ctx: ClientCtx, session: string, on: boolean): Promise<SessionMaskingResult> {
-  let rpc: ConnectionFace['rpc']
-  try {
-    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
-  } catch {
-    rpc = undefined
-  }
-  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
-  try {
-    const r = (await rpc.call('/api', 'privacyGateway/sessionMasking', { args: { request: { session, on } } })) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
-    const now = (r?.value as { on?: unknown } | null)?.on
-    if (r?.ok !== true || typeof now !== 'boolean') return { ok: false, message: r?.error?.message ?? 'malformed reply' }
-    return { ok: true, on: now }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
-  }
+/** Turns masking on or off for one session (docs/adr/0023): the state after. */
+export function setSessionMasking(ctx: ClientCtx, session: string, on: boolean): Promise<Result<boolean>> {
+  return call(ctx, 'sessionMasking', { session, on }, (v) => {
+    const now = (v as { on?: unknown } | null)?.on
+    return typeof now === 'boolean' ? now : undefined
+  })
 }
 
-export type ProvidersResult = { ok: true; providers: ProviderEntry[] } | { ok: false; message: string }
+/** The providers with an adapter, from this plugin's own host half. */
+export function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Promise<Result<ProviderEntry[]>> {
+  return call(ctx, 'providers', undefined, (v) => (Array.isArray(v) ? v.flatMap(providerEntry) : undefined), signal)
+}
 
-/** The providers with an adapter, from this plugin's own host half; never throws. */
-export async function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Promise<ProvidersResult> {
-  let rpc: ConnectionFace['rpc']
-  try {
-    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
-  } catch {
-    rpc = undefined
-  }
-  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
-  try {
-    const r = (await rpc.call('/api', 'privacyGateway/providers', { args: {} }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
-    if (r?.ok !== true || !Array.isArray(r.value)) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
-    const providers = r.value.flatMap((p: unknown) => {
-      const e = p as { id?: unknown; name?: unknown } | null
-      return e !== null && typeof e === 'object' && typeof e.id === 'string' && e.id !== '' ? [{ id: e.id, name: typeof e.name === 'string' && e.name !== '' ? e.name : e.id }] : []
-    })
-    return { ok: true, providers }
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) }
-  }
+function providerEntry(p: unknown): ProviderEntry[] {
+  const e = p as { id?: unknown; name?: unknown } | null
+  return e !== null && typeof e === 'object' && typeof e.id === 'string' && e.id !== '' ? [{ id: e.id, name: typeof e.name === 'string' && e.name !== '' ? e.name : e.id }] : []
 }

@@ -51,10 +51,10 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconCloseSmallOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
   export const IconPlusOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
 
-  /** A switch: `checked`, its accessible name, and the change it reports. */
-  export function Switch(props: { checked: boolean; label?: ReactNode; disabled?: boolean; onChange(next: boolean): void }): JSX.Element
-  /** A checkbox row: `checked`, its label, and the change it reports. */
-  export function Checkbox(props: { checked: boolean; label?: ReactNode; disabled?: boolean; onChange(next: boolean): void }): JSX.Element
+  /** A switch (a `role="switch"` button): `checked`, its accessible name (`aria-label`; without it, an enclosing label names it), and the change it reports. */
+  export function Switch(props: { checked: boolean; label?: ReactNode; disabled?: boolean; title?: string; className?: string; onChange(next: boolean): void }): JSX.Element
+  /** A checkbox row (a native checkbox inside its label): `checked`, its label, and the change it reports. */
+  export function Checkbox(props: { checked: boolean; label?: ReactNode; disabled?: boolean; title?: string; className?: string; onChange(next: boolean): void }): JSX.Element
   /** A button: `variant` picks the fill, `size` the density. */
   export function Button(props: {
     variant?: 'primary' | 'outline' | 'ghost' | 'danger'

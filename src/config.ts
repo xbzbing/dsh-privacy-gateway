@@ -16,11 +16,11 @@ export const ACTIONS: readonly Action[] = ['mask', 'warn', 'block']
 
 export type ToolGuard = 'off' | 'warn' | 'block'
 
-/** showPanel's description: the client half also knows this plugin's settings by it. */
 /** excludeProviders' description. */
 export const EXCLUDE_PROVIDERS_DESCRIPTION = '不脱敏的 provider / Providers whose requests are not masked'
 
-export const SHOW_PANEL_DESCRIPTION = '在会话右侧栏显示「隐私保护」面板 / Show the Privacy panel in the right sidebar'
+/** showPanel's description: the client half also knows this plugin's settings by it (src/client/panelConfig.ts DESCRIPTION_MARK). */
+export const SHOW_PANEL_DESCRIPTION = '在会话顶部显示「隐私保护」标签页 / Show the Privacy tab at the top of the session'
 
 /** A volatile config field as cordis hands it over (cosmokit `Volatile`): its current value on each get(). */
 export interface LiveValue<T> {
@@ -112,7 +112,7 @@ export interface PrivacyGatewayConfig {
   /** Each value in a record keeps where it was and about 80 characters each side, as sent (docs/adr/0024). */
   recordContext?: boolean
   /**
-   * Offer a Privacy tab in the session's right sidebar (docs/adr/0017).
+   * Offer a Privacy tab at the top of the session, in its view strip (docs/adr/0017).
    * Volatile: cordis hands it over as a live reference the detail page's
    * switch updates without remounting the plugin.
    */

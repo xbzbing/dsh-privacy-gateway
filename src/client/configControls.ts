@@ -8,19 +8,23 @@
  */
 import { Button, IconChevronDownOutlineRegular, IconCloseOutlineRegular, Input, Menu, Switch, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import { createElement as h, useEffect, useId, useState } from 'react'
+import { createElement as h, useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { addEntry, parseCount, removeEntry } from './fields.ts'
 import type { T } from './locales.ts'
 
-/** A setting's row: its title, its description and an optional note, with the control beside them (`inline`) or below. */
-export function Row(props: { title: string; hint: string; note?: ReactNode; inline: boolean; half: boolean; children?: ReactNode }): ReactNode {
+/**
+ * A setting's row: its title, its description and an optional note, with the
+ * control beside them (`inline`) or below. `titleId` names the title, for a
+ * control that takes its accessible name from it.
+ */
+export function Row(props: { title: string; titleId?: string; hint: string; note?: ReactNode; inline: boolean; half: boolean; children?: ReactNode }): ReactNode {
   const cls = ['pgw-cfg__row', props.inline ? 'pgw-cfg__row--inline' : '', props.half ? 'pgw-cfg__row--half' : ''].filter(Boolean).join(' ')
   return h(
     'div',
     { className: cls },
-    h('div', { className: 'pgw-cfg__text' }, h('div', { className: 'pgw-cfg__name' }, props.title), h('div', { className: 'pgw-cfg__desc' }, props.hint), props.note ?? null),
+    h('div', { className: 'pgw-cfg__text' }, h('div', { className: 'pgw-cfg__name', id: props.titleId }, props.title), h('div', { className: 'pgw-cfg__desc' }, props.hint), props.note ?? null),
     h('div', { className: 'pgw-cfg__control' }, props.children),
   )
 }
@@ -40,7 +44,7 @@ export function Fold(props: { title: string; summary: ReactNode; open: boolean; 
       { className: 'pgw-fold__heading' },
       h(
         'button',
-        { type: 'button', id: `${id}-h`, className: 'pgw-fold__head', 'aria-expanded': props.open, 'aria-controls': `${id}-b`, title: props.toggleLabel, onClick: props.onToggle },
+        { type: 'button', id: `${id}-h`, className: 'pgw-fold__head', 'aria-expanded': props.open, 'aria-controls': props.open ? `${id}-b` : undefined, title: props.toggleLabel, onClick: props.onToggle },
         h(IconChevronDownOutlineRegular, { className: 'pgw-fold__chevron' }),
         h('span', { className: 'pgw-fold__title' }, props.title),
         props.open ? null : h('span', { className: 'pgw-fold__summary' }, props.summary),
@@ -57,10 +61,12 @@ export function SwitchControl(props: { label: string; checked: boolean; disabled
 /**
  * The settings page's selector: a filled button with the current choice and a
  * chevron, opening the Menu below it. `multi` keeps the menu open and checks
- * every chosen row; otherwise a pick closes it.
+ * every chosen row; otherwise a pick closes it. The button is named by the
+ * row's title (`labelledBy`) followed by the current choice.
  */
 export function Select(props: {
   label: string
+  labelledBy?: string
   items: readonly MenuEntry[]
   disabled: boolean
   selectedId?: string
@@ -69,6 +75,7 @@ export function Select(props: {
   onSelect(id: string): void
 }): ReactNode {
   const [open, setOpen] = useState(false)
+  const valueId = useId()
   useEffect(() => {
     if (props.disabled) setOpen(false)
   }, [props.disabled])
@@ -90,24 +97,36 @@ export function Select(props: {
         className: 'pgw-select',
         'aria-haspopup': 'menu',
         'aria-expanded': open,
+        'aria-labelledby': props.labelledBy ? `${props.labelledBy} ${valueId}` : undefined,
         disabled: props.disabled || props.items.length === 0,
         onClick: () => setOpen((was) => !was),
       },
-      h('span', { className: 'pgw-select__label' }, props.label),
+      h('span', { className: 'pgw-select__label', id: valueId }, props.label),
       h(IconChevronDownOutlineRegular, { className: 'pgw-select__chevron' }),
     ),
   })
 }
 
-/** A list of strings: an input that adds one on Enter or Add, and a tag with a remove button for each. */
-export function ListEditor(props: { t: T; list: readonly string[]; anyCase: boolean; placeholder: string; disabled: boolean; onChange(next: string[]): void }): ReactNode {
+/**
+ * A list of strings: an input that adds one on Enter or Add, and a tag with a
+ * remove button for each. `onChange` resolves with whether the change was
+ * saved; the typed entry is cleared only then, so a refused or cancelled one
+ * can be tried again.
+ */
+export function ListEditor(props: { t: T; list: readonly string[]; anyCase: boolean; placeholder: string; disabled: boolean; onChange(next: string[]): Promise<boolean> }): ReactNode {
   const { t } = props
   const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
   const next = addEntry(props.list, draft, props.anyCase)
   const add = (): void => {
-    if (!next || props.disabled) return
-    setDraft('')
-    props.onChange(next)
+    if (!next || props.disabled || saving) return
+    const sent = draft
+    setSaving(true)
+    void props.onChange(next).then((ok) => {
+      setSaving(false)
+      // the field may have been edited while the change was on its way: keep what is there now
+      if (ok) setDraft((now) => (now === sent ? '' : now))
+    })
   }
   return h(
     'div',
@@ -130,7 +149,7 @@ export function ListEditor(props: { t: T; list: readonly string[]; anyCase: bool
           }
         },
       }),
-      h(Button, { variant: 'outline', size: 'sm', disabled: props.disabled || !next, onClick: add }, t('cfg.add')),
+      h(Button, { variant: 'outline', size: 'sm', disabled: props.disabled || saving || !next, onClick: add }, t('cfg.add')),
     ),
     props.list.length === 0
       ? h('div', { className: 'pgw-cfg__desc' }, t('cfg.listEmpty'))
@@ -149,7 +168,7 @@ export function ListEditor(props: { t: T; list: readonly string[]; anyCase: bool
                   className: 'pgw-cfg__tagX',
                   'aria-label': t('cfg.remove', { name: entry }),
                   disabled: props.disabled,
-                  onClick: () => props.onChange(removeEntry(props.list, entry)),
+                  onClick: () => void props.onChange(removeEntry(props.list, entry)),
                 },
                 h(IconCloseOutlineRegular, { size: 12 }),
               ),
@@ -159,14 +178,25 @@ export function ListEditor(props: { t: T; list: readonly string[]; anyCase: bool
   )
 }
 
-/** A whole number, saved when the field loses focus or on Enter, and only when valid and changed. */
-export function CountField(props: { t: T; value: number; min: number; label: string; disabled: boolean; onChange(next: number): void }): ReactNode {
+/**
+ * A whole number, saved when the field loses focus or on Enter, and only when
+ * valid and changed. A change that is not saved (refused, or not confirmed)
+ * puts the saved number back.
+ */
+export function CountField(props: { t: T; value: number; min: number; label: string; disabled: boolean; onChange(next: number): Promise<boolean> }): ReactNode {
   const [draft, setDraft] = useState(String(props.value))
+  // the number on its way: Enter, then the blur a confirmation dialog causes, must not send it twice
+  const sending = useRef<number | undefined>(undefined)
   useEffect(() => setDraft(String(props.value)), [props.value])
   const parsed = parseCount(draft, props.min)
   const commit = (): void => {
-    if (parsed === undefined) return
-    if (parsed !== props.value) props.onChange(parsed)
+    if (parsed === undefined || parsed === props.value || parsed === sending.current) return
+    const saved = props.value
+    sending.current = parsed
+    void props.onChange(parsed).then((ok) => {
+      sending.current = undefined
+      if (!ok) setDraft(String(saved))
+    })
   }
   return h(
     'div',

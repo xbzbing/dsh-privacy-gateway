@@ -3,7 +3,8 @@
  * unit tests run it as it is.
  */
 import type { Overview } from '../remote.ts'
-import type { Totals } from '../records.ts'
+import type { MaskRecord, Totals } from '../records.ts'
+import type { Failure, Result } from './rpc.ts'
 
 export type Range = 'today' | 'week' | 'month'
 
@@ -53,10 +54,76 @@ export function timeLabel(iso: string, now = new Date()): string {
   return sameDay ? `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` : `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/** Whether `o` reads as an overview (the host half answered, of a version this card knows). */
-export function isOverview(o: unknown): o is Overview {
-  const v = o as Partial<Overview> | null
-  return typeof v === 'object' && v !== null && typeof v.active === 'boolean' && typeof v.stats === 'object' && v.stats !== null && Array.isArray(v.recent)
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+/** A count per name, the entries that are not counts dropped. */
+function counts(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (isObject(v)) for (const [k, n] of Object.entries(v)) if (typeof n === 'number' && Number.isFinite(n)) out[k] = n
+  return out
+}
+
+/** One range's sums with every field the card reads, a missing or odd one as zero; undefined when it is not an object at all. */
+export function readTotals(v: unknown): Totals | undefined {
+  if (!isObject(v)) return undefined
+  const took = isObject(v.tookMs) ? v.tookMs : {}
+  return {
+    requests: count(v.requests),
+    masked: count(v.masked),
+    n: count(v.n),
+    restored: count(v.restored),
+    restoredInTools: count(v.restoredInTools),
+    unmapped: count(v.unmapped),
+    failed: count(v.failed),
+    warned: count(v.warned),
+    blocked: count(v.blocked),
+    exfil: count(v.exfil),
+    exfilBlocked: count(v.exfilBlocked),
+    tookMs: { sum: count(took.sum), max: count(took.max) },
+    kinds: counts(v.kinds),
+    finders: counts(v.finders),
+    hosts: counts(v.hosts),
+    models: counts(v.models),
+  }
+}
+
+/** A record the list can draw: it has a key, a time and its values; the rest is optional or counted. */
+function isRecord(v: unknown): v is MaskRecord {
+  return isObject(v) && typeof v.key === 'number' && typeof v.time === 'string' && Array.isArray(v.values) && v.values.every(isObject)
+}
+
+/**
+ * The overview the host half answered, with each range's sums filled in and
+ * the records the list cannot draw left out, so a host of another version
+ * cannot break the card; undefined when it is not an overview at all.
+ */
+export function readOverview(o: unknown): Overview | undefined {
+  if (!isObject(o) || typeof o.active !== 'boolean' || !isObject(o.stats) || !Array.isArray(o.recent)) return undefined
+  const today = readTotals(o.stats.today)
+  const week = readTotals(o.stats.week)
+  const month = readTotals(o.stats.month)
+  if (!today || !week || !month) return undefined
+  return {
+    ...(o as unknown as Overview),
+    values: count(o.values),
+    stats: { today, week, month, failStreak: count(o.stats.failStreak) },
+    recent: o.recent.filter(isRecord).map((r) => ({ ...r, n: count(r.n), restored: count(r.restored), unmapped: count(r.unmapped) })),
+    ...(Array.isArray(o.views) ? { views: o.views.filter((k): k is number => typeof k === 'number') } : {}),
+  }
+}
+
+/** What the card holds: nothing yet, nothing to show, or an overview and, when the latest refresh failed, why. */
+export type CardState = { status: 'loading' } | { status: 'error'; failure: Failure } | { status: 'ready'; data: Overview; stale?: Failure }
+
+/**
+ * The card's state after a refresh: a new overview replaces the old one; a
+ * failed refresh keeps what was shown but marks it stale, so the card says
+ * the numbers are old instead of passing them off as current.
+ */
+export function afterRefresh(prev: CardState, next: Result<Overview>): CardState {
+  if (next.ok) return { status: 'ready', data: next.value }
+  return prev.status === 'ready' ? { status: 'ready', data: prev.data, stale: next.failure } : { status: 'error', failure: next.failure }
 }
 
 /** One line of the side-by-side view: its number, and its pieces, each plain or a replaced place. */
@@ -67,23 +134,32 @@ export interface ViewLine {
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/**
- * The lines of a body as the side-by-side view shows them (docs/adr/0016):
- * JSON pretty-printed, each placeholder or made-up key in `ids` a piece of its
- * own; with `onlyChanged`, the lines that have one. At most `max` lines.
- */
-export function viewLines(body: string, ids: readonly string[], onlyChanged: boolean, max = 400): { lines: ViewLine[]; truncated: boolean } {
+/** A body's lines as the side-by-side view shows them (docs/adr/0016): JSON pretty-printed, anything else as it is. */
+export function bodyLines(body: string): string[] {
   let text = body
   try {
     text = JSON.stringify(JSON.parse(body), null, 2)
   } catch {
     // not JSON: shown as it is
   }
+  return text.split('\n')
+}
+
+/** What tells one record's values apart from another's: their placeholders, in order. */
+export function valuesKey(values: readonly { placeholder: string }[]): string {
+  return values.map((v) => v.placeholder).join('\u0000')
+}
+
+/**
+ * The lines of a body (`bodyLines`) with each placeholder or made-up key in
+ * `ids` a piece of its own; with `onlyChanged`, the lines that have one. At
+ * most `max` lines.
+ */
+export function viewLines(all: readonly string[], ids: readonly string[], onlyChanged: boolean, max = 400): { lines: ViewLine[]; truncated: boolean } {
   const wanted = [...new Set(ids.filter((id) => id !== ''))].sort((a, b) => b.length - a.length)
   const re = wanted.length > 0 ? new RegExp(wanted.map(escapeRe).join('|'), 'g') : undefined
   const lines: ViewLine[] = []
   let truncated = false
-  const all = text.split('\n')
   for (let i = 0; i < all.length; i++) {
     const line = all[i] as string
     const parts: ViewLine['parts'] = []

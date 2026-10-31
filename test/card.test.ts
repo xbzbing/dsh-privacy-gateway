@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -7,8 +7,13 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 
-import { bars, isOverview, placeKey, timeLabel, took, warnings } from '../src/client/view.ts'
+import { afterRefresh, bars, bodyLines, placeKey, readOverview, timeLabel, took, valuesKey, warnings } from '../src/client/view.ts'
+import { PACKAGE } from '../src/client/ids.ts'
 import { en, zh } from '../src/client/locales.ts'
+import { DESCRIPTION_MARK, panelDecision, watchShowPanel, type ConfigForms } from '../src/client/panelConfig.ts'
+import { call, failureText, type ClientCtx } from '../src/client/rpc.ts'
+import { createStore } from '../src/client/store.ts'
+import { Config, SHOW_PANEL_DESCRIPTION } from '../src/config.ts'
 import { emptyTotals, type Stats } from '../src/records.ts'
 import { clampLimit, NAMESPACE, PrivacyGatewayService, type Overview } from '../src/remote.ts'
 
@@ -45,7 +50,7 @@ test('the service answers privacyGateway/overview with the latest records capped
   await assert.rejects(() => svc.sessionMasking({ session: 's', on: false }), /not offered/)
   await assert.rejects(() => svc.sessionMasking({ session: '', on: false }), /session id/)
   assert.equal((svc as unknown as { typertRemote: { namespace: string } }).typertRemote.namespace, 'privacyGateway')
-  assert.ok(isOverview(await svc.overview({ limit: 1000 })))
+  assert.ok(readOverview(await svc.overview({ limit: 1000 })))
   await svc.overview({})
   assert.deepEqual(asked, [200, 50])
   fiber.dispose()
@@ -102,35 +107,35 @@ test('the manifest ships the client half for the web platform', () => {
   assert.ok(pkg.files.includes('lib'))
   assert.equal(pkg.dsh.client?.platform, 'web')
   assert.ok(pkg.dsh.client?.inject?.includes('@deepseek-ai/dsh-client-connection'))
-  const client = readFileSync(join(root, 'src/client/index.ts'), 'utf8')
-  assert.match(client, new RegExp(`PACKAGE = '${pkg.name}'`))
+  assert.equal(PACKAGE, pkg.name)
 })
 
 test('the side-by-side view pretty-prints JSON, picks out each replaced place, and keeps the changed lines only when asked', async () => {
   const { viewLines } = await import('../src/client/view.ts')
   const body = JSON.stringify({ messages: [{ role: 'user', content: 'key {{API_KEY_aaaabbbb}} and sk-proj-FAKEfake1234' }, { role: 'assistant', content: 'ok' }] })
-  const all = viewLines(body, ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], false)
+  const all = viewLines(bodyLines(body), ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], false)
   assert.ok(all.lines.length > 3)
-  const only = viewLines(body, ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], true)
+  const only = viewLines(bodyLines(body), ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], true)
   assert.equal(only.lines.length, 1)
   assert.deepEqual(
     only.lines[0]?.parts.filter((p) => p.id).map((p) => p.id),
     ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'],
   )
   assert.equal(only.lines[0]?.parts.map((p) => p.text).join('').trim(), '"content": "key {{API_KEY_aaaabbbb}} and sk-proj-FAKEfake1234"')
-  assert.equal(viewLines(body, [], false, 2).truncated, true)
+  assert.equal(viewLines(bodyLines(body), [], false, 2).truncated, true)
+  assert.deepEqual(bodyLines('not json\nat all'), ['not json', 'at all'])
+  // the view's memo key: the same placeholders give the same key, a different set another
+  assert.equal(valuesKey([{ placeholder: 'a' }, { placeholder: 'b' }]), valuesKey([{ placeholder: 'a' }, { placeholder: 'b' }]))
+  assert.notEqual(valuesKey([{ placeholder: 'a' }]), valuesKey([{ placeholder: 'a' }, { placeholder: 'b' }]))
 })
 
-/** What the settings wire carries: schemastery's toJSON(), a reference table, not a nested dict. */
-const WIRE = {
-  uid: 4,
-  refs: {
-    '1': { type: 'boolean', meta: { default: false, description: '在会话右侧栏显示「隐私保护」面板 / Show the Privacy panel in the right sidebar' } },
-    '2': { type: 'array', meta: { default: [] }, inner: 3 },
-    '3': { type: 'string', meta: {} },
-    '4': { type: 'object', meta: { default: {} }, dict: { excludeProviders: 2, showPanel: 1 } },
-  },
-}
+/** What the settings wire carries: schemastery's toJSON() of the real schema, a reference table, not a nested dict. */
+const WIRE = Config.toJSON() as unknown
+
+test('showPanel’s description holds the words the client half knows it by', () => {
+  assert.ok(SHOW_PANEL_DESCRIPTION.includes(DESCRIPTION_MARK))
+  assert.ok(JSON.stringify(WIRE).includes(DESCRIPTION_MARK))
+})
 
 test('showPanel is read from the namespace that is ours', async () => {
   const { showPanelOf } = await import('../src/client/panelConfig.ts')
@@ -150,7 +155,8 @@ test('the records go a page at a time, the page held within the pages there are'
 
 test("a namespace's fields are read from schemastery's reference table, and from a nested dict", async () => {
   const { schemaFields } = await import('../src/client/panelConfig.ts')
-  assert.deepEqual(schemaFields(WIRE), ['excludeProviders', 'showPanel'])
+  const fields = schemaFields(WIRE)
+  assert.ok(fields.includes('excludeProviders') && fields.includes('showPanel'), fields.join())
   assert.deepEqual(schemaFields({ dict: { showPanel: {} } }), ['showPanel'])
   assert.deepEqual(schemaFields({ uid: 9, refs: {} }), [])
   assert.deepEqual(schemaFields(undefined), [])
@@ -162,7 +168,7 @@ test('the settings namespace is ours by its name, its other field, or showPanel 
   assert.equal(findNamespace([{ ns: 'other', schema: { dict: { showPanel: {} } } }]), undefined)
   assert.equal(findNamespace([{ ns: 'include:dsh-privacy-gateway', schema: WIRE }]), 'include:dsh-privacy-gateway')
   assert.equal(findNamespace([{ ns: 'n0', schema: WIRE }]), 'n0')
-  assert.equal(findNamespace([{ ns: 'n1', schema: { dict: { showPanel: { meta: { description: '… / Show the Privacy panel in the right sidebar' } } } } }]), 'n1')
+  assert.equal(findNamespace([{ ns: 'n1', schema: { dict: { showPanel: { meta: { description: `… / ${DESCRIPTION_MARK}` } } } } }]), 'n1')
   assert.equal(findNamespace([{ ns: 'n2', schema: { dict: { showPanel: { meta: { description: 'x' } } } } }]), undefined)
 })
 
@@ -176,4 +182,106 @@ test('a value’s place reads as the part of the conversation it was in', () => 
   assert.equal(placeKey({ path: 'messages.1.content', role: 'user' }), 'place.user')
   assert.equal(placeKey({ path: 'messages.2.content', role: 'assistant' }), 'place.assistant')
   assert.equal(placeKey({ path: 'prompt' }), 'place.other')
+})
+
+test('the tab follows the host alone when there is no settings mirror, and the mirror speeds up only "on"', () => {
+  assert.equal(panelDecision(undefined, undefined), undefined)
+  assert.equal(panelDecision(true, undefined), true)
+  assert.equal(panelDecision(false, undefined), false)
+  assert.equal(panelDecision(false, true), true)
+  assert.equal(panelDecision(true, false), true)
+  assert.equal(panelDecision(undefined, false), undefined)
+  assert.equal(panelDecision(false, false), false)
+})
+
+/** A client context whose host half answers `overview` with showPanel as `on()` says. */
+function hostCtx(on: () => boolean): ClientCtx {
+  const rpc = { call: async () => ({ ok: true, value: { ...overview(), showPanel: on() } }) }
+  return { get: (k: string) => (k === 'connection' ? { rpc } : undefined) } as unknown as ClientCtx
+}
+
+const settle = () => new Promise((r) => setImmediate(r))
+
+test('without a settings mirror, the host turning showPanel off takes the tab away', async () => {
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    let on = true
+    const seen: boolean[] = []
+    const stop = watchShowPanel(hostCtx(() => on), (v) => seen.push(v), createStore<ConfigForms | undefined>(undefined))
+    await settle()
+    assert.deepEqual(seen, [true])
+    on = false
+    mock.timers.tick(60_000)
+    await settle()
+    assert.deepEqual(seen, [true, false])
+    stop()
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('with a settings mirror, off needs the host and the mirror both', async () => {
+  mock.timers.enable({ apis: ['setInterval'] })
+  try {
+    let host = true
+    let mirrorOn = true
+    const listeners = new Set<() => void>()
+    const view = () => ({ namespaces: [{ ns: 'dsh-privacy-gateway', schema: WIRE, value: { showPanel: mirrorOn } }] })
+    const mirror = { getSnapshot: () => ({ view: view() }), subscribe: (l: () => void) => (listeners.add(l), () => listeners.delete(l)), ensure: async () => {} }
+    const forms = createStore<ConfigForms | undefined>(undefined)
+    const seen: boolean[] = []
+    const stop = watchShowPanel(hostCtx(() => host), (v) => seen.push(v), forms)
+    // the settings service arrives after the watch began
+    forms.set({ describe: () => mirror, get: () => { throw new Error('unused') } } as unknown as ConfigForms)
+    await settle()
+    assert.deepEqual(seen, [true])
+    mirrorOn = false
+    for (const l of listeners) l()
+    assert.deepEqual(seen, [true], 'the mirror alone does not take the tab away')
+    host = false
+    mock.timers.tick(60_000)
+    await settle()
+    assert.deepEqual(seen, [true, false])
+    stop()
+    assert.equal(listeners.size, 0)
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('a refresh that fails keeps what was shown, marked stale; with nothing shown it is an error', () => {
+  const o = overview()
+  const ready = afterRefresh({ status: 'loading' }, { ok: true, value: o })
+  assert.deepEqual(ready, { status: 'ready', data: o })
+  assert.deepEqual(afterRefresh(ready, { ok: false, failure: { code: 'noConnection' } }), { status: 'ready', data: o, stale: { code: 'noConnection' } })
+  assert.deepEqual(afterRefresh({ status: 'loading' }, { ok: false, failure: { code: 'malformed' } }), { status: 'error', failure: { code: 'malformed' } })
+  assert.deepEqual(afterRefresh(afterRefresh(ready, { ok: false, failure: { code: 'malformed' } }), { ok: true, value: o }), { status: 'ready', data: o })
+})
+
+test('an overview from another host version is filled in, not trusted as it is', () => {
+  assert.equal(readOverview(null), undefined)
+  assert.equal(readOverview({ active: true, stats: {}, recent: [] }), undefined)
+  const odd = readOverview({ active: true, stats: { today: {}, week: { requests: 'x' }, month: { requests: 3, kinds: { a: 1, b: 'x' } } }, recent: [{ key: 1, time: 't', values: [] }, { nope: true }] })
+  assert.ok(odd)
+  assert.equal(odd.stats.today.restoredInTools, 0)
+  assert.deepEqual(odd.stats.today.tookMs, { sum: 0, max: 0 })
+  assert.equal(odd.stats.week.requests, 0)
+  assert.deepEqual(odd.stats.month.kinds, { a: 1 })
+  assert.equal(odd.stats.failStreak, 0)
+  assert.equal(odd.recent.length, 1)
+  assert.equal(odd.recent[0]?.n, 0)
+})
+
+test('a call fails with a code the page words itself, or the host’s own message', async () => {
+  const t = (k: string, p?: Record<string, string | number>) => `${k}${p ? JSON.stringify(p) : ''}`
+  const none = { get: () => undefined } as unknown as ClientCtx
+  const r1 = await call(none, 'overview', {}, (v) => v)
+  assert.deepEqual(r1, { ok: false, failure: { code: 'noConnection' } })
+  const reply = (r: unknown) => ({ get: () => ({ rpc: { call: async () => r } }) }) as unknown as ClientCtx
+  assert.deepEqual(await call(reply(null), 'x', undefined, (v) => v), { ok: false, failure: { code: 'malformed' } })
+  assert.deepEqual(await call(reply({ ok: false, error: { message: 'boom' } }), 'x', undefined, (v) => v), { ok: false, failure: { code: 'remote', message: 'boom' } })
+  assert.deepEqual(await call(reply({ ok: true, value: 1 }), 'x', undefined, () => undefined), { ok: false, failure: { code: 'malformed' } })
+  assert.deepEqual(await call(reply({ ok: true, value: 1 }), 'x', undefined, (v) => v), { ok: true, value: 1 })
+  assert.equal(failureText({ code: 'noConnection' }, t as never), 'err.noConnection')
+  assert.equal(failureText({ code: 'remote', message: 'boom' }, t as never), 'err.remote{"message":"boom"}')
 })

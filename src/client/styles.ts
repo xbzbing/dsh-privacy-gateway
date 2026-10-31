@@ -1,8 +1,14 @@
-/** The card's CSS, injected once; colours through the theme's --dsw-alias-* tokens only. */
+/**
+ * The card's CSS, injected once; colours through the theme's --dsw-alias-*
+ * tokens only, and code in the theme's own code font (--ds-font-family-code,
+ * which dsh-client-ui-theme defines and the shell's markdown uses).
+ */
+const MONO = 'var(--ds-font-family-code,ui-monospace,monospace)'
+
 const CSS = `
 .pgw-card{display:flex;flex-direction:column;gap:16px;padding:16px 20px 20px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary);font-size:13px}
 .pgw-card--panel{box-sizing:border-box;width:min(calc(100% - 32px),var(--dsh-chat-content-width,920px));margin:0 auto;border:none;border-radius:0;background:transparent;padding:12px 0 20px}
-.pgw-session{display:inline-flex;align-items:center;gap:8px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.pgw-session{display:inline-flex;align-items:center;gap:8px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);cursor:pointer}
 .pgw-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .pgw-head__main{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .pgw-head__actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-left:auto}
@@ -10,10 +16,7 @@ const CSS = `
 .pgw-title{font-size:15px;font-weight:600;line-height:22px;margin:0}
 .pgw-meta{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .pgw-spacer{flex:1}
-.pgw-mono{font-family:var(--ds-font-family-code,ui-monospace,monospace)}
-.pgw-btn{font:inherit;font-size:12px;padding:3px 10px;border-radius:6px;border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
-@media (hover:hover){.pgw-btn:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}}
-.pgw-btn:disabled{opacity:.5;cursor:default}
+.pgw-mono{font-family:${MONO}}
 .pgw-reset{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary)}
 @media (hover:hover){.pgw-reset:hover:not(:disabled){color:var(--dsw-alias-state-error-primary)}}
 .pgw-empty{font-size:12px;color:var(--dsw-alias-label-tertiary)}
@@ -39,11 +42,13 @@ const CSS = `
 .pgw-section__title,.pgw-dist__title{font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .pgw-bar{display:flex;flex-direction:column;gap:4px;font-size:12px}
 .pgw-bar__head{display:flex;justify-content:space-between;gap:8px}
-.pgw-bar__label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);color:var(--dsw-alias-label-primary)}
+.pgw-bar__label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:${MONO};color:var(--dsw-alias-label-primary)}
 .pgw-bar__value{flex:none;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
 .pgw-bar__track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .pgw-bar__fill{height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary)}
 .pgw-recs{display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
+.pgw-recs__list{display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
+.pgw-recs__item{display:flex;flex-direction:column}
 .pgw-rec{box-sizing:border-box;display:grid;grid-template-columns:16px 76px minmax(0,1.4fr) minmax(0,1fr) 64px 64px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
 .pgw-rec--head{min-height:30px;border-top:none;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-weight:500;cursor:default}
 @media (hover:hover){.pgw-rec:not(.pgw-rec--head):hover{background:var(--dsw-alias-interactive-bg-hover)}}
@@ -116,16 +121,15 @@ const CSS = `
 .pgw-cfg__tagX{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:inherit;cursor:pointer;opacity:.6}
 .pgw-cfg__tagX:hover:not(:disabled){opacity:1}
 .pgw-cfg__tagX:disabled{opacity:.3;cursor:default}
-.pgw-check{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
 .pgw-view{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}
 .pgw-view__scroll{max-height:420px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1,transparent)}
 .pgw-view__table{border-collapse:collapse;width:100%;table-layout:fixed}
 .pgw-view__table th{position:sticky;top:0;background:var(--dsw-alias-bg-layer-2);font-weight:500;color:var(--dsw-alias-label-tertiary);text-align:left;padding:4px 8px}
 .pgw-view__table th:first-child,.pgw-view__n{width:44px}
 .pgw-view__n{color:var(--dsw-alias-label-tertiary);text-align:right;font-variant-numeric:tabular-nums;padding:2px 8px;vertical-align:top}
-.pgw-detail .pgw-view__code{font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:pre-wrap;word-break:break-all;padding:2px 8px;vertical-align:top;border-left:1px solid var(--dsw-alias-border-l2)}
+.pgw-detail .pgw-view__code{font-family:${MONO};white-space:pre-wrap;word-break:break-all;padding:2px 8px;vertical-align:top;border-left:1px solid var(--dsw-alias-border-l2)}
 .pgw-view__mark{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 18%,transparent);color:inherit;border-radius:3px;padding:0 2px}
-.pgw-view__mark--agent{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e0982e) 18%,transparent)}
+.pgw-view__mark--agent{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 18%,transparent)}
 `
 
 const ID = 'dsh-privacy-gateway-styles'

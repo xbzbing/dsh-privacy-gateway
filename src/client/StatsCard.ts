@@ -7,11 +7,10 @@ import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, 
 import { createElement as h, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { Overview } from '../remote.ts'
 import type { Key, T } from './locales.ts'
-import { fetchOverview, type ClientCtx } from './rpc.ts'
+import { failureText, fetchOverview, type ClientCtx } from './rpc.ts'
 import { Dist, Kpis, Notices, RecordHead, RecordRow, ResetButton, SessionSwitch } from './StatsParts.ts'
-import { pageOf, warnings, type Range } from './view.ts'
+import { afterRefresh, pageOf, warnings, type CardState, type Range } from './view.ts'
 
 const REFRESH_MS = 15_000
 /** Records asked for: the most the host sends, shown a page at a time. */
@@ -19,10 +18,8 @@ const LIMIT = 200
 const PAGE_SIZE = 10
 const RANGES: Range[] = ['today', 'week', 'month']
 
-type State = { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: Overview }
-
-function useOverview(ctx: ClientCtx, session?: string): [State, () => void, boolean] {
-  const [state, setState] = useState<State>({ status: 'loading' })
+function useOverview(ctx: ClientCtx, session?: string): [CardState, () => void, boolean] {
+  const [state, setState] = useState<CardState>({ status: 'loading' })
   const [busy, setBusy] = useState(false)
   const live = useRef<AbortController | null>(null)
   const load = useCallback(() => {
@@ -33,7 +30,7 @@ function useOverview(ctx: ClientCtx, session?: string): [State, () => void, bool
     void fetchOverview(ctx, LIMIT, ac.signal, session).then((r) => {
       if (ac.signal.aborted) return
       setBusy(false)
-      setState((prev) => (r.ok ? { status: 'ready', data: r.value } : prev.status === 'ready' ? prev : { status: 'error' }))
+      setState((prev) => afterRefresh(prev, r))
     })
   }, [ctx, session])
   useEffect(() => {
@@ -49,7 +46,18 @@ function useOverview(ctx: ClientCtx, session?: string): [State, () => void, bool
   return [state, load, busy]
 }
 
-export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessionId?: string }): ReactNode {
+type CardProps = { ctx: ClientCtx; t: T; panel?: boolean; sessionId?: string }
+
+/**
+ * The card, drawn afresh for each session: what it read, its page, the open
+ * record and its notice belong to the session they were for, so a tab that
+ * moves to another session never shows (or switches) with the last one's state.
+ */
+export function StatsCard(props: CardProps): ReactNode {
+  return h(Card, { key: props.sessionId ?? '', ...props })
+}
+
+function Card(props: CardProps): ReactNode {
   const { t } = props
   const [state, reload, busy] = useOverview(props.ctx, props.sessionId)
   const [range, setRange] = useState<Range>('today')
@@ -114,15 +122,21 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
     ),
   )
   const flash = notice ? h('div', { className: `pgw-flash${notice.ok ? '' : ' pgw-flash--error'}`, role: 'status' }, notice.text) : null
+  // a refresh that failed: the figures below are the last ones read, and say so
+  const stale =
+    state.status === 'ready' && state.stale
+      ? h('div', { className: 'pgw-notice pgw-notice--error', role: 'status' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), h('span', null, t('card.stale', { reason: failureText(state.stale, t) })))
+      : null
   const sessionOff =
     props.sessionId && ready?.sessionMasking === false
       ? h('div', { className: 'pgw-notice', role: 'status' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), h('span', null, t('session.offNotice')))
       : null
   if (!ready) {
-    return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
+    const words = state.status === 'error' ? `${t('card.unavailable')} ${t('card.reason', { reason: failureText(state.failure, t) })}` : t('card.loading')
+    return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, words))
   }
   if (props.sessionId && ready.recent.length === 0) {
-    return h('section', { className: cardClass }, head, flash, sessionOff, h('div', { className: 'pgw-empty pgw-empty--block' }, t('panel.empty')))
+    return h('section', { className: cardClass }, head, stale, flash, sessionOff, h('div', { className: 'pgw-empty pgw-empty--block' }, t('panel.empty')))
   }
   const o = ready
   const totals = o.stats[range]
@@ -136,6 +150,7 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
     'section',
     { className: cardClass },
     head,
+    stale,
     flash,
     sessionOff,
     h(Notices, { t, items: warnings(o, totals) }),
@@ -155,9 +170,14 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
         ? h('div', { className: 'pgw-empty pgw-empty--block' }, t('recent.empty'))
         : h(
             'div',
-            { className: 'pgw-recs', role: 'table' },
+            { className: 'pgw-recs' },
             h(RecordHead, { t }),
-            shown.items.map((r) => h(RecordRow, { key: r.key, ctx: props.ctx, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), t, viewable: viewable.has(r.key) })),
+            // a list of disclosure buttons: each names its own columns, so the visual heads need no table semantics
+            h(
+              'ul',
+              { className: 'pgw-recs__list', 'aria-label': t('recent.title') },
+              shown.items.map((r) => h(RecordRow, { key: r.key, ctx: props.ctx, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), t, viewable: viewable.has(r.key) })),
+            ),
           ),
       shown.pages > 1
         ? h(
