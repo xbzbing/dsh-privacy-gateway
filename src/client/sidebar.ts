@@ -38,6 +38,37 @@ interface Registry {
   register(definition: TabDefinition): () => void
 }
 
+interface Controller {
+  /** Opens the page type in this session's pane; undefined where the host has no controller. */
+  openTab(kind: string, options?: Record<string, unknown>): void
+}
+
+/** The controller that opens a page type, or undefined where the host offers none. */
+export function controllerOf(ctx: ClientCtx): Controller | undefined {
+  try {
+    const c = ctx.get('sidebarRight') as Controller | undefined
+    return c !== undefined && typeof c.openTab === 'function' ? c : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Open this plugin's page type. A registered type is only a candidate: the
+ * right sidebar shows the tabs a session has opened, so the panel stays out of
+ * the way until asked for (docs/adr/0017).
+ */
+export function openPanelTab(ctx: ClientCtx): boolean {
+  const controller = controllerOf(ctx)
+  if (!controller) return false
+  try {
+    controller.openTab(SIDEBAR_KIND)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Why the last registration attempt failed, for the configuration page to show. */
 export let lastFailure: string | undefined
 

@@ -48,10 +48,10 @@ const CSS = `
 .pgw-detail td{padding:3px 8px 3px 0;font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:nowrap}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .pgw-cfg{display:flex;flex-direction:column;gap:14px}
-.pgw-cfg__field{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.pgw-cfg__field{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 .pgw-cfg__text{display:flex;flex-direction:column;gap:3px;min-width:0}
 .pgw-cfg__name{font-size:13px}
-.pgw-cfg__control{flex:none;display:flex;align-items:center;gap:8px}
+.pgw-cfg__control{display:flex;align-items:center;gap:8px}
 .pgw-picker{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}
 .pgw-picker:disabled{opacity:.5;cursor:default}
 .pgw-picker__row{display:inline-flex;align-items:center;gap:6px}

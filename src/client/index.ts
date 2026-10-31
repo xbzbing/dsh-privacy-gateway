@@ -13,7 +13,7 @@ import { ConfigSection, type RowForm } from './ConfigSection.ts'
 import { DICTIONARIES, NS, type T } from './locales.ts'
 import { watchShowPanel } from './panelConfig.ts'
 import type { ClientCtx } from './rpc.ts'
-import { registerSidebarTab, registryOf } from './sidebar.ts'
+import { openPanelTab, registerSidebarTab, registryOf } from './sidebar.ts'
 import { StatsCard } from './StatsCard.ts'
 import { ensureStyles } from './styles.ts'
 
@@ -69,10 +69,18 @@ function apply(ctx: ClientCtx): void {
     release = undefined
     r?.()
   }
+  // opening the pane is user-visible, so it happens once per turn-on, not on every reconcile
+  let opened = false
   const reconcile = (): void => {
     const target = sidebarCtx ?? ctx
-    if (want && !release && registryOf(target)) release = registerSidebarTab(target, t)
-    else if (!want) unmount()
+    if (want && !release && registryOf(target)) {
+      release = registerSidebarTab(target, t)
+      // only a successful open counts: a session whose sidebar was not adopted yet gets another try
+      if (release && !opened) opened = openPanelTab(target)
+    } else if (!want) {
+      opened = false
+      unmount()
+    }
   }
   ctx.effect(() => {
     const stop = watchShowPanel(ctx, (on) => {
