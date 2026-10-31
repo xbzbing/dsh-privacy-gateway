@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +13,7 @@ import { defaults } from '../src/config.ts'
 import { installGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine } from '../src/engine.ts'
 import { CONTEXT_CHARS } from '../src/redact/mask.ts'
-import { dayOf, RecordStore, whatOf, type MaskRecord } from '../src/records.ts'
+import { dayOf, MAX_RECORD_VALUES, RecordStore, whatOf, type MaskRecord, type ValueRecord } from '../src/records.ts'
 
 const SENTINEL = 'sk-' + 'proj-SENTINELsentinel0123456789abcd'
 const chat = (content: string) => JSON.stringify({ model: 'gpt-x', stream: false, messages: [{ role: 'user', content }] })
@@ -23,7 +23,11 @@ function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'dpg-rec-'))
 }
 
-function store(dir: string | undefined, now = () => new Date(), extra: Partial<ConstructorParameters<typeof RecordStore>[0]> = {}) {
+/** A fixed clock at local noon: no test depends on the day it runs on, or crosses midnight. */
+const NOON = new Date(2026, 9, 31, 12)
+const atNoon = () => NOON
+
+function store(dir: string | undefined, now = atNoon, extra: Partial<ConstructorParameters<typeof RecordStore>[0]> = {}) {
   return new RecordStore({ ...(dir ? { dir } : {}), keepDays: 30, keepBytes: 100 << 20, keepRecords: 500, flushDelayMs: 0, now, ...extra })
 }
 
@@ -105,7 +109,10 @@ test('records go to a 0600 file a day in a 0700 directory, one JSON line each, w
     engine.maskRequest(chat('nothing here'), info)?.finish()
     await engine.records.flush()
     const files = readdirSync(dir)
-    assert.deepEqual(files, [`${dayOf(new Date())}.jsonl`])
+    // the engine stamps the record with the real time: the file is named by that record's local day
+    const [written] = engine.records.recent()
+    assert.ok(written)
+    assert.deepEqual(files, [`${dayOf(new Date(written.time))}.jsonl`])
     assert.equal(statSync(dir).mode & 0o777, 0o700)
     const file = join(dir, files[0] as string)
     assert.equal(statSync(file).mode & 0o777, 0o600)
@@ -167,11 +174,11 @@ test('a store reads back the days on disk into its sums and its latest records, 
   const dir = tmp()
   try {
     const a = store(dir)
-    a.add(record(new Date(), { n: 3 }))
-    a.add(record(new Date(), { n: 5 }))
+    a.add(record(NOON, { n: 3 }))
+    a.add(record(NOON, { n: 5 }))
     await a.flush()
     const b = store(dir)
-    b.add(record(new Date(), { n: 7 }))
+    b.add(record(NOON, { n: 7 }))
     await b.loaded
     await b.flush()
     assert.equal(b.stats().today.n, 15)
@@ -182,8 +189,8 @@ test('a store reads back the days on disk into its sums and its latest records, 
 })
 
 test('memory keeps keepRecords records, the newest first', () => {
-  const s = store(undefined, () => new Date(), { keepRecords: 10 })
-  for (let i = 0; i < 25; i++) s.add(record(new Date(), { n: i }))
+  const s = store(undefined, atNoon, { keepRecords: 10 })
+  for (let i = 0; i < 25; i++) s.add(record(NOON, { n: i }))
   const recent = s.recent()
   assert.equal(recent.length, 10)
   assert.equal(recent[0]?.n, 24)
@@ -215,11 +222,13 @@ test('a write that fails is told once and the request still gets its reply (best
       assert.equal(await res.text(), '{"choices":[{"message":{"content":"ok"}}]}')
       await records.flush()
     }
-    assert.equal(warnings.length, 1)
+    // the read of the directory fails too, and is told on its own
+    assert.equal(warnings.filter((w) => String(w[0]).includes('could not write')).length, 1)
     const [r] = records.recent()
     assert.equal(r?.session, 'sess-9')
     assert.equal(r?.relay, true)
-    assert.equal(records.stats().today.requests, 2)
+    // the engine stamps records with the real time: the 30 days hold them whichever day the test runs on
+    assert.equal(records.stats().month.requests, 2)
   } finally {
     gateway.dispose()
     setGlobalDispatcher(before)
@@ -232,23 +241,23 @@ test('record turned on writes from then on and reads the days on disk once; turn
   const dir = tmp()
   try {
     const a = store(dir)
-    a.add(record(new Date(), { n: 3 }))
+    a.add(record(NOON, { n: 3 }))
     await a.flush()
     // a store that started with record off, then had it turned on twice
     const b = store(undefined)
-    b.add(record(new Date(), { n: 7 }))
+    b.add(record(NOON, { n: 7 }))
     b.configure({ dir, keepDays: 30 })
     await b.loaded
     b.configure({ keepDays: 30 })
     b.configure({ dir, keepDays: 30 })
     await b.loaded
     assert.equal(b.stats().today.n, 10)
-    b.add(record(new Date(), { n: 11 }))
+    b.add(record(NOON, { n: 11 }))
     await b.flush()
     b.configure({ keepDays: 30 })
-    b.add(record(new Date(), { n: 13 }))
+    b.add(record(NOON, { n: 13 }))
     await b.flush()
-    const lines = readFileSync(join(dir, `${dayOf(new Date())}.jsonl`), 'utf8').trim().split('\n')
+    const lines = readFileSync(join(dir, `${dayOf(NOON)}.jsonl`), 'utf8').trim().split('\n')
     assert.deepEqual(lines.map((l) => (JSON.parse(l) as MaskRecord).n), [3, 11])
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -259,18 +268,18 @@ test('reset clears memory, the sums and every day file, and leaves other files',
   const dir = tmp()
   try {
     const a = store(dir)
-    a.add(record(new Date(), { n: 3 }))
-    a.add(record(new Date(Date.now() - 2 * 86400_000), { n: 5 }))
+    a.add(record(NOON, { n: 3 }))
+    a.add(record(new Date(2026, 9, 29, 12), { n: 5 }))
     await a.flush()
     writeFileSync(join(dir, 'notes.txt'), 'keep me')
-    a.add(record(new Date(), { n: 7 }))
+    a.add(record(NOON, { n: 7 }))
     const r = await a.reset()
     assert.ok(r.files >= 1)
     assert.equal(a.recent().length, 0)
     assert.equal(a.stats().month.n, 0)
     assert.deepEqual(readdirSync(dir), ['notes.txt'])
     // what comes after is kept and written as before
-    a.add(record(new Date(), { n: 11 }))
+    a.add(record(NOON, { n: 11 }))
     await a.flush()
     assert.equal(a.stats().today.n, 11)
     // a store with writing off clears the directory it is given
@@ -313,4 +322,159 @@ test('recordContext off keeps no context', () => {
   const v = (engine.records.recent()[0] as MaskRecord).values[0]
   assert.equal(v?.before, undefined)
   assert.equal(v?.at, undefined)
+})
+
+/** The records in a day file, in the order written. */
+function linesOf(file: string): MaskRecord[] {
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((l) => l !== '')
+    .map((l) => JSON.parse(l) as MaskRecord)
+}
+
+test('a session’s sums go by the local day, as the day sums do', () => {
+  const saved = process.env.TZ
+  process.env.TZ = 'Asia/Shanghai'
+  try {
+    // 03:00 in Shanghai is still the day before in UTC
+    const now = new Date(2026, 9, 31, 3)
+    assert.equal(now.toISOString().slice(0, 10), '2026-10-30')
+    const s = store(undefined, () => now)
+    s.add(record(now, { session: 's1', n: 2 }))
+    assert.equal(s.stats('s1').today.n, 2)
+    assert.equal(s.stats().today.n, 2)
+  } finally {
+    if (saved === undefined) delete process.env.TZ
+    else process.env.TZ = saved
+  }
+})
+
+test('a line a crash cut short does not swallow the next record', async () => {
+  const dir = tmp()
+  try {
+    const file = join(dir, `${dayOf(NOON)}.jsonl`)
+    const whole = JSON.stringify({ key: 1, ...record(NOON, { n: 2 }) })
+    writeFileSync(file, `${whole}\n\n${whole.slice(0, 40)}`)
+    const a = store(dir)
+    await a.loaded
+    a.add(record(NOON, { n: 5 }))
+    await a.flush()
+    // the half line is ended, and the next run reads the record after it
+    assert.ok(readFileSync(file, 'utf8').includes(`${whole.slice(0, 40)}\n{`))
+    const b = store(dir)
+    await b.loaded
+    assert.deepEqual(b.recent().map((r) => r.n), [5, 2])
+    assert.equal(b.stats().today.n, 7)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a record added while a reset runs is in memory exactly when it is on disk', async () => {
+  const dir = tmp()
+  try {
+    const s = store(dir)
+    for (let i = 0; i < 5; i++) s.add(record(NOON))
+    await s.flush()
+    // a write still going when the reset starts, and records added all through it
+    s.add(record(NOON))
+    void s.flush()
+    let done = false
+    const resetting = s.reset().then((r) => {
+      done = true
+      return r
+    })
+    for (let i = 0; !done && i < 1000; i++) {
+      s.add(record(NOON))
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    assert.equal((await resetting).files, 1)
+    s.add(record(NOON))
+    await s.flush()
+    const inMemory = s.recent().map((r) => r.key).reverse()
+    assert.deepEqual(linesOf(join(dir, `${dayOf(NOON)}.jsonl`)).map((r) => r.key), inMemory)
+    assert.equal(s.stats().today.requests, inMemory.length)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a record keeps at most MAX_RECORD_VALUES values and counts the ones left out', () => {
+  const values: ValueRecord[] = Array.from({ length: MAX_RECORD_VALUES + 50 }, (_, i) => ({ placeholder: `{{API_KEY_${String(i).padStart(8, 'a')}}}`, kind: 'API_KEY', finder: 'rule', head: 'sk-', len: 40, n: 1 }))
+  const r = store(undefined).add(record(NOON, { n: values.length, values }))
+  assert.equal(r.values.length, MAX_RECORD_VALUES)
+  assert.equal(r.valuesOmitted, 50)
+  assert.equal(r.n, MAX_RECORD_VALUES + 50)
+})
+
+test('a day file stops at keepBytes, today’s too, told once; memory still counts every record', async () => {
+  const dir = tmp()
+  const warnings: unknown[][] = []
+  try {
+    const s = store(dir, atNoon, { keepBytes: 2000, logger: { warn: (...a: unknown[]) => warnings.push(a) } })
+    for (let i = 0; i < 20; i++) {
+      s.add(record(NOON))
+      if (i % 5 === 4) await s.flush()
+    }
+    await s.flush()
+    const file = join(dir, `${dayOf(NOON)}.jsonl`)
+    assert.ok(statSync(file).size <= 2000)
+    assert.ok(linesOf(file).length > 0)
+    assert.equal(warnings.filter((w) => String(w[0]).includes('keepMegabytes')).length, 1)
+    assert.equal(s.stats().today.requests, 20)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a prune that fails is told as such and the records are still written', async () => {
+  const dir = tmp()
+  const warnings: unknown[][] = []
+  try {
+    // a directory where an old day file would be cannot be unlinked
+    mkdirSync(join(dir, '2020-01-01.jsonl'))
+    const s = store(dir, atNoon, { logger: { warn: (...a: unknown[]) => warnings.push(a) } })
+    s.add(record(NOON, { n: 3 }))
+    await s.flush()
+    assert.deepEqual(linesOf(join(dir, `${dayOf(NOON)}.jsonl`)).map((r) => r.n), [3])
+    assert.deepEqual(warnings.map((w) => String(w[0])), ['dsh-privacy-gateway: could not delete old record files; records are still written'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('records written under a clock ahead of this one are read back, and the keys after go past them', async () => {
+  const dir = tmp()
+  try {
+    // a previous run whose clock was a year ahead
+    const key = (Date.now() + 365 * 86400_000) * 1000
+    writeFileSync(join(dir, `${dayOf(NOON)}.jsonl`), JSON.stringify({ key, ...record(NOON, { n: 3 }) }) + '\n')
+    const s = store(dir)
+    await s.loaded
+    assert.equal(s.stats().today.n, 3)
+    const r = s.add(record(NOON, { n: 1 }))
+    assert.ok(r.key > key)
+    assert.deepEqual(s.recent().map((x) => x.n), [1, 3])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('pruning to fewer days drops them from the sums and the latest records, as a restart would', async () => {
+  const dir = tmp()
+  try {
+    const s = store(dir, atNoon, { keepDays: 3 })
+    s.add(record(new Date(2026, 9, 20, 12), { n: 4 }))
+    s.add(record(NOON, { n: 1 }))
+    await s.flush()
+    assert.deepEqual(readdirSync(dir), [`${dayOf(NOON)}.jsonl`])
+    assert.equal(s.stats().month.n, 1)
+    assert.deepEqual(s.recent().map((r) => r.n), [1])
+    const b = store(dir, atNoon, { keepDays: 3 })
+    await b.loaded
+    assert.equal(b.stats().month.n, 1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

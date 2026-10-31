@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { appendFile, chmod, mkdir, readdir, stat, unlink } from 'node:fs/promises'
+import { chmod, mkdir, open, readdir, stat, unlink, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -63,6 +63,8 @@ export interface MaskRecord {
   /** A block action stopped the request: it was not sent. */
   blocked?: true
   values: ValueRecord[]
+  /** Values past MAX_RECORD_VALUES the request also had, left out of `values` (docs/adr/0008). */
+  valuesOmitted?: number
   /** Places the reply had a placeholder put back. */
   restored: number
   /** Of those, the places inside a tool call's arguments (design §13 R15, docs/adr/0009). */
@@ -78,6 +80,13 @@ export interface MaskRecord {
   /** Masking failed: the request was not sent (docs/adr/0005). */
   failed?: true
 }
+
+/**
+ * The most values one record keeps. Each turn sends the whole history again,
+ * and every value carries up to two context snippets, so an unbounded list
+ * would let one long conversation fill the day's file (docs/adr/0008).
+ */
+export const MAX_RECORD_VALUES = 200
 
 /** The values of a request's hits, one per placeholder, in the order first found. */
 export function valuesOf(hits: readonly Hit[]): ValueRecord[] {
@@ -206,6 +215,7 @@ function parseRecord(line: string): MaskRecord | undefined {
     if (typeof r.warned !== 'number') delete r.warned
     if (typeof r.exfil !== 'number') delete r.exfil
     if (typeof r.exfilBlocked !== 'number') delete r.exfilBlocked
+    if (typeof r.valuesOmitted !== 'number') delete r.valuesOmitted
     r.tookMs = typeof r.tookMs === 'number' ? r.tookMs : 0
     r.host = typeof r.host === 'string' ? r.host : ''
     return r
@@ -247,6 +257,19 @@ const WARN_EVERY_MS = 10 * 60 * 1000
 /** The days the statistics go back. */
 const STAT_DAYS = 30
 
+function isMissing(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
+}
+
+/** Deletes `file`; one already gone is no error. */
+async function unlinkIfThere(file: string): Promise<void> {
+  try {
+    await unlink(file)
+  } catch (err) {
+    if (!isMissing(err)) throw err
+  }
+}
+
 export class RecordStore {
   readonly #o: RecordStoreOptions
   /** The days on disk have been read into the sums (they are read once: a second read would count them twice). */
@@ -257,27 +280,44 @@ export class RecordStore {
   #queue: Array<{ day: string; line: string }> = []
   #timer: ReturnType<typeof setTimeout> | undefined
   #writing: Promise<void> = Promise.resolve()
-  readonly #startKey: number
+  /**
+   * The keys this store added while the disk was being read. Such a record is
+   * in the sums already and may have been written before the read got to its
+   * file, so the read skips exactly these; it does not compare keys with the
+   * clock, which may have gone back since the records on disk were written.
+   */
+  #addedWhileLoading: Set<number> | undefined
   #failStreak = 0
   #prunedAt = -Infinity
   #dirReady = false
-  readonly #private = new Set<string>()
-  #warnedAt = -Infinity
+  /** Day files made ready to append to: their mode set and a line a crash cut short ended. */
+  readonly #ready = new Set<string>()
+  /** The bytes in each day file this store appends to. */
+  readonly #sizes = new Map<string, number>()
+  /** Day files that reached keepBytes: nothing more is appended to them. */
+  readonly #full = new Set<string>()
+  /** A reset going on: nothing is written until it is done. */
+  #resetting: Promise<unknown> | undefined
+  readonly #warnedAt = new Map<string, number>()
   /** Settles once the days on disk are in the sums and the latest records. */
   loaded: Promise<void> = Promise.resolve()
 
   constructor(options: RecordStoreOptions) {
     this.#o = { ...options }
     this.#now = options.now ?? (() => new Date())
-    // what is on disk now has smaller keys: one this store adds is in the sums already
-    this.#startKey = this.#nextKey()
     if (options.dir) this.#readDisk(options.dir)
   }
 
   #readDisk(dir: string): void {
     if (this.#diskRead) return
     this.#diskRead = true
-    this.loaded = this.#load(dir).catch((err: unknown) => this.#warn('could not read the records', err))
+    const added = new Set<number>()
+    this.#addedWhileLoading = added
+    this.loaded = this.#load(dir, added)
+      .catch((err: unknown) => this.#warn('could not read the records on disk; the sums start from this run', err))
+      .finally(() => {
+        if (this.#addedWhileLoading === added) this.#addedWhileLoading = undefined
+      })
   }
 
   /**
@@ -316,6 +356,11 @@ export class RecordStore {
   /** Keeps `r`, and has it written. */
   add(r: Omit<MaskRecord, 'key'>): MaskRecord {
     const rec = { key: this.#nextKey(), ...r } as MaskRecord
+    if (rec.values.length > MAX_RECORD_VALUES) {
+      rec.valuesOmitted = (rec.valuesOmitted ?? 0) + rec.values.length - MAX_RECORD_VALUES
+      rec.values = rec.values.slice(0, MAX_RECORD_VALUES)
+    }
+    this.#addedWhileLoading?.add(rec.key)
     const day = dayOf(new Date(rec.time))
     addRecord(this.#day(day), rec)
     this.#ring.push(rec)
@@ -349,7 +394,8 @@ export class RecordStore {
     if (session !== undefined) {
       for (const r of this.#ring) {
         if (r.session !== session) continue
-        const day = r.time.slice(0, 10)
+        // the local day, as the day sums and the files go by
+        const day = dayOf(new Date(r.time))
         if (day > today || day < month) continue
         addRecord(out.month, r)
         if (day >= week) addRecord(out.week, r)
@@ -377,6 +423,8 @@ export class RecordStore {
 
   /** Writes what is waiting; never rejects. */
   flush(): Promise<void> {
+    // nothing goes to disk while a reset deletes the files: what waits is written after it
+    if (this.#resetting) return this.#resetting.then(() => this.flush(), () => this.flush())
     if (this.#timer) {
       clearTimeout(this.#timer)
       this.#timer = undefined
@@ -385,7 +433,9 @@ export class RecordStore {
     this.#queue = []
     if (batch.length > 0 && this.#o.dir) {
       const dir = this.#o.dir
-      this.#writing = this.#writing.then(() => this.#write(dir, batch)).catch((err: unknown) => this.#warn('could not write the records', err))
+      this.#writing = this.#writing
+        .then(() => this.#write(dir, batch))
+        .catch((err: unknown) => this.#warn('could not write the records; requests go on, unrecorded on disk', err))
     }
     return this.#writing
   }
@@ -404,16 +454,56 @@ export class RecordStore {
     }
     for (const [day, lines] of byDay) {
       const file = join(dir, `${day}.jsonl`)
-      await appendFile(file, lines.join('\n') + '\n', { mode: 0o600 })
-      if (!this.#private.has(file)) {
-        await chmod(file, 0o600).catch(() => {})
-        this.#private.add(file)
+      if (this.#full.has(file)) continue
+      const h = await open(file, 'a+', 0o600)
+      try {
+        let size = this.#sizes.get(file)
+        if (size === undefined || !this.#ready.has(file)) size = await this.#prepare(h)
+        this.#ready.add(file)
+        // a day file stops at keepBytes, today's too: the rest of that day stays in memory only
+        const keep: string[] = []
+        for (const line of lines) {
+          const bytes = Buffer.byteLength(line) + 1
+          if (size + bytes > this.#o.keepBytes) {
+            this.#full.add(file)
+            this.#o.logger?.warn(`dsh-privacy-gateway: the records of ${day} reached keepMegabytes; the rest of that day is kept in memory only`)
+            break
+          }
+          keep.push(line)
+          size += bytes
+        }
+        if (keep.length > 0) await h.appendFile(keep.join('\n') + '\n')
+        this.#sizes.set(file, size)
+      } finally {
+        await h.close()
       }
     }
-    if (this.#now().getTime() - this.#prunedAt >= PRUNE_EVERY_MS) await this.prune()
+    if (this.#now().getTime() - this.#prunedAt >= PRUNE_EVERY_MS) {
+      // a failed prune is not a failed write: the records above are on disk
+      await this.prune().catch((err: unknown) => this.#warn('could not delete old record files; records are still written', err))
+    }
   }
 
-  /** Deletes the days older than keepDays, then the oldest while there is more than keepBytes; today's file stays. */
+  /** Makes a day file private and ends a line a crash cut short, so the next record starts a line of its own; its size after. */
+  async #prepare(h: FileHandle): Promise<number> {
+    await h.chmod(0o600).catch(() => {})
+    let { size } = await h.stat()
+    if (size > 0) {
+      const last = Buffer.alloc(1)
+      await h.read(last, 0, 1, size - 1)
+      if (last[0] !== 0x0a) {
+        await h.appendFile('\n')
+        size++
+      }
+    }
+    return size
+  }
+
+  /**
+   * Deletes the days older than keepDays, then the oldest while there is more
+   * than keepBytes; today's file stays. The sums and the latest records drop
+   * the days deleted, so they are what a restart would read back.
+   */
   async prune(): Promise<void> {
     const dir = this.#o.dir
     if (!dir) return
@@ -421,62 +511,99 @@ export class RecordStore {
     const now = this.#now()
     const today = dayOf(now)
     const oldest = dayOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (this.#o.keepDays - 1)))
+    const gone = new Set<string>()
+    const drop = async (day: string, file: string): Promise<void> => {
+      await unlinkIfThere(file)
+      this.#forgetFile(file)
+      gone.add(day)
+    }
     const days: Array<{ day: string; file: string; size: number }> = []
-    for (const name of await readdir(dir)) {
-      const m = DAY_FILE.exec(name)
-      if (!m) continue
-      const file = join(dir, name)
-      if ((m[1] as string) < oldest) {
-        await unlink(file)
-        continue
+    try {
+      for (const name of await readdir(dir)) {
+        const m = DAY_FILE.exec(name)
+        if (!m) continue
+        const day = m[1] as string
+        const file = join(dir, name)
+        if (day < oldest) {
+          await drop(day, file)
+          continue
+        }
+        try {
+          days.push({ day, file, size: (await stat(file)).size })
+        } catch (err) {
+          if (!isMissing(err)) throw err
+        }
       }
-      days.push({ day: m[1] as string, file, size: (await stat(file)).size })
+      days.sort((a, b) => (a.day < b.day ? -1 : 1))
+      let total = days.reduce((s, d) => s + d.size, 0)
+      for (const d of days) {
+        if (total <= this.#o.keepBytes || d.day === today) break
+        await drop(d.day, d.file)
+        total -= d.size
+      }
+    } finally {
+      const statFrom = dayOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (STAT_DAYS - 1)))
+      const kept = (day: string): boolean => day >= statFrom && day >= oldest && !gone.has(day)
+      for (const day of this.#days.keys()) if (!kept(day)) this.#days.delete(day)
+      this.#ring = this.#ring.filter((r) => kept(dayOf(new Date(r.time))))
     }
-    days.sort((a, b) => (a.day < b.day ? -1 : 1))
-    let total = days.reduce((s, d) => s + d.size, 0)
-    for (const d of days) {
-      if (total <= this.#o.keepBytes || d.day === today) break
-      await unlink(d.file)
-      total -= d.size
-    }
-    const statFrom = dayOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (STAT_DAYS - 1)))
-    for (const day of this.#days.keys()) if (day < statFrom) this.#days.delete(day)
+  }
+
+  #forgetFile(file: string): void {
+    this.#ready.delete(file)
+    this.#sizes.delete(file)
+    this.#full.delete(file)
   }
 
   /**
    * Clears the history (the reset button, docs/adr/0022): the records in
    * memory, the sums, what was waiting to be written, and each day file in
-   * `dir` (other files there stay). Returns how many day files went.
+   * `dir` (other files there stay). Returns how many day files went. A record
+   * added while it waits for the read and the writes going on is cleared too;
+   * one added while the files are deleted is kept, and written after.
    */
   async reset(dir = this.#o.dir): Promise<{ files: number }> {
+    while (this.#resetting) await this.#resetting.catch(() => {})
+    const run = this.#reset(dir)
+    this.#resetting = run
+    try {
+      return await run
+    } finally {
+      this.#resetting = undefined
+    }
+  }
+
+  async #reset(dir: string | undefined): Promise<{ files: number }> {
+    // nothing left on disk to read in when writing is turned on later
+    this.#diskRead = true
     // a read still going would put the old days back after the clearing
     await this.loaded
     if (this.#timer) {
       clearTimeout(this.#timer)
       this.#timer = undefined
     }
-    this.#queue = []
     await this.#writing
+    this.#queue = []
     this.#ring = []
     this.#days.clear()
     this.#failStreak = 0
-    // nothing left on disk to read in when writing is turned on later
-    this.#diskRead = true
     let files = 0
     if (dir) {
       let names: string[] = []
       try {
         names = await readdir(dir)
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+        if (!isMissing(err)) throw err
       }
       for (const name of names) {
         if (!DAY_FILE.test(name)) continue
-        await unlink(join(dir, name))
+        await unlinkIfThere(join(dir, name))
         files++
       }
     }
-    this.#private.clear()
+    this.#ready.clear()
+    this.#sizes.clear()
+    this.#full.clear()
     return { files }
   }
 
@@ -485,12 +612,12 @@ export class RecordStore {
     await this.flush()
   }
 
-  async #load(dir: string): Promise<void> {
+  async #load(dir: string, added: ReadonlySet<number>): Promise<void> {
     let names: string[]
     try {
       names = await readdir(dir)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+      if (isMissing(err)) return
       throw err
     }
     const now = this.#now()
@@ -501,15 +628,18 @@ export class RecordStore {
       .sort()
       .reverse()
     let older: MaskRecord[] = []
+    let maxKey = 0
     for (const day of days) {
       const t = emptyTotals()
       const need = this.#o.keepRecords - older.length
       const tail: MaskRecord[] = []
       const lines = createInterface({ input: createReadStream(join(dir, `${day}.jsonl`), { encoding: 'utf8' }), crlfDelay: Infinity })
       for await (const line of lines) {
+        // a blank line or one a crash cut short is no record
         const r = parseRecord(line)
-        // one added since this store began is in the sums already
-        if (!r || r.key >= this.#startKey) continue
+        // one added since the read began is in the sums already
+        if (!r || added.has(r.key)) continue
+        if (typeof r.key === 'number' && r.key > maxKey) maxKey = r.key
         addRecord(t, r)
         if (need > 0) {
           tail.push(r)
@@ -519,13 +649,15 @@ export class RecordStore {
       addTotals(this.#day(day), t)
       older = [...tail, ...older]
     }
+    // keys go on from the largest on disk, should the clock have gone back since it was written
+    lastKey = Math.max(lastKey, maxKey)
     this.#ring = [...older, ...this.#ring].slice(-this.#o.keepRecords)
   }
 
-  #warn(what: string, err: unknown): void {
+  #warn(message: string, err: unknown): void {
     const at = this.#now().getTime()
-    if (at - this.#warnedAt < WARN_EVERY_MS) return
-    this.#warnedAt = at
-    this.#o.logger?.warn(`dsh-privacy-gateway: ${what}; requests go on, unrecorded on disk`, err)
+    if (at - (this.#warnedAt.get(message) ?? -Infinity) < WARN_EVERY_MS) return
+    this.#warnedAt.set(message, at)
+    this.#o.logger?.warn(`dsh-privacy-gateway: ${message}`, err)
   }
 }
