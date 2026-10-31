@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Privacy Gateway",
+    "description": "Masks secrets in outgoing model requests and restores them in the replies, for every provider."
+  }
+}

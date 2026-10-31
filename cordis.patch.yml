@@ -1,0 +1,9 @@
+# dsh-privacy-gateway — bundle patch: insert the plugin row.
+#
+# The loader imports the row's `name`, so it must equal this package's name.
+# `id` is the settings namespace and the keyed config slot. Only this row is
+# inserted; no built-in row's config is touched.
+- insert:
+    - id: dsh-privacy-gateway
+      name: 'dsh-privacy-gateway'
+      config: {}

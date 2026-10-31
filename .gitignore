@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# lib/ is TRACKED on purpose: `dsh plugin add file:<repo>` / `github:<owner>/<repo>`
+# run no lifecycle scripts, so the built files must exist in the checkout.
+
+# Logs / packs
+*.log
+*.tgz
+.DS_Store
+
+# Local drafts (design notes etc., never committed)
+/docs/local/

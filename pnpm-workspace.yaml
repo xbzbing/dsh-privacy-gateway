@@ -1,0 +1,4 @@
+# Makes this repo its own pnpm workspace root (a pnpm-workspace.yaml in a
+# parent directory would otherwise capture `pnpm install`).
+packages:
+  - .
