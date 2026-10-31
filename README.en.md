@@ -71,11 +71,13 @@ No answer of the command has a value in it.
 
 ## Records and statistics
 
-Only a model request that had something masked or restored makes a record, one each (a request with neither makes none): the time, how long masking took, the host, the model, the session id, the places replaced, each value's placeholder / kind / finder / head / length, the places the reply had restored (with those in tool call arguments counted apart), and the placeholders the reply had that the value table has no value for. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md)).
+Only a model request that had something masked or restored makes a record, one each (a request with neither makes none): the time, how long masking took, the host, the model, the session id with its workspace name and session title, the places replaced, each value's placeholder / kind / finder / head / length / tail, the places the reply had restored (with those in tool call arguments counted apart), and the placeholders the reply had that the value table has no value for. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md), [ADR-0020](docs/adr/0020-record-attribution.md)).
+
+The head keeps a few characters to recognize it by: a key with a prefix keeps the prefix and the 4 characters after it, one without keeps its first 4, and a long value also keeps its last 2 (`sk-proj-g6sx…3QaZ`); shorter values keep fewer. Personal data and the user's words still keep one character ([ADR-0019](docs/adr/0019-hint.md)).
 
 Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
 
-The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page; open one to see each of its values. With `showPanel` on, the same view is a Privacy tab in the session's right sidebar.
+The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. With `showPanel` on, the same view is a Privacy tab in the session's right sidebar.
 
 With `vendorView` on, a record's details have a Vendor view button: on the right the body the vendor got, on the left the same body with each replaced place shown as a "kind · head · length" marker; by default only the lines with replacements are listed. Neither side has a value in it; a value a warn action sent as written is a placeholder in the copy too.
 

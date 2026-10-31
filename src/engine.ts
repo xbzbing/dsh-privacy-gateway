@@ -65,6 +65,8 @@ export interface EngineOptions {
   logger?: EngineLogger
   /** Where the bodies as they went are kept for the vendor view (config vendorView); none keeps none. */
   views?: ViewStore
+  /** The names a record keeps beside the session id: its title and its workspace (docs/adr/0020). */
+  names?: (session: string) => { title?: string; workspace?: string }
 }
 
 function isLoopback(host: string): boolean {
@@ -85,6 +87,7 @@ export class PrivacyEngine implements RedactionEngine {
   readonly records: RecordStore
   readonly #logger: EngineLogger | undefined
   readonly views: ViewStore | undefined
+  readonly #names: ((session: string) => { title?: string; workspace?: string }) | undefined
   /** `/privacy off` turns masking off until `/privacy on` or a restart; the config stays as it is. */
   active = true
 
@@ -103,6 +106,7 @@ export class PrivacyEngine implements RedactionEngine {
     })
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#logger = options.logger
+    this.#names = options.names
     this.views = options.views
     this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
   }
@@ -121,13 +125,20 @@ export class PrivacyEngine implements RedactionEngine {
     if (!this.active) return null
     const started = performance.now()
     const time = new Date().toISOString()
-    const base = { time, what: whatOf(info.path), host: info.host, ...(isLoopback(info.host) ? { relay: true as const } : {}), ...(info.session ? { session: info.session } : {}) }
+    // read where a record is written: the names are looked up only then, and only for a session there is
+    const base = () => ({
+      time,
+      what: whatOf(info.path),
+      host: info.host,
+      ...(isLoopback(info.host) ? { relay: true as const } : {}),
+      ...(info.session ? { session: info.session, ...this.#names?.(info.session) } : {}),
+    })
     let r: MaskResult | null
     try {
       r = this.#masker.maskJSON(body, info.host)
     } catch (err) {
       const model = modelInPath(info.path)
-      this.records.add({ ...base, ...(model ? { model } : {}), tookMs: elapsed(started), n: 0, values: [], restored: 0, unmapped: 0, failed: true })
+      this.records.add({ ...base(), ...(model ? { model } : {}), tookMs: elapsed(started), n: 0, values: [], restored: 0, unmapped: 0, failed: true })
       throw err
     }
     if (r === null) return null
@@ -139,7 +150,7 @@ export class PrivacyEngine implements RedactionEngine {
       if (h.action === 'warn') warned++
       else if (h.action === 'block') blocks.push(h)
     }
-    const record: Omit<MaskRecord, 'key'> = { ...base, ...(model ? { model } : {}), tookMs, n: r.n, ...(warned > 0 ? { warned } : {}), values: valuesOf(r.hits), restored: 0, unmapped: 0 }
+    const record: Omit<MaskRecord, 'key'> = { ...base(), ...(model ? { model } : {}), tookMs, n: r.n, ...(warned > 0 ? { warned } : {}), values: valuesOf(r.hits), restored: 0, unmapped: 0 }
     if (blocks.length > 0) {
       this.records.add({ ...record, blocked: true })
       throw new RequestBlocked(blocks)

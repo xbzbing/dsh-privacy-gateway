@@ -5,15 +5,16 @@ import type { ReactNode } from 'react'
 import type { MaskRecord, ValueRecord } from '../records.ts'
 import type { T } from './locales.ts'
 import { fetchVendorView, type ClientCtx } from './rpc.ts'
-import { viewLines, type ViewLine } from './view.ts'
+import { hintOf, viewLines, type ViewLine } from './view.ts'
 
 type State = { status: 'loading' } | { status: 'gone' } | { status: 'error' } | { status: 'ready'; body: string }
 
-/** A value's marker on the agent's side: its kind, head and length, never the value. */
+/** A value's marker on the agent's side: its kind, its hint and its length, never the value. */
 function marker(v: ValueRecord | undefined, t: T): string {
   if (!v) return '‹?›'
   const action = v.action ? ` · ${t(v.action === 'warn' ? 'action.warn' : 'action.block')}` : ''
-  return `‹${v.kind} · ${v.head ? `${v.head}… · ` : ''}${v.len}${action}›`
+  const hint = hintOf(v)
+  return `‹${v.kind} · ${hint ? `${hint} · ` : ''}${v.len}${action}›`
 }
 
 function side(line: ViewLine, by: Map<string, ValueRecord>, agent: boolean, t: T): ReactNode[] {

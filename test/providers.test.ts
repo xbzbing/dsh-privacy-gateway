@@ -9,7 +9,7 @@ import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { defaults, liveStrings, resolveConfig } from '../src/config.ts'
 import { installGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine } from '../src/engine.ts'
-import { bypassedProvider, bypassing, isExcluded, routeStream } from '../src/providers.ts'
+import { bypassedProvider, bypassing, currentSession, isExcluded, routeStream } from '../src/providers.ts'
 import { excludeChoices, toggleExcluded } from '../src/client/providerChoice.ts'
 import { Config } from '../src/index.ts'
 
@@ -115,4 +115,44 @@ test('the detail page lists every provider, then excluded ids without an adapter
   )
   assert.deepEqual(toggleExcluded(['DeepSeek'], 'deepseek'), [])
   assert.deepEqual(toggleExcluded(['a'], 'b'), ['a', 'b'])
+})
+
+test('the stream carries the session the host named, so a record can say which one it was', async () => {
+  async function* probe() {
+    yield currentSession()
+  }
+  const collect = async (s: AsyncIterable<unknown>) => {
+    const out: unknown[] = []
+    for await (const v of s) out.push(v)
+    return out
+  }
+  assert.deepEqual(await collect(routeStream('deepseek', [], probe, 'sess-1')), ['sess-1'])
+  // a nested call names its own session
+  async function* outer() {
+    yield* await collect(routeStream('openai', [], probe, 'sess-2'))
+  }
+  assert.deepEqual(await collect(routeStream('deepseek', [], outer, 'sess-1')), ['sess-2'])
+  // outside any stream there is none
+  assert.equal(currentSession(), undefined)
+})
+
+test('a record says which workspace and session a call came from, by name', async () => {
+  const { RecordStore } = await import('../src/records.ts')
+  const records = new RecordStore({ keepDays: 30, keepBytes: 64 * 1024 * 1024, keepRecords: 10 })
+  const engine = new PrivacyEngine(randomBytes(32), defaults, {
+    records,
+    names: (session) => (session === 'sess-7' ? { title: '修一下网关', workspace: 'dsh-privacy-gateway' } : {}),
+  })
+  const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }), { host: 'h', path: '/v1/chat/completions', session: 'sess-7' })
+  ex?.finish()
+  const [r] = records.recent()
+  assert.equal(r?.session, 'sess-7')
+  assert.equal(r?.title, '修一下网关')
+  assert.equal(r?.workspace, 'dsh-privacy-gateway')
+  // a call with no session has neither name
+  const ex2 = engine.maskRequest(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }), { host: 'h', path: '/v1/chat/completions' })
+  ex2?.finish()
+  const [none] = records.recent()
+  assert.equal(none?.session, undefined)
+  assert.equal(none?.title, undefined)
 })

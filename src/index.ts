@@ -32,7 +32,7 @@ export interface PluginContext {
   /** cordis: load a plugin (here the card's Remote service) under this one. */
   plugin?(plugin: unknown, config?: unknown): unknown
   /** cordis: listen to an event; `llm/stream` is a waterfall around each model call. */
-  on?(name: 'llm/stream', listener: (options: { provider?: unknown }, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>): unknown
+  on?(name: 'llm/stream', listener: (options: { provider?: unknown; sessionId?: unknown }, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>): unknown
 }
 
 /** The slice of dsh-commands the plugin uses. */
@@ -88,7 +88,40 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   })
   // the vendor view keeps the bodies as they went, in memory only
   const views = cfg.vendorView ? new ViewStore() : undefined
-  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, ...(views ? { views } : {}) })
+  const optional = (name: string): unknown => {
+    try {
+      return ctx.get?.(name)
+    } catch {
+      return undefined
+    }
+  }
+  // a record says which workspace and session the call came from, by name (docs/adr/0020): read from the
+  // live session and the workspace registry, both optional so the gateway runs without them
+  const names = (session: string): { title?: string; workspace?: string } => {
+    const live = optional('sessions') as { get?(id: string): unknown } | undefined
+    const titles = optional('sessionTitle') as { get?(s: unknown): { title?: unknown } | undefined } | undefined
+    const workspaces = optional('workspaceRegistry') as { list?(): readonly { title?: unknown; sessionIds?: readonly unknown[] }[] } | undefined
+    const out: { title?: string; workspace?: string } = {}
+    try {
+      const session_ = live?.get?.(session)
+      const title = session_ === undefined ? undefined : titles?.get?.(session_)?.title
+      if (typeof title === 'string' && title !== '') out.title = title.slice(0, 200)
+    } catch {
+      // a title that cannot be read is no title
+    }
+    try {
+      for (const w of workspaces?.list?.() ?? []) {
+        if (!w.sessionIds?.some((id) => String(id) === session)) continue
+        if (typeof w.title === 'string' && w.title !== '') out.workspace = w.title.slice(0, 200)
+        break
+      }
+    } catch {
+      // a workspace that cannot be read is no workspace
+    }
+    return out
+  }
+  const excludedProviders = (): string[] => liveStrings(config.excludeProviders)
+  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, ...(views ? { views } : {}), names })
   const face: PrivacyFace = {
     get active() {
       return engine.active
@@ -119,8 +152,6 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       })
     })
   })
-  // excluded providers: read on each call, as the detail page's list changes it without remounting
-  const excludedProviders = (): string[] => liveStrings(config.excludeProviders)
   // the settings card's Remote service; the gateway does not depend on it
   if (ctx.plugin) {
     const source: OverviewSource = {
@@ -154,7 +185,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       (err: unknown) => ctx.logger.warn('dsh-privacy-gateway: the settings card has no data (typert is not there)', err),
     )
   }
-  ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next))
+  ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next, options?.sessionId))
   ctx.effect(() => {
     const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => bypassedProvider() !== undefined, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')

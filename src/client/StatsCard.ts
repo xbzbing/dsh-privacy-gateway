@@ -6,7 +6,7 @@ import type { MaskRecord, Totals } from '../records.ts'
 import type { Overview } from '../remote.ts'
 import type { Key, T } from './locales.ts'
 import { fetchOverview, type ClientCtx } from './rpc.ts'
-import { bars, pageOf, timeLabel, took, warnings, type Range } from './view.ts'
+import { bars, hintOf, pageOf, timeLabel, took, warnings, type Range } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 const REFRESH_MS = 15_000
@@ -98,6 +98,8 @@ function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: 
   const { r, tr } = props
   const [viewing, setViewing] = useState(false)
   const where = [r.host, r.model].filter(Boolean).join(' · ')
+  // who it came from: the workspace and the session, by name where the host could tell them (docs/adr/0020)
+  const from = [r.workspace, r.title ?? r.session].filter((x): x is string => typeof x === 'string' && x !== '').join(' · ')
   const right = r.failed
     ? h('span', { className: 'pgw-row__fail' }, tr('recent.failed'))
     : r.blocked
@@ -111,6 +113,7 @@ function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: 
       { type: 'button', className: `pgw-row${r.n === 0 && !r.failed ? ' pgw-row--zero' : ''}`, 'aria-expanded': props.open, onClick: props.toggle },
       h('span', { className: 'pgw-row__time' }, timeLabel(r.time)),
       h('span', { className: 'pgw-row__where', title: where }, where),
+      from ? h('span', { className: 'pgw-row__from', title: from }, from) : h('span', { className: 'pgw-row__from' }, ''),
       right,
       h('span', { className: 'pgw-row__time' }, tr('recent.restored', { n: r.restored })),
     ),
@@ -135,7 +138,7 @@ function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: 
                       h('td', null, v.placeholder),
                       h('td', null, v.kind),
                       h('td', null, v.finder),
-                      h('td', null, v.head ? `${v.head}…` : ''),
+                      h('td', null, hintOf(v)),
                       h('td', null, v.len),
                       h('td', null, v.n),
                       h('td', null, v.action ? tr(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),

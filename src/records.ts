@@ -19,8 +19,10 @@ export interface ValueRecord {
   placeholder: string
   kind: string
   finder: Finder
-  /** Its first character, a key's prefix (sk-) or a cookie's name. */
+  /** Its first characters: a key's prefix (sk-) and a few after it, or a cookie's name (docs/adr/0019). */
   head: string
+  /** Its last characters, where it is long enough to spare them. */
+  tail?: string
   len: number
   /** The places the request had it. */
   n: number
@@ -43,7 +45,12 @@ export interface MaskRecord {
   /** It went to a loopback relay. */
   relay?: true
   model?: string
+  /** The session the call belonged to (its id), when it is known. */
   session?: string
+  /** That session's title as it was when the request went. */
+  title?: string
+  /** The workspace that session belongs to, by name. */
+  workspace?: string
   /** Values swapped, each place counted. */
   n: number
   /** Places sent as written by a warn action. */
@@ -73,7 +80,7 @@ export function valuesOf(hits: readonly Hit[]): ValueRecord[] {
   for (const h of hits) {
     const v = by.get(h.placeholder)
     if (v) v.n++
-    else by.set(h.placeholder, { placeholder: h.placeholder, kind: h.kind, finder: h.by, head: h.head, len: h.len, n: 1, ...(h.action ? { action: h.action } : {}) })
+    else by.set(h.placeholder, { placeholder: h.placeholder, kind: h.kind, finder: h.by, head: h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len, n: 1, ...(h.action ? { action: h.action } : {}) })
   }
   return [...by.values()]
 }

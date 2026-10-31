@@ -159,10 +159,19 @@ test('a long text with markers everywhere is masked in linear time', () => {
   assert.ok(performance.now() - t < 2000, `took ${performance.now() - t} ms`)
 })
 
-test('an sk- key longer than 20 keeps the 4 characters after its prefix in its hint, a shorter one only sk-', async () => {
+test('a hint keeps a key\'s prefix and its next characters, plus a couple at the end: a human can tell which value it was', async () => {
   const { hint } = await import('../src/redact/find.ts')
-  assert.deepEqual(hint('API_KEY', 'sk-' + 'ab12cd34ef56gh78ij90kl', false), { head: 'sk-ab12', len: 25 })
-  assert.deepEqual(hint('API_KEY', 'sk-' + 'ant-api03-XyZw1234567890abcdef', false), { head: 'sk-ant-api03-XyZw', len: 33 })
-  assert.deepEqual(hint('API_KEY', 'sk-' + 'ab12cd34ef56gh78', false), { head: 'sk-', len: 19 })
-  assert.deepEqual(hint('API_KEY', 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8', false), { head: 'ghp_', len: 40 })
+  // 25 characters: prefix + 4, and the last 2
+  assert.deepEqual(hint('API_KEY', 'sk-' + 'ab12cd34ef56gh78ij90kl', false), { head: 'sk-ab12', tail: 'kl', len: 25 })
+  assert.deepEqual(hint('API_KEY', 'sk-' + 'ant-api03-XyZw1234567890abcdef', false), { head: 'sk-ant-api03-XyZw', tail: 'ef', len: 33 })
+  // short ones keep fewer, and no tail until the head and the tail cannot meet
+  assert.deepEqual(hint('API_KEY', 'sk-' + 'ab12cd34ef56gh78', false), { head: 'sk-ab12', tail: '78', len: 19 })
+  assert.deepEqual(hint('API_KEY', 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8', false), { head: 'ghp_A1b2', tail: 'r8', len: 40 })
+  // no prefix: the first characters themselves, so a bare secret is recognizable too
+  assert.deepEqual(hint('SECRET', '3f9a1b2c4d5e6f708192a3b4c5d6e7f8', false), { head: '3f9a', tail: 'f8', len: 32 })
+  assert.deepEqual(hint('SECRET', 'n4k9x2b7q', false), { head: 'n4', len: 9 })
+  assert.deepEqual(hint('SECRET', 'abc', false), { head: 'a', len: 3 })
+  // personal data and the user's words: one character, they are not a key to recognize
+  assert.deepEqual(hint('EMAIL', 'someone@example.com', true), { head: 's', len: 19 })
+  assert.deepEqual(hint('TERM', 'project-x', false), { head: 'p', len: 9 })
 })

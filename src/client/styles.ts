@@ -34,12 +34,13 @@ const CSS = `
 .pgw-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:8px;border:1px solid var(--dsw-alias-state-warn-primary,#e0982e);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#e0982e) 8%,transparent)}
 .pgw-warn--error{border-color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent)}
 .pgw-list{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}
-.pgw-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;width:100%;font:inherit;font-size:12px;text-align:left;padding:7px 10px;background:none;border:none;border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);cursor:pointer}
+.pgw-row{display:grid;grid-template-columns:auto 1fr minmax(0,22ch) auto auto;gap:10px;align-items:center;width:100%;font:inherit;font-size:12px;text-align:left;padding:7px 10px;background:none;border:none;border-top:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);cursor:pointer}
 .pgw-row:first-child{border-top:none}
 .pgw-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .pgw-row--zero{color:var(--dsw-alias-label-tertiary)}
 .pgw-row__time{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}
 .pgw-row__where{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pgw-row__from{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);max-width:22ch}
 .pgw-row__fail{color:var(--dsw-alias-state-error-primary)}
 .pgw-detail{padding:6px 10px 10px;background:var(--dsw-alias-bg-layer-2);font-size:12px;overflow-x:auto}
 .pgw-detail table{border-collapse:collapse;width:100%}

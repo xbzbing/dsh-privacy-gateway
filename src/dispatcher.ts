@@ -1,6 +1,7 @@
 import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
+import { currentSession } from './providers.ts'
 
 type Options = Dispatcher.DispatchOptions
 type Handler = Dispatcher.DispatchHandler
@@ -294,6 +295,8 @@ function requestInfo(opts: Options): RequestInfo {
     session = headerValue(opts.headers, name)
     if (session) break
   }
+  // dsh's own calls carry no header: the `llm/stream` listener knows their session (docs/adr/0020)
+  session ??= currentSession()
   let path = String(opts.path ?? '')
   try {
     path = new URL(path, 'http://x').pathname

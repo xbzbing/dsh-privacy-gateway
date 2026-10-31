@@ -31,8 +31,10 @@ export interface Hit {
   placeholder: string
   kind: string
   by: Finder
-  /** Its first character, a key's prefix (sk-) or a cookie's name. */
+  /** Its first characters: a key's prefix (sk-) and a few after it, or a cookie's name (docs/adr/0019). */
   head: string
+  /** Its last characters, where it is long enough to spare them. */
+  tail?: string
   len: number
   /** Not masked: sent as written (warn) or the request stopped (block). The placeholder is the one it would have had. */
   action?: 'warn' | 'block'
@@ -272,14 +274,14 @@ export class Masker {
       const h = hint(f.kind, v, PERSONAL_KINDS.has(f.kind))
       if (action !== undefined) {
         const tag = tagOf(this.#key, f.kind, v)
-        pass.hits.push({ placeholder: tag, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len, action })
+        pass.hits.push({ placeholder: tag, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len, action })
         if (action === 'warn' && pass.warned) pass.warned.push([written, tag])
         // a preview never shows a value: it has the placeholder there still
         if (!pass.preview) continue
       }
       const p = action === undefined ? this.#standIn(f.kind, v, pass.preview) : { text: tagOf(this.#key, f.kind, v), id: '' }
       out.push(raw.slice(last, f.start), f.bare ? `"${p.text}"` : p.text)
-      if (action === undefined) pass.hits.push({ placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len })
+      if (action === undefined) pass.hits.push({ placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len })
       last = f.end
       n++
     }

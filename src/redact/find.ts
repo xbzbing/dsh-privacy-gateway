@@ -10,10 +10,18 @@ import type { KnownSpan } from './known.ts'
 import type { Rule } from './rules.ts'
 import { keyHead } from './shape.ts'
 
-/** Keys of more than this many characters, starting sk-, keep 4 characters past their prefix in a hint. */
-const SK_LONG = 20
-/** How many characters past an sk- key's prefix its hint keeps, so two keys can be told apart. */
-const SK_TELL = 4
+/**
+ * How much of a value a hint keeps, so a human can tell which one it was and
+ * check the masking against the value: by length, a few characters at the
+ * start (after any prefix a key class has, which is public anyway) and, once
+ * it is long enough to spare them, a couple at the end.
+ */
+function hintSpan(len: number): { keep: number; tail: number } {
+  if (len < 6) return { keep: 1, tail: 0 }
+  if (len < 10) return { keep: 2, tail: 0 }
+  if (len < 16) return { keep: 3, tail: 1 }
+  return { keep: 4, tail: 2 }
+}
 
 /** s with its ASCII letters in lower case, as long as s, so a place in one is the same place in the other. */
 export function lowerASCII(s: string): string {
@@ -217,29 +225,22 @@ export class SentMemo {
 }
 
 /**
- * As much of a value as a record may keep (magpie `Hint`): its first
- * character, or a key's prefix up to where its random part starts (sk-,
- * ghp_), and how many characters it has. An sk- key longer than 20 keeps the
- * 4 characters after its prefix too (sk-ab12, sk-proj-ab12), so the records
- * tell one key from another.
+ * As much of a value as a record may keep (magpie `Hint`, widened in
+ * docs/adr/0019): a key's prefix up to where its random part starts (sk-,
+ * ghp_, AKIA) and a few characters after it, a couple of characters at the
+ * end once the value is long enough, and how many characters it has. Two keys
+ * of one kind are told apart, and a masked value is recognizable as the one
+ * that was there (sk-proj-g6sx…3QaZ), while the rest never leaves the mask.
  */
-export function hint(kind: string, v: string, personal: boolean): { head: string; len: number } {
+export function hint(kind: string, v: string, personal: boolean): { head: string; tail?: string; len: number } {
   const chars = [...v]
   const len = chars.length
   if (len < 2) return { head: '', len }
-  if (!personal && kind !== 'TERM' && len > SK_LONG && v.startsWith('sk-')) {
-    const prefix = keyHead(v)
-    return { head: v.slice(0, prefix.length + SK_TELL), len }
-  }
-  let k = 1
-  if (!personal && kind !== 'TERM' && len >= 16) {
-    k = 0
-    for (const c of chars) {
-      if (k >= 4 || !/[A-Za-z_-]/.test(c)) break
-      k++
-      if (c === '-' || c === '_') break
-    }
-    k = Math.max(k, 1)
-  }
-  return { head: chars.slice(0, k).join(''), len }
+  // personal data and the user's words: one character, they are not a key to recognize
+  if (personal || kind === 'TERM') return { head: chars[0] as string, len }
+  const { keep, tail } = hintSpan(len)
+  const prefix = keyHead(v)
+  const head = prefix.length > 0 ? prefix + chars.slice(prefix.length, prefix.length + keep).join('') : chars.slice(0, keep).join('')
+  // the tail only where it cannot reach back into the head
+  return tail > 0 && head.length + tail < len ? { head, tail: chars.slice(-tail).join(''), len } : { head, len }
 }

@@ -112,3 +112,9 @@ export function pageOf<T>(items: readonly T[], page: number, size: number): { it
   const at = Math.min(Math.max(0, Math.floor(page)), pages - 1)
   return { items: items.slice(at * size, at * size + size), page: at, pages }
 }
+
+/** A value's hint as the records keep it: its head, then its tail where the record spared one (docs/adr/0019). */
+export function hintOf(v: { head?: string; tail?: string }): string {
+  if (!v.head) return ''
+  return v.tail ? `${v.head}…${v.tail}` : `${v.head}…`
+}
