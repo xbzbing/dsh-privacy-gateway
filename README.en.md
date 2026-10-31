@@ -4,7 +4,7 @@
 
 A DeepSeek Harness plugin that adds a redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
-Status: v0.1.0, the first stable release.
+Status: published on npm.
 
 ## Install
 

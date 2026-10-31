@@ -4,7 +4,7 @@
 
 DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
-状态：v0.1.0，首个正式版。
+状态：已发布到 npm。
 
 ## 安装
 
