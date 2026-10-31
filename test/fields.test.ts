@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { Config, defaults, LIVE_FIELDS } from '../src/config.ts'
-import { addEntry, choiceValue, countValue, FIELDS, GROUPS, listValue, parseCount, pickedSummary, removeEntry, switchValue } from '../src/client/fields.ts'
+import { addEntry, choiceValue, countValue, FIELDS, GROUPS, groupSummary, listValue, parseCount, pickedSummary, removeEntry, switchValue } from '../src/client/fields.ts'
 import { en, zh } from '../src/client/locales.ts'
 
 test('the page’s defaults are the host’s', () => {
@@ -71,4 +71,50 @@ test('the provider button names up to two, then the count', () => {
   assert.deepEqual(pickedSummary([], '、'), { kind: 'none' })
   assert.deepEqual(pickedSummary(['A', 'B'], '、'), { kind: 'some', names: 'A、B' })
   assert.deepEqual(pickedSummary(['A', 'B', 'C'], ', '), { kind: 'many', names: 'A, B', n: 3 })
+})
+
+test('a folded group says its state in words both languages have', () => {
+  const all = [
+    {},
+    { enabled: false },
+    { secrets: false, personal: false, shape: true, toolGuard: 'block' },
+    { personal: true, toolGuard: 'warn', words: ['a', 'b'], allow: ['c'] },
+    { record: false, vendorView: true, showPanel: true, excludeProviders: ['x', 'y'] },
+  ]
+  for (const value of all)
+    for (const g of GROUPS)
+      for (const p of groupSummary(g, value)) {
+        assert.equal(typeof (zh as Record<string, string>)[p.key], 'string', `zh ${p.key}`)
+        assert.equal(typeof (en as Record<string, string>)[p.key], 'string', `en ${p.key}`)
+      }
+})
+
+test('a folded group’s summary follows the settings, falling back to the defaults', () => {
+  const keys = (g: Parameters<typeof groupSummary>[0], v: Record<string, unknown>) => groupSummary(g, v).map((p) => p.key)
+  assert.deepEqual(keys('mask', {}), ['cfg.s.secrets', 'cfg.s.toolGuard.off'])
+  assert.deepEqual(groupSummary('mask', { enabled: false }), [{ key: 'cfg.s.maskOff', off: true }])
+  assert.deepEqual(keys('mask', { secrets: false }), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
+  assert.deepEqual(keys('mask', { personal: true, shape: true, toolGuard: 'warn' }), ['cfg.s.secrets', 'cfg.s.personal', 'cfg.s.shape', 'cfg.s.toolGuard.warn'])
+  assert.deepEqual(groupSummary('lists', { words: ['a', 'b'] }), [
+    { key: 'cfg.s.words', params: { n: 2 } },
+    { key: 'cfg.s.allow', params: { n: 0 } },
+  ])
+  assert.deepEqual(groupSummary('record', { keepDays: 7 }), [{ key: 'cfg.s.record', params: { n: 7 } }])
+  assert.deepEqual(keys('record', { record: false, vendorView: true }), ['cfg.s.recordOff', 'cfg.s.vendorView'])
+  assert.deepEqual(keys('view', {}), ['cfg.s.panelOff', 'cfg.s.providersAll'])
+  assert.deepEqual(groupSummary('view', { showPanel: true, excludeProviders: ['x'] }), [{ key: 'cfg.s.panel' }, { key: 'cfg.s.providersSome', params: { n: 1 } }])
+})
+
+test('two-column fields pair up, so no group leaves a half row empty', () => {
+  for (const g of GROUPS) {
+    let run = 0
+    for (const f of FIELDS.filter((x) => x.group === g)) {
+      if (f.half) run++
+      else {
+        assert.equal(run % 2, 0, `${g} before ${f.key}`)
+        run = 0
+      }
+    }
+    assert.equal(run % 2, 0, g)
+  }
 })

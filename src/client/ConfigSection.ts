@@ -10,12 +10,14 @@
  *
  * The fields are the everyday ones (fields.ts, docs/adr/0021), all volatile:
  * a change applies from the next model request, without remounting the plugin.
+ * Each group folds; a folded group's header says its state, and which groups
+ * are open is kept in this browser.
  */
 import { createElement as h, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import { CountField, ListEditor, Row, Select, SwitchControl } from './configControls.ts'
-import { choiceValue, countValue, FIELDS, GROUPS, listValue, pickedSummary, switchValue, type FieldSpec, type GroupId } from './fields.ts'
+import { CountField, Fold, ListEditor, Row, Select, SwitchControl } from './configControls.ts'
+import { choiceValue, countValue, FIELDS, GROUPS, groupSummary, inline, listValue, pickedSummary, switchValue, type FieldSpec, type GroupId } from './fields.ts'
 import type { Key, T } from './locales.ts'
 import { findNamespace, formsOf } from './panelConfig.ts'
 import { lastFailure } from './sidebar.ts'
@@ -83,6 +85,30 @@ function write0(snap: { status: string; revision?: number } | undefined): string
   return snap ? `${snap.status}:${snap.revision ?? ''}` : ''
 }
 
+/** Where the open groups are kept, so the page comes back as it was left. */
+const OPEN_KEY = 'dsh-privacy-gateway.config.open'
+
+/** The groups open on first visit: the masking switches. */
+const FIRST_OPEN: readonly GroupId[] = ['mask']
+
+function readOpen(): GroupId[] {
+  try {
+    const raw: unknown = JSON.parse(globalThis.localStorage?.getItem(OPEN_KEY) ?? 'null')
+    if (Array.isArray(raw)) return GROUPS.filter((g) => raw.includes(g))
+  } catch {
+    // unreadable or unavailable storage: start as on a first visit
+  }
+  return [...FIRST_OPEN]
+}
+
+function writeOpen(open: readonly GroupId[]): void {
+  try {
+    globalThis.localStorage?.setItem(OPEN_KEY, JSON.stringify(open))
+  } catch {
+    // storage full or blocked: the page still folds, it just forgets
+  }
+}
+
 /** Locale keys built from a field's name (they all exist: test/fields.test.ts checks them). */
 const key = (s: string): Key => s as Key
 
@@ -94,6 +120,13 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   const [failed, setFailed] = useState(false)
   const [providers, setProviders] = useState<ProviderEntry[] | null>(null)
   const [unavailable, setUnavailable] = useState(false)
+  const [open, setOpen] = useState<GroupId[]>(readOpen)
+  const toggle = (g: GroupId): void =>
+    setOpen((was) => {
+      const next = was.includes(g) ? was.filter((x) => x !== g) : GROUPS.filter((x) => x === g || was.includes(x))
+      writeOpen(next)
+      return next
+    })
   const state = form?.state
   const ready = state?.status === 'ready'
   const writable = state?.writable !== false
@@ -172,11 +205,20 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   }
   const group = (g: GroupId): ReactNode => {
     const fields = FIELDS.filter((f) => f.group === g)
+    const name = t(key(`cfg.g.${g}`))
+    const isOpen = open.includes(g)
+    const parts = groupSummary(g, value)
+    const problem = fields.some((f) => note(f) !== undefined)
+    const summary = ready
+      ? [
+          ...parts.map((p, i) => h('span', { key: i, className: p.off ? 'pgw-fold__part pgw-fold__part--off' : 'pgw-fold__part' }, t(key(p.key), p.params))),
+          problem ? h('span', { key: 'problem', className: 'pgw-fold__part pgw-fold__part--error' }, t('cfg.s.problem')) : null,
+        ]
+      : null
     return h(
-      'div',
-      { key: g, className: 'pgw-cfg__group' },
-      h('div', { className: 'pgw-cfg__groupHead' }, h('span', { className: 'pgw-cfg__groupName' }, t(key(`cfg.g.${g}`)))),
-      fields.map((f) => h(Row, { key: f.key, title: t(key(`cfg.f.${f.key}`)), hint: t(key(`cfg.f.${f.key}.hint`)), note: note(f) }, control(f))),
+      Fold,
+      { key: g, title: name, summary, open: isOpen, toggleLabel: t(isOpen ? 'cfg.collapse' : 'cfg.expand', { name }), onToggle: () => toggle(g) },
+      fields.map((f) => h(Row, { key: f.key, title: t(key(`cfg.f.${f.key}`)), hint: t(key(`cfg.f.${f.key}.hint`)), note: note(f), inline: inline(f), half: f.half === true }, control(f))),
     )
   }
   return h(
@@ -185,9 +227,8 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
     // the row page carries its own heading; the inline section on the bundle page needs one
     props.form ? null : h('h3', { className: 'pgw-title' }, t('cfg.title')),
     failed ? h('div', { className: 'pgw-notice pgw-notice--error', role: 'alert' }, t('cfg.failed')) : null,
-    GROUPS.map(group),
-    h('div', { className: 'pgw-cfg__desc' }, t('cfg.applies')),
-    h('div', { className: 'pgw-cfg__desc' }, t('cfg.others')),
+    h('div', { className: 'pgw-cfg__folds' }, GROUPS.map(group)),
+    h('p', { className: 'pgw-cfg__desc pgw-cfg__foot' }, t('cfg.applies'), ' ', t('cfg.others')),
   )
 }
 

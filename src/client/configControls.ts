@@ -1,24 +1,52 @@
 /**
  * The configuration page's controls, built from the Web shell's own pieces:
  * the Switch, the Menu with the settings page's selector button (the one the
- * permission row opens), the themed Input, Button and Tag. Each row is title,
- * description, then the control, stacked on the left.
+ * permission row opens), the themed Input, Button and Tag. A row puts a
+ * switch, a choice or a count beside its words, as the settings page does, and
+ * a list below them. Rows sit in folding sections, one per group, whose header
+ * says the group's state while it is folded.
  */
 import { Button, IconChevronDownOutlineRegular, IconCloseOutlineRegular, Input, Menu, Switch, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import { createElement as h, useEffect, useState } from 'react'
+import { createElement as h, useEffect, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { addEntry, parseCount, removeEntry } from './fields.ts'
 import type { T } from './locales.ts'
 
-/** A setting's row: its title, its description, an optional note, then the control. */
-export function Row(props: { title: string; hint: string; note?: ReactNode; children?: ReactNode }): ReactNode {
+/** A setting's row: its title, its description and an optional note, with the control beside them (`inline`) or below. */
+export function Row(props: { title: string; hint: string; note?: ReactNode; inline: boolean; half: boolean; children?: ReactNode }): ReactNode {
+  const cls = ['pgw-cfg__row', props.inline ? 'pgw-cfg__row--inline' : '', props.half ? 'pgw-cfg__row--half' : ''].filter(Boolean).join(' ')
   return h(
     'div',
-    { className: 'pgw-cfg__row' },
+    { className: cls },
     h('div', { className: 'pgw-cfg__text' }, h('div', { className: 'pgw-cfg__name' }, props.title), h('div', { className: 'pgw-cfg__desc' }, props.hint), props.note ?? null),
     h('div', { className: 'pgw-cfg__control' }, props.children),
+  )
+}
+
+/**
+ * One group's folding section: a header button with the group's name, a
+ * one-line summary of its state (shown folded) and a chevron; the rows below
+ * only while open.
+ */
+export function Fold(props: { title: string; summary: ReactNode; open: boolean; toggleLabel: string; onToggle(): void; children?: ReactNode }): ReactNode {
+  const id = useId()
+  return h(
+    'section',
+    { className: 'pgw-fold', 'data-open': props.open || undefined },
+    h(
+      'h4',
+      { className: 'pgw-fold__heading' },
+      h(
+        'button',
+        { type: 'button', id: `${id}-h`, className: 'pgw-fold__head', 'aria-expanded': props.open, 'aria-controls': `${id}-b`, title: props.toggleLabel, onClick: props.onToggle },
+        h(IconChevronDownOutlineRegular, { className: 'pgw-fold__chevron' }),
+        h('span', { className: 'pgw-fold__title' }, props.title),
+        props.open ? null : h('span', { className: 'pgw-fold__summary' }, props.summary),
+      ),
+    ),
+    props.open ? h('div', { id: `${id}-b`, role: 'region', 'aria-labelledby': `${id}-h`, className: 'pgw-fold__body' }, h('div', { className: 'pgw-fold__grid' }, props.children)) : null,
   )
 }
 
