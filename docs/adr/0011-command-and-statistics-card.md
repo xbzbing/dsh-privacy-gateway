@@ -5,7 +5,7 @@
 
 ## Context
 
-记录（ADR-0008）要有地方看；遮蔽失败 fail-closed（ADR-0005）要有不依赖遮蔽器的止血办法。约束：
+记录（ADR-0008）要有地方看；脱敏失败 fail-closed（ADR-0005）要有不依赖脱敏器的止血办法。约束：
 
 - 命令的输入和回答都会进会话日志（`command/run`、`command/done`）。`/privacy test` 的输入就是用户想检查的密钥。
 - 统计卡在浏览器里，数据在 host 进程里，需要一条 host→client 的通道。
@@ -15,8 +15,8 @@
 ## Decision
 
 - 命令 `/privacy`：`status`（默认）、`on`、`off`、`test <文本>`。
-  - `on` / `off` 只改本次运行的开关，不写配置；遮蔽器不参与判断，所以遮蔽失败时 `off` 照样可用。
-  - `test` 用遮蔽器的预览：给出遮蔽后的文本和每个值的 kind、finder、head、len，不进值表、不记账。
+  - `on` / `off` 只改本次运行的开关，不写配置；脱敏器不参与判断，所以脱敏失败时 `off` 照样可用。
+  - `test` 用脱敏器的预览：给出脱敏后的文本和每个值的 kind、finder、head、len，不进值表、不记账。
   - 注册时设 `recordInput: false`，`test` 的原文不进会话日志。
   - 回答语言跟随 locale 设置（中文或英文）。
   - 通过 `ctx.inject(['commands'])` 注册：没有 dsh-commands 时网关照常工作。
@@ -30,5 +30,5 @@
 ## Consequences
 
 - `/privacy off` 在重启后失效：要长期关闭，用配置 `enabled: false`。
-- `test` 的回答（遮蔽后的文本）会进会话日志；规则没认出的部分按原文出现在里面，和直接把文本发进对话一样。
+- `test` 的回答（脱敏后的文本）会进会话日志；规则没认出的部分按原文出现在里面，和直接把文本发进对话一样。
 - 本地 link 安装时，插件从自己的 `node_modules` 解析 typert 和 cordis，与宿主不是同一份拷贝；typert 的标记按字符串属性读、cordis 的 `Context.is` 跨拷贝识别，所以能工作，但每次升级宿主都要实测一次。

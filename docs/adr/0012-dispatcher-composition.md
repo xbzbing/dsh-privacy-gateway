@@ -9,7 +9,7 @@ ADR-0001 让网关链在全局 dispatcher 前面，被顶掉时把顶掉它的 d
 
 - 三层时顺序由安装时机决定。网关和 oc2dsh 的路由层都在之后，`dsh-http-proxy` 再装上，代理 agent 就成了下一跳，oc2dsh 被跳过；反过来，oc2dsh 要借用当时的下游才不丢用户的代理策略。
 - 已经在栈里的层不能重新提到前面，也不能移除，只能 `close()` 后被跳过。
-- 自检每 60 秒一次。被一个不经过网关的 dispatcher 顶掉后，这段时间里的请求不经遮蔽。
+- 自检每 60 秒一次。被一个不经过网关的 dispatcher 顶掉后，这段时间里的请求不经脱敏。
 - oc2dsh 依赖 `chainTo()`、`downstream()` 和下游的 `closed` / `destroyed` 字段，但这几项没有写成契约。
 
 在请求入口自检（oc2dsh issue 的 S1）只对「顶掉网关、但请求仍会转回网关」的层有效；替换式的 dispatcher 不再把请求交给网关，入口自检看不到它。undici 把全局槽定义成不可配置的数据属性，也没法拦截写入。
@@ -31,6 +31,6 @@ ADR-0001 让网关链在全局 dispatcher 前面，被顶掉时把顶掉它的 d
 ## Consequences
 
 - 安装顺序不再决定谁在前：route 层总在 proxy 层之前，用户的代理策略总在最里面。
-- 替换式 dispatcher 造成的未遮蔽窗口最长约 1 秒，没有降到 0。
+- 替换式 dispatcher 造成的未脱敏窗口最长约 1 秒，没有降到 0。
 - oc2dsh 现有的用法（不带角色的 `chainTo`、挂上前后各读一次 `downstream()`）行为不变；改用 `below()` 后，在它之后装上的代理也能被用上。
 - 一个替换式插件如果其实是 route 层，会被当成 `proxy` 排在已有的 route 层之后；它要排到前面需要自己调 `chainTo(d, { role: 'route' })`。

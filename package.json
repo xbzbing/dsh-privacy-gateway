@@ -29,6 +29,7 @@
     "cordis.patch.yml",
     "lib",
     "locale",
+    "docs/details",
     "assets",
     "README.en.md"
   ],

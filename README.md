@@ -6,7 +6,7 @@ DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一�
 
 状态：P1 已实现，尚未发布。
 
-## 遮什么
+## 脱敏范围
 
 | kind | 内容 | 开关 |
 | --- | --- | --- |
@@ -16,9 +16,9 @@ DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一�
 | `PASSWORD` / `SECRET` | URL 里的密码、名为 password / secret / token 的字段、中文「密码为…」「密钥是…」 | `secrets` |
 | `COOKIE` | `Cookie` / `Set-Cookie` 头、`curl -b`、cookies.txt、Playwright storageState、HAR、常见会话 cookie 名（`BDUSS`、`JSESSIONID` 等） | `secrets` |
 | `EMAIL` / `PHONE` / `ID_CARD` / `BANK_CARD` | 邮箱、大陆手机号、身份证号（校验位）、银行卡号（Luhn） | `personal` |
-| `TERM` | 配置里 `words` 列出的词 | 有词就遮 |
+| `TERM` | 配置里 `words` 列出的词 | 有词就脱敏 |
 
-遮过的值在请求的其它地方再出现，也按同一个占位符遮（finder 记为 `known`）。同一个 host 重发的历史保持原来的字节，prompt cache 照样命中。
+脱敏过的值在请求的其它地方再出现，也按同一个占位符脱敏（finder 记为 `known`）。同一个 host 重发的历史保持原来的字节，prompt cache 照样命中。
 
 ## 安装
 
@@ -37,15 +37,15 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `enabled` | `true` | 总开关；关掉后网关不安装 |
-| `secrets` | `true` | 遮蔽密钥、令牌、密码、私钥、cookie |
-| `personal` | `false` | 遮蔽邮箱、手机号、身份证号、银行卡号 |
-| `words` | `[]` | 自己的词（项目代号、客户名），按原样遮成 `TERM` |
-| `allow` | `[]` | 永不遮的值：整值匹配，不分大小写 |
+| `secrets` | `true` | 脱敏密钥、令牌、密码、私钥、cookie |
+| `personal` | `false` | 脱敏邮箱、手机号、身份证号、银行卡号 |
+| `words` | `[]` | 自己的词（项目代号、客户名），按原样换成 `TERM` 占位符 |
+| `allow` | `[]` | 永不脱敏的值：整值匹配，不分大小写 |
 | `actions` | `{}` | 按 kind 选动作：`mask`（默认，换成占位符）、`warn`（照发并记一条）、`block`（整个请求不发）。例：`{ PRIVATE_KEY: block, EMAIL: warn }`（[ADR-0013](docs/adr/0013-actions.md)） |
 | `toolGuard` | `off` | 工具调用参数里还原出值、又指向本机以外的 host 时怎么办：`off` 只计数，`warn` 告警并记一条，`block` 这次调用的参数里不还原，工具拿到占位符（[ADR-0014](docs/adr/0014-tool-guard.md)） |
 | `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `{{…}}` 占位符；回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
-| `cookieNames` | `[]` | 追加要遮的 cookie 名 |
-| `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不遮的 cookie 名 |
+| `cookieNames` | `[]` | 追加要脱敏的 cookie 名 |
+| `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不脱敏的 cookie 名 |
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用（[ADR-0004](docs/adr/0004-protected-regions.md)） |
 | `protectTools` | `true` | 请求的 `tools` 数组原样发出 |
 | `excludeHosts` | `[]` | 不改写的 `host` 或 `host:port` |
@@ -62,15 +62,15 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | 用法 | 作用 |
 | --- | --- |
 | `/privacy` 或 `/privacy status` | 开关状态、值表大小、今日 / 7 天 / 30 天的请求与替换计数、按 kind 和 finder 的分布、异常信号 |
-| `/privacy off` | 本次运行内停止遮蔽，请求按原文发出；不改配置，重启后恢复 |
-| `/privacy on` | 恢复遮蔽 |
-| `/privacy test <文本>` | 预览这段文本会怎样发出：遮蔽后的文本和每个值的 kind、finder、开头、长度。不进值表，原文不写进会话日志 |
+| `/privacy off` | 本次运行内停止脱敏，请求按原文发出；不改配置，重启后恢复 |
+| `/privacy on` | 恢复脱敏 |
+| `/privacy test <文本>` | 预览这段文本会怎样发出：脱敏后的文本和每个值的 kind、finder、开头、长度。不进值表，原文不写进会话日志 |
 
 命令的回答里不出现任何值。
 
 ## 记录与统计
 
-只记有脱敏或还原的模型请求，一个请求一条（既没遮也没还原的不记）：时间、遮蔽耗时、host、model、会话 id、替换处数、每个值的占位符 / kind / finder / 开头 / 长度、回复里还原的处数（工具调用参数里的另计），以及回复里出现、值表里却没有的占位符数。记录里不写值本身，也不记 URL 的 query（[ADR-0008](docs/adr/0008-masking-records.md)）。
+只记有脱敏或还原的模型请求，一个请求一条（既没脱敏也没还原的不记）：时间、脱敏耗时、host、model、会话 id、替换处数、每个值的占位符 / kind / finder / 开头 / 长度、回复里还原的处数（工具调用参数里的另计），以及回复里出现、值表里却没有的占位符数。记录里不写值本身，也不记 URL 的 query（[ADR-0008](docs/adr/0008-masking-records.md)）。
 
 记录按天写在 `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`，目录 0700、文件 0600。写盘失败只告警，不影响请求。
 
@@ -84,7 +84,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 - 覆盖面只有走全局 `fetch()` 的流量；`node:http` 直连、worker 线程、独立进程不经过网关（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。
 - 值表只在内存里（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。重启后，规则命不中、只靠记忆兜住的值第一次出站会按原文发出。
 - 还原发生在回复里，包括工具调用参数：模型被诱导把占位符写进 `curl` 之类的命令时，工具执行时用的是真值。插件只记账（统计卡与 `/privacy status` 里的「工具参数」计数），不拦截（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。
-- 遮蔽出错时请求不会发出，报错 `dsh-privacy-gateway: masking failed, request not sent`（[ADR-0005](docs/adr/0005-fail-closed.md)）。止血办法是 `/privacy off`，或在插件页停用本插件、把配置 `enabled` 设为 `false`。
+- 脱敏出错时请求不会发出，报错 `dsh-privacy-gateway: masking failed, request not sent`（[ADR-0005](docs/adr/0005-fail-closed.md)）。止血办法是 `/privacy off`，或在插件页停用本插件、把配置 `enabled` 设为 `false`。
 
 ## 开发
 

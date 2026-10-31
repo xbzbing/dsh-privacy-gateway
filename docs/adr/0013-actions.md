@@ -7,14 +7,14 @@
 
 P1 对找到的值只有一种处理：换成占位符。有两类需求它满足不了：
 
-- 想知道某类值发出去了多少，但不想让模型看不到它（比如邮箱，遮了会影响写信、查账号这类任务）。
-- 某类值一旦出现就宁可不发（比如私钥），而不是遮掉了照发。
+- 想知道某类值发出去了多少，但不想让模型看不到它（比如邮箱，脱敏了会影响写信、查账号这类任务）。
+- 某类值一旦出现就宁可不发（比如私钥），而不是脱敏后照发。
 
 ## Decision
 
 - 配置 `actions` 是 kind → 动作的表，动作取 `mask`（默认）、`warn`、`block`。kind 不分大小写；不认识的动作按 `mask`。
 - `warn`：值按原文发出，不进值表；记录里这个值带 `action: 'warn'`，请求的 `warned` 记处数。统计的按 kind 分布只算真正替换的值，warn 的另计。
-- `block`：整个请求不发，dispatcher 以 `PrivacyGatewayError` 失败，`code` 为 `DSH_PRIVACY_GATEWAY_BLOCKED`（遮蔽出错仍是 `DSH_PRIVACY_GATEWAY_FAIL_CLOSED`）。错误信息只列 kind、开头和长度。记录标 `blocked`，不算遮蔽失败，不计入连续失败数。
+- `block`：整个请求不发，dispatcher 以 `PrivacyGatewayError` 失败，`code` 为 `DSH_PRIVACY_GATEWAY_BLOCKED`（脱敏出错仍是 `DSH_PRIVACY_GATEWAY_FAIL_CLOSED`）。错误信息只列 kind、开头和长度。记录标 `blocked`，不算脱敏失败，不计入连续失败数。
 - `allow` 优先于动作：白名单里的值不论 kind 都照发，也不记。
 - `/privacy test` 预览里，warn 和 block 的值仍显示为占位符，后面注明会怎样处理。预览从不回显原文。
 
