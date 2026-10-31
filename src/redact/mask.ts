@@ -5,7 +5,7 @@ import { tagOf } from './key.ts'
 import type { KnownSpan, ValueTable } from './known.ts'
 import { rules } from './rules.ts'
 import { shapeOf, splitName } from './shape.ts'
-import { asJSON, KEPT, walkJSON } from './json.ts'
+import { asJSON, KEPT, walkJSON, type Edit } from './json.ts'
 import { envBlockRanges, TOOL_ROOTS, under, type Range } from '../protect.ts'
 
 export interface MaskOptions {
@@ -254,15 +254,15 @@ export class Masker {
    */
   maskText(raw: string, escaped = false, keep: readonly Range[] = []): MaskResult {
     const pass: Pass = { route: '', preview: false, hits: [] }
-    const r = this.#mask(raw, escaped, keep, pass)
-    return { ...r, hits: pass.hits }
+    const { text, n } = this.#mask(raw, escaped, keep, pass)
+    return { text, n, hits: pass.hits }
   }
 
   /** maskText with nothing remembered: each value goes as the placeholder it would have (`/privacy test`). */
   preview(raw: string): MaskResult {
     const pass: Pass = { route: '', preview: true, hits: [] }
-    const r = this.#mask(raw, false, [], pass)
-    return { ...r, hits: pass.hits }
+    const { text, n } = this.#mask(raw, false, [], pass)
+    return { text, n, hits: pass.hits }
   }
 
   #find(raw: string, s: string, escaped: boolean, pass: Pass): Found[] {
@@ -286,12 +286,14 @@ export class Masker {
     return noNumbers(s, noIDs(s, found))
   }
 
-  #mask(raw: string, escaped: boolean, keep: readonly Range[], pass: Pass): { text: string; n: number } {
+  /** The masked string, how many values went, and each change as an edit of `raw`. */
+  #mask(raw: string, escaped: boolean, keep: readonly Range[], pass: Pass): { text: string; n: number; edits: Edit[] } {
     const o = this.#options
-    if (raw.length < 3 || (!o.secrets && !o.personal && !(o.words && o.words.length > 0))) return { text: raw, n: 0 }
+    const none = { text: raw, n: 0, edits: [] }
+    if (raw.length < 3 || (!o.secrets && !o.personal && !(o.words && o.words.length > 0))) return none
     const s = escaped ? unescapedView(raw) : raw
     let found = this.#find(raw, s, escaped, pass)
-    if (found.length === 0) return { text: raw, n: 0 }
+    if (found.length === 0) return none
     // nothing inside a placeholder already there: masking again changes nothing
     const fixed: Range[] = [...keep]
     if (raw.includes('{{')) {
@@ -304,6 +306,7 @@ export class Masker {
     // of two the same, the one found first (a key in API_KEY=… is an API_KEY)
     found.sort((a, b) => a.start - b.start || b.end - a.end)
     const out: string[] = []
+    const edits: Edit[] = []
     let last = 0
     let next = 0
     let n = 0
@@ -341,6 +344,7 @@ export class Masker {
       const p = action === undefined ? this.#standIn(f.kind, v, pass.preview) : { text: tagOf(this.#key, f.kind, v), id: '' }
       const text = f.bare ? `"${p.text}"` : p.text
       out.push(raw.slice(last, f.start), text)
+      edits.push({ start: f.start, end: f.end, text })
       if (action === undefined) {
         const hit: Hit = { placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len }
         pass.hits.push(hit)
@@ -358,9 +362,9 @@ export class Masker {
         if (pass.at) m.hit.at = pass.at
       }
     }
-    if (n === 0) return { text: raw, n: 0 }
+    if (n === 0) return none
     out.push(raw.slice(last))
-    return { text: out.join(''), n }
+    return { text: out.join(''), n, edits }
   }
 
   /**
@@ -389,7 +393,8 @@ export class Masker {
       if (this.#options.context) pass.at = placeOf(doc, path)
       const r = this.#mask(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [], pass)
       n += r.n
-      return r.text
+      // spliced into the literal as written, so what is not masked keeps its escapes
+      return r.edits
     })
     // JSON.parse took it, so the walker must too: anything else is our bug
     if (out === null) throw new Error('request body is JSON but could not be walked')

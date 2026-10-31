@@ -6,7 +6,29 @@
  * comes back exactly as it was, so the parts of a request nobody masked stay
  * byte for byte what the agent sent.
  */
-export type StringFn = (path: string, key: string, value: string) => string
+export type StringFn = (path: string, key: string, value: string) => string | readonly Edit[]
+
+/**
+ * A change to one string's decoded text: `text` in place of value[start:end].
+ * Edits are spliced into the string's literal as it was written, so the
+ * escapes around them stay byte for byte (caf\u00e9 is not rewritten as café).
+ */
+export interface Edit {
+  start: number
+  end: number
+  text: string
+}
+
+/** Where each code unit of the decoded string literal text[i:end] starts in text, and its closing quote last. */
+function rawOffsets(text: string, i: number, end: number): Int32Array {
+  const at: number[] = []
+  for (let j = i + 1; j < end - 1; j++) {
+    at.push(j)
+    if (text.charCodeAt(j) === 0x5c) j += text[j + 1] === 'u' ? 5 : 1
+  }
+  at.push(end - 1)
+  return Int32Array.from(at)
+}
 
 /** The walked text, or null when `text` is not one JSON value. */
 export function walkJSON(text: string, fn: StringFn): string | null {
@@ -96,7 +118,16 @@ export function walkJSON(text: string, fn: StringFn): string | null {
       const v = decode(i, s.end, s.escaped)
       if (v === undefined) return -1
       const t = fn(path, key, v)
-      if (t !== v) {
+      if (typeof t !== 'string') {
+        if (t.length === 0) return s.end
+        // only the edits are written anew: the bytes between them are the literal's own
+        const at = s.escaped ? rawOffsets(text, i, s.end) : undefined
+        const raw = (d: number): number => (at ? (at[d] as number) : i + 1 + d)
+        for (const e of t) {
+          out.push(text.slice(last, raw(e.start)), jsonEscape(e.text))
+          last = raw(e.end)
+        }
+      } else if (t !== v) {
         out.push(text.slice(last, i), JSON.stringify(t))
         last = s.end
       }

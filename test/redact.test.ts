@@ -107,7 +107,11 @@ test('maskJSON keeps every byte it does not mask', () => {
   assert.equal(out.n, 1)
   // model is kept; only the content string is rewritten
   assert.ok(out.text.startsWith(`{ "model" : "${OPENAI}",\n  "messages":[{"role":"user","content":"key {{API_KEY_`))
-  assert.ok(out.text.endsWith(` é"}], "stream":true }`))
+  // the escape beside the masked value stays as it was written
+  assert.ok(out.text.endsWith(` \\u00e9"}], "stream":true }`))
+  const p = PLACEHOLDER.exec(out.text)?.[0] ?? ''
+  PLACEHOLDER.lastIndex = 0
+  assert.equal(out.text, body.replace(`key ${OPENAI}`, `key ${p}`))
   assert.ok(JSON.parse(out.text))
 })
 
