@@ -8,6 +8,12 @@ import { createHash } from 'node:crypto'
 import type { Found } from './ids.ts'
 import type { KnownSpan } from './known.ts'
 import type { Rule } from './rules.ts'
+import { keyHead } from './shape.ts'
+
+/** Keys of more than this many characters, starting sk-, keep 4 characters past their prefix in a hint. */
+const SK_LONG = 20
+/** How many characters past an sk- key's prefix its hint keeps, so two keys can be told apart. */
+const SK_TELL = 4
 
 /** s with its ASCII letters in lower case, as long as s, so a place in one is the same place in the other. */
 export function lowerASCII(s: string): string {
@@ -213,12 +219,18 @@ export class SentMemo {
 /**
  * As much of a value as a record may keep (magpie `Hint`): its first
  * character, or a key's prefix up to where its random part starts (sk-,
- * ghp_), and how many characters it has.
+ * ghp_), and how many characters it has. An sk- key longer than 20 keeps the
+ * 4 characters after its prefix too (sk-ab12, sk-proj-ab12), so the records
+ * tell one key from another.
  */
 export function hint(kind: string, v: string, personal: boolean): { head: string; len: number } {
   const chars = [...v]
   const len = chars.length
   if (len < 2) return { head: '', len }
+  if (!personal && kind !== 'TERM' && len > SK_LONG && v.startsWith('sk-')) {
+    const prefix = keyHead(v)
+    return { head: v.slice(0, prefix.length + SK_TELL), len }
+  }
   let k = 1
   if (!personal && kind !== 'TERM' && len >= 16) {
     k = 0

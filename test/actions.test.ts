@@ -57,7 +57,7 @@ test('block stops the request with the kind, head and length, never the value, a
   const e = engine({ API_KEY: 'block' })
   assert.throws(
     () => e.maskRequest(chat(`key ${KEY} and ${MAIL}`), info),
-    (err: unknown) => err instanceof RequestBlocked && /API_KEY \(sk-…, 36 characters\)/.test(err.message) && !err.message.includes(KEY),
+    (err: unknown) => err instanceof RequestBlocked && /API_KEY \(sk-proj-ACTI…, 36 characters\)/.test(err.message) && !err.message.includes(KEY),
   )
   const [r] = e.records.recent()
   assert.equal(r?.blocked, true)

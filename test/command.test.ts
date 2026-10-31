@@ -68,7 +68,7 @@ test('test shows the text as it would go, a hint per value, and remembers nothin
   const r = runPrivacyCommand(faceOf(engine), `test token ${SENTINEL} twice ${SENTINEL}`, 'en')
   assert.equal(r.kind, 'success')
   assert.ok(!r.text.includes(SENTINEL))
-  assert.match(r.text, /^Would go as:\ntoken \{\{API_KEY_[a-z2-7]{8}\}\} twice \{\{API_KEY_[a-z2-7]{8}\}\}\n\n1 value:\n\{\{API_KEY_[a-z2-7]{8}\}\} {2}API_KEY · rule · sk-… 38$/)
+  assert.match(r.text, /^Would go as:\ntoken \{\{API_KEY_[a-z2-7]{8}\}\} twice \{\{API_KEY_[a-z2-7]{8}\}\}\n\n1 value:\n\{\{API_KEY_[a-z2-7]{8}\}\} {2}API_KEY · rule · sk-proj-SENT… 38$/)
   assert.equal(engine.values, 0)
   assert.equal(engine.records.recent().length, 0)
   assert.match(runPrivacyCommand(faceOf(engine), 'test nothing secret here', 'en').text, /Nothing in this text/)

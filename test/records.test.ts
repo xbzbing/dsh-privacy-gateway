@@ -47,7 +47,7 @@ test('one request makes one record: its values, the places restored and the plac
   assert.equal(r.session, 's1')
   assert.equal(r.host, 'api.example.com')
   assert.equal(r.what, 'chat')
-  assert.deepEqual(r.values, [{ placeholder: p, kind: 'API_KEY', finder: 'rule', head: 'sk-', len: SENTINEL.length, n: 2 }])
+  assert.deepEqual(r.values, [{ placeholder: p, kind: 'API_KEY', finder: 'rule', head: 'sk-proj-SENT', len: SENTINEL.length, n: 2 }])
   assert.equal(r.restored, 2)
   assert.equal(r.unmapped, 1)
   assert.ok(!JSON.stringify(r).includes(SENTINEL))
