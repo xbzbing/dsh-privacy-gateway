@@ -62,3 +62,24 @@ test('vendorView turned off keeps no more bodies and drops the ones kept', () =>
   e.maskRequest(chat(`key ${KEY}`), info)?.finish()
   assert.equal(views.size, 0)
 })
+
+test('a body put again under its key is counted once', () => {
+  const s = new ViewStore({ maxViews: 10, maxBody: 10, maxTotal: 10 })
+  s.put(1, 'x'.repeat(5))
+  s.put(1, 'y'.repeat(5))
+  s.put(2, 'z'.repeat(5))
+  assert.deepEqual(s.keys(), [1, 2])
+  assert.equal(s.get(1), 'yyyyy')
+  assert.equal(s.bytes, 10)
+})
+
+test('the view limits count UTF-8 bytes, so a CJK body takes three a character', () => {
+  const s = new ViewStore({ maxViews: 10, maxBody: 10, maxTotal: 12 })
+  // four characters, twelve bytes
+  assert.equal(s.put(1, '脱敏记录'), false)
+  assert.equal(s.put(2, '脱敏记'), true)
+  assert.equal(s.bytes, 9)
+  s.put(3, '录a')
+  assert.deepEqual(s.keys(), [3])
+  assert.equal(s.bytes, 4)
+})

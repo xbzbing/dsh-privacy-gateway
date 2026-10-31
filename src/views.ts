@@ -11,9 +11,9 @@
 export interface ViewLimits {
   /** Bodies kept. */
   maxViews: number
-  /** The largest body kept, in UTF-16 code units (about bytes for JSON). */
+  /** The largest body kept, in UTF-8 bytes. */
   maxBody: number
-  /** All bodies together. */
+  /** All bodies together, in UTF-8 bytes. */
   maxTotal: number
 }
 
@@ -21,8 +21,8 @@ export const VIEW_LIMITS: ViewLimits = { maxViews: 100, maxBody: 4 << 20, maxTot
 
 export class ViewStore {
   readonly #limits: ViewLimits
-  /** key → body, the oldest first. */
-  readonly #views = new Map<number, string>()
+  /** key → body and its UTF-8 bytes, the oldest first. */
+  readonly #views = new Map<number, { body: string; bytes: number }>()
   #total = 0
 
   constructor(limits: ViewLimits = VIEW_LIMITS) {
@@ -31,19 +31,27 @@ export class ViewStore {
 
   /** Keeps `body` for the record `key`; false when it is larger than one body may be. */
   put(key: number, body: string): boolean {
-    if (body.length > this.#limits.maxBody) return false
-    this.#views.set(key, body)
-    this.#total += body.length
-    for (const [k, b] of this.#views) {
+    // bytes, not string length: a CJK body takes three bytes a character, and the limits say what memory is used
+    const bytes = Buffer.byteLength(body)
+    if (bytes > this.#limits.maxBody) return false
+    const had = this.#views.get(key)
+    if (had) {
+      // a body put again under its key replaces the old one, and goes last as the newest
+      this.#views.delete(key)
+      this.#total -= had.bytes
+    }
+    this.#views.set(key, { body, bytes })
+    this.#total += bytes
+    for (const [k, v] of this.#views) {
       if (this.#views.size <= this.#limits.maxViews && this.#total <= this.#limits.maxTotal) break
       this.#views.delete(k)
-      this.#total -= b.length
+      this.#total -= v.bytes
     }
     return true
   }
 
   get(key: number): string | undefined {
-    return this.#views.get(key)
+    return this.#views.get(key)?.body
   }
 
   has(key: number): boolean {
@@ -63,6 +71,11 @@ export class ViewStore {
 
   get size(): number {
     return this.#views.size
+  }
+
+  /** The UTF-8 bytes of every body kept. */
+  get bytes(): number {
+    return this.#total
   }
 }
 
