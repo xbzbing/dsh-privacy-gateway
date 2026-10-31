@@ -33,6 +33,7 @@
 - 新建的配置要在 2 天内完成一次成功的 publish 才算验证通过，否则失效。所以登记放在一次发版之前做，别提前几周配好。
 - 验证通过后删掉仓库的 `NPM_TOKEN` secret，并把包设置里的 Publishing access 改成「要求 2FA 且禁用 token」。
 - npm >= 11.5.1 在 `id-token: write` 下会先换 OIDC token 再发版，OIDC 一旦可用就优先于 `NPM_TOKEN`；换不到（没登记或权限不对）才退回 token。
+- 去掉 `NPM_TOKEN` 之后，用 `gh workflow run release.yml -f check=true` 跑一次 `oidc-check`：它只让 `npm publish --dry-run` 去换一次 OIDC token，不上传任何东西。绿了说明登记与这份 workflow 对得上（包名、仓库、文件名、无 environment、允许 `npm publish`）；红了说明下一次真实发版会失败，先修登记。
 
 ## Consequences
 

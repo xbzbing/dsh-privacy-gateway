@@ -21,6 +21,11 @@ on:
     branches: [main]
     paths: [package.json]
   workflow_dispatch:
+    inputs:
+      check:
+        description: Only check that the trusted publisher hands out an OIDC token; publish nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # push the release tag, create / edit the Release
@@ -34,6 +39,7 @@ concurrency:
 
 jobs:
   release:
+    if: inputs.check != true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -157,3 +163,35 @@ jobs:
           set -euo pipefail
           V="${{ steps.state.outputs.version }}"
           gh release edit "v$V" --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" --latest
+
+  # Manual smoke test for Trusted Publishing. `npm publish --dry-run` still asks
+  # the registry to exchange this workflow's OIDC token for a publish token, so a
+  # green run proves the trusted publisher accepts this workflow file: same
+  # package name, same repository, no environment, and `npm publish` allowed.
+  # Nothing is uploaded. Run it with `gh workflow run release.yml -f check=true`
+  # after changing the trusted publisher, and once after dropping NPM_TOKEN.
+  oidc-check:
+    if: github.event_name == 'workflow_dispatch' && inputs.check == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Exchange an OIDC token
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oidc-check"
+          cd "$RUNNER_TEMP/oidc-check"
+          printf '{"name":"dsh-privacy-gateway","version":"0.0.0-oidc-check"}\n' > package.json
+          npm publish --dry-run --tag oidc-check --loglevel=verbose > "$RUNNER_TEMP/oidc.log" 2>&1 || true
+          tail -20 "$RUNNER_TEMP/oidc.log"
+          if ! grep -q 'Successfully retrieved and set token' "$RUNNER_TEMP/oidc.log"; then
+            echo '::error::npm got no publish token over OIDC: check the trusted publisher (repo xbzbing/dsh-privacy-gateway, workflow release.yml, no environment, npm publish allowed)'
+            exit 1
+          fi
