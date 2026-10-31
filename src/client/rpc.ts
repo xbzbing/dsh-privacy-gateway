@@ -69,6 +69,27 @@ export interface ProviderEntry {
   name: string
 }
 
+export type ResetResult = { ok: true; files: number } | { ok: false; message: string }
+
+/** Clears the history on the host (docs/adr/0022); never throws. */
+export async function resetData(ctx: ClientCtx): Promise<ResetResult> {
+  let rpc: ConnectionFace['rpc']
+  try {
+    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
+  } catch {
+    rpc = undefined
+  }
+  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
+  try {
+    const r = (await rpc.call('/api', 'privacyGateway/reset', { args: {} })) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
+    if (r?.ok !== true) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+    const files = (r.value as { files?: unknown } | null)?.files
+    return { ok: true, files: typeof files === 'number' ? files : 0 }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export type ProvidersResult = { ok: true; providers: ProviderEntry[] } | { ok: false; message: string }
 
 /** The providers with an adapter, from this plugin's own host half; never throws. */

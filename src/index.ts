@@ -199,6 +199,13 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           return []
         }
       },
+      reset: async () => {
+        // the record directory whether record is on or not: the history there is what is cleared
+        const r = await records.reset(recordDir)
+        views.clear()
+        ctx.logger.info(`dsh-privacy-gateway: history reset from the settings card, ${r.files} day files deleted`)
+        return r
+      },
       vendorView: (key) => {
         const body = views.get(key)
         return body === undefined ? null : { key, body }

@@ -425,6 +425,43 @@ export class RecordStore {
     for (const day of this.#days.keys()) if (day < statFrom) this.#days.delete(day)
   }
 
+  /**
+   * Clears the history (the reset button, docs/adr/0022): the records in
+   * memory, the sums, what was waiting to be written, and each day file in
+   * `dir` (other files there stay). Returns how many day files went.
+   */
+  async reset(dir = this.#o.dir): Promise<{ files: number }> {
+    // a read still going would put the old days back after the clearing
+    await this.loaded
+    if (this.#timer) {
+      clearTimeout(this.#timer)
+      this.#timer = undefined
+    }
+    this.#queue = []
+    await this.#writing
+    this.#ring = []
+    this.#days.clear()
+    this.#failStreak = 0
+    // nothing left on disk to read in when writing is turned on later
+    this.#diskRead = true
+    let files = 0
+    if (dir) {
+      let names: string[] = []
+      try {
+        names = await readdir(dir)
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      }
+      for (const name of names) {
+        if (!DAY_FILE.test(name)) continue
+        await unlink(join(dir, name))
+        files++
+      }
+    }
+    this.#private.clear()
+    return { files }
+  }
+
   /** Writes what is waiting and stops; records added later are kept in memory only. */
   async close(): Promise<void> {
     await this.flush()

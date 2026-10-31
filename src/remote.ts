@@ -59,6 +59,12 @@ export interface ProviderEntry {
   name: string
 }
 
+/** What a reset cleared. */
+export interface ResetResult {
+  /** Day files deleted from disk. */
+  files: number
+}
+
 /** What the service reads from the plugin. */
 export interface OverviewSource {
   overview(limit: number, session?: string): Overview
@@ -66,6 +72,8 @@ export interface OverviewSource {
   providers?(): ProviderEntry[]
   /** The body kept for `key`, or null when the view is off or it is not kept. */
   vendorView?(key: number): VendorView | null
+  /** Clears the records, the sums and the kept bodies, on disk too (docs/adr/0022). */
+  reset?(): Promise<ResetResult>
 }
 
 export const NAMESPACE = 'privacyGateway'
@@ -92,6 +100,12 @@ export class PrivacyGatewayService extends TypertRemoteService {
   /** The providers with an adapter, for the excludeProviders choice. */
   async providers(): Promise<ProviderEntry[]> {
     return this.source.providers?.() ?? []
+  }
+
+  /** Clears the history; the value table stays, so replies on their way are still restored. */
+  async reset(): Promise<ResetResult> {
+    if (!this.source.reset) throw new Error('reset is not offered')
+    return this.source.reset()
   }
 
   /** One recorded request as the vendor got it, or null. */
@@ -127,3 +141,4 @@ function markRemote(cls: { prototype: object }, method: string): void {
 markRemote(PrivacyGatewayService, 'overview')
 markRemote(PrivacyGatewayService, 'vendorView')
 markRemote(PrivacyGatewayService, 'providers')
+markRemote(PrivacyGatewayService, 'reset')

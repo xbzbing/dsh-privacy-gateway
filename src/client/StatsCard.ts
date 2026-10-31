@@ -1,13 +1,17 @@
-/** The statistics card under the bundle's detail page (design §7.4). */
-import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
+/**
+ * The statistics card under the bundle's detail page (design §7.4) and, scoped
+ * to one session, the Privacy view tab (docs/adr/0017). Drawn with the Web
+ * shell's own controls; the pieces are in StatsParts.ts.
+ */
+import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular, SegmentedControl, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { createElement as h, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { MaskRecord, Totals } from '../records.ts'
 import type { Overview } from '../remote.ts'
 import type { Key, T } from './locales.ts'
 import { fetchOverview, type ClientCtx } from './rpc.ts'
-import { bars, hintOf, pageOf, timeLabel, took, warnings, type Range } from './view.ts'
-import { VendorView } from './VendorView.ts'
+import { Dist, Kpis, Notices, RecordHead, RecordRow, ResetButton } from './StatsParts.ts'
+import { pageOf, warnings, type Range } from './view.ts'
 
 const REFRESH_MS = 15_000
 /** Records asked for: the most the host sends, shown a page at a time. */
@@ -45,140 +49,65 @@ function useOverview(ctx: ClientCtx, session?: string): [State, () => void, bool
   return [state, load, busy]
 }
 
-function Stat(props: { label: string; value: number; sub?: string; tone?: 'warn' | 'error' }): ReactNode {
-  return h(
-    'div',
-    { className: `pgw-stat${props.tone ? ` pgw-stat--${props.tone}` : ''}` },
-    h('span', { className: 'pgw-stat__label' }, props.label),
-    h('span', { className: 'pgw-stat__value' }, props.value.toLocaleString()),
-    props.sub ? h('span', { className: 'pgw-stat__sub' }, props.sub) : null,
-  )
-}
-
-function Dist(props: { title: string; data: Record<string, number>; empty: string }): ReactNode {
-  const list = bars(props.data)
-  return h(
-    'div',
-    { className: 'pgw-dist' },
-    h('div', { className: 'pgw-dist__title' }, props.title),
-    list.length === 0
-      ? h('div', { className: 'pgw-empty' }, props.empty)
-      : list.map((b) =>
-          h(
-            'div',
-            { className: 'pgw-bar', key: b.label },
-            h('span', { className: 'pgw-bar__label', title: b.label }, b.label),
-            h('span', { className: 'pgw-bar__track' }, h('span', { className: 'pgw-bar__fill', style: { width: `${b.pct}%`, display: 'block' } })),
-            h('span', { className: 'pgw-bar__value' }, b.value.toLocaleString()),
-          ),
-        ),
-  )
-}
-
-function Totals_(props: { t: Totals; tr: T }): ReactNode {
-  const { t, tr } = props
-  return h(
-    'div',
-    { className: 'pgw-stats' },
-    h(Stat, { label: tr('stat.requests'), value: t.requests }),
-    h(Stat, { label: tr('stat.masked'), value: t.masked }),
-    h(Stat, { label: tr('stat.n'), value: t.n }),
-    h(Stat, { label: tr('stat.restored'), value: t.restored, ...(t.restoredInTools > 0 ? { sub: tr('stat.inTools', { n: t.restoredInTools }) } : {}) }),
-    h(Stat, { label: tr('stat.unmapped'), value: t.unmapped, ...(t.unmapped > 0 ? { tone: 'warn' as const } : {}) }),
-    h(Stat, { label: tr('stat.failed'), value: t.failed, ...(t.failed > 0 ? { tone: 'error' as const } : {}) }),
-    (t.warned ?? 0) > 0 ? h(Stat, { label: tr('stat.warned'), value: t.warned, tone: 'warn' }) : null,
-    (t.blocked ?? 0) > 0 ? h(Stat, { label: tr('stat.blocked'), value: t.blocked, tone: 'warn' }) : null,
-    (t.exfil ?? 0) > 0
-      ? h(Stat, { label: tr('stat.exfil'), value: t.exfil, tone: 'error', ...((t.exfilBlocked ?? 0) > 0 ? { sub: tr('stat.exfilBlocked', { n: t.exfilBlocked }) } : {}) })
-      : null,
-  )
-}
-
-function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: () => void; tr: T; viewable: boolean }): ReactNode {
-  const { r, tr } = props
-  const [viewing, setViewing] = useState(false)
-  const where = [r.host, r.model].filter(Boolean).join(' · ')
-  // who it came from: the workspace and the session, by name where the host could tell them (docs/adr/0020)
-  const from = [r.workspace, r.title ?? r.session].filter((x): x is string => typeof x === 'string' && x !== '').join(' · ')
-  const right = r.failed
-    ? h('span', { className: 'pgw-row__fail' }, tr('recent.failed'))
-    : r.blocked
-      ? h('span', { className: 'pgw-row__fail' }, tr('recent.blocked'))
-      : h('span', { className: r.exfil ? 'pgw-row__fail' : undefined, title: tr('recent.placesHint') }, tr('recent.places', { n: r.n }))
-  return h(
-    Fragment,
-    null,
-    h(
-      'button',
-      { type: 'button', className: `pgw-row${r.n === 0 && !r.failed ? ' pgw-row--zero' : ''}`, 'aria-expanded': props.open, onClick: props.toggle },
-      h('span', { className: 'pgw-row__time' }, timeLabel(r.time)),
-      h('span', { className: 'pgw-row__where', title: where }, where),
-      from ? h('span', { className: 'pgw-row__from', title: from }, from) : h('span', { className: 'pgw-row__from' }, ''),
-      right,
-      h('span', { className: 'pgw-row__time', title: tr('recent.restoredHint') }, tr('recent.restored', { n: r.restored })),
-    ),
-    props.open
-      ? h(
-          'div',
-          { className: 'pgw-detail' },
-          r.exfil ? h('div', { className: 'pgw-warn pgw-warn--error' }, tr('recent.exfil', { hosts: (r.exfilHosts ?? []).join(', ') })) : null,
-          r.values.length === 0
-            ? h('div', { className: 'pgw-empty' }, tr('recent.noValues'))
-            : h(
-                'table',
-                null,
-                h('thead', null, h('tr', null, ...(['col.placeholder', 'col.kind', 'col.finder', 'col.head', 'col.len', 'col.n', 'col.action'] as Key[]).map((k) => h('th', { key: k }, tr(k))))),
-                h(
-                  'tbody',
-                  null,
-                  r.values.map((v) =>
-                    h(
-                      'tr',
-                      { key: v.placeholder },
-                      h('td', null, v.placeholder),
-                      h('td', null, v.kind),
-                      h('td', null, v.finder),
-                      h('td', null, hintOf(v)),
-                      h('td', null, v.len),
-                      h('td', null, v.n),
-                      h('td', null, v.action ? tr(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
-                    ),
-                  ),
-                ),
-              ),
-          props.viewable && !viewing ? h('button', { type: 'button', className: 'pgw-btn pgw-detail__btn', onClick: () => setViewing(true) }, tr('view.open')) : null,
-          props.viewable && viewing ? h(VendorView, { ctx: props.ctx, t: tr, record: r, onClose: () => setViewing(false) }) : null,
-        )
-      : null,
-  )
-}
-
 export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessionId?: string }): ReactNode {
   const { t } = props
   const [state, reload, busy] = useOverview(props.ctx, props.sessionId)
   const [range, setRange] = useState<Range>('today')
   const [open, setOpen] = useState<number | null>(null)
   const [page, setPage] = useState(0)
+  const [notice, setNotice] = useState<{ text: string; ok: boolean } | null>(null)
   const cardClass = `pgw-card${props.panel ? ' pgw-card--panel' : ''}`
-  const head = (extra: ReactNode[]): ReactNode =>
+  const ready = state.status === 'ready' ? state.data : undefined
+  // clearing is for every session's history, so it sits on the plugin's own card only
+  const resettable = !props.sessionId && ready !== undefined
+  const head = h(
+    'div',
+    { className: 'pgw-head' },
     h(
       'div',
-      { className: 'pgw-head' },
+      { className: 'pgw-head__main' },
       props.panel ? null : h('h3', { className: 'pgw-title' }, t('card.title')),
-      props.sessionId ? h('span', { className: 'pgw-badge' }, t('panel.session')) : null,
-      ...extra,
-      h('span', { className: 'pgw-spacer' }),
-      h('button', { type: 'button', className: 'pgw-btn', onClick: reload, disabled: busy }, t('card.refresh')),
-    )
-  if (state.status !== 'ready') {
-    return h('section', { className: cardClass }, head([]), h('div', { className: 'pgw-empty' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
+      ready ? h(Tag, { tone: ready.active ? 'success' : 'warning' }, t(ready.active ? 'card.on' : 'card.off')) : null,
+      props.sessionId ? h(Tag, { tone: 'outline' }, t('panel.session')) : null,
+      ready ? h('span', { className: 'pgw-meta' }, t('card.values', { n: ready.values })) : null,
+      ready && !ready.record ? h('span', { className: 'pgw-meta' }, t('card.memoryOnly')) : null,
+    ),
+    h(
+      'div',
+      { className: 'pgw-head__actions' },
+      ready
+        ? h(SegmentedControl<Range>, {
+            id: `pgw-range-${props.sessionId ?? 'all'}`,
+            label: t('card.range'),
+            value: range,
+            options: RANGES.map((r) => ({ value: r, label: t(`range.${r}` as Key) })),
+            onChange: setRange,
+          })
+        : null,
+      h(Button, { variant: 'ghost', size: 'sm', disabled: busy, title: t('card.refresh'), 'aria-label': t('card.refresh'), onClick: reload }, h(IconRefreshOutlineRegular, { size: 14 })),
+      resettable
+        ? h(ResetButton, {
+            ctx: props.ctx,
+            t,
+            onDone: (text, ok) => {
+              setNotice({ text, ok })
+              setOpen(null)
+              setPage(0)
+              reload()
+            },
+          })
+        : null,
+    ),
+  )
+  const flash = notice ? h('div', { className: `pgw-flash${notice.ok ? '' : ' pgw-flash--error'}`, role: 'status' }, notice.text) : null
+  if (!ready) {
+    return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
   }
-  if (props.sessionId && state.data.recent.length === 0) {
-    return h('section', { className: cardClass }, head([]), h('div', { className: 'pgw-empty' }, t('panel.empty')))
+  if (props.sessionId && ready.recent.length === 0) {
+    return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, t('panel.empty')))
   }
-  const o = state.data
+  const o = ready
   const totals = o.stats[range]
-  const time = took(totals)
   const viewable = new Set(o.vendorView ? (o.views ?? []) : [])
   const shown = pageOf(o.recent, page, PAGE_SIZE)
   const go = (to: number): void => {
@@ -188,18 +117,10 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
   return h(
     'section',
     { className: cardClass },
-    head([
-      h('span', { key: 'b', className: `pgw-badge pgw-badge--${o.active ? 'on' : 'off'}` }, t(o.active ? 'card.on' : 'card.off')),
-      h('span', { key: 'v', className: 'pgw-meta' }, t('card.values', { n: o.values })),
-      o.record ? null : h('span', { key: 'm', className: 'pgw-meta' }, t('card.memoryOnly')),
-    ]),
-    h(
-      'div',
-      { className: 'pgw-tabs', role: 'tablist' },
-      RANGES.map((r) => h('button', { key: r, type: 'button', role: 'tab', className: 'pgw-tab', 'aria-selected': r === range, onClick: () => setRange(r) }, t(`range.${r}` as Key))),
-    ),
-    ...warnings(o, totals).map((w) => h('div', { key: w.key, className: `pgw-warn${w.tone === 'error' ? ' pgw-warn--error' : ''}` }, t(w.key, { n: w.n }))),
-    h(Totals_, { t: totals, tr: t }),
+    head,
+    flash,
+    h(Notices, { t, items: warnings(o, totals) }),
+    h(Kpis, { totals, t }),
     h(
       'div',
       { className: 'pgw-dists' },
@@ -207,26 +128,28 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
       h(Dist, { title: t('dist.finder'), data: totals.finders, empty: t('dist.empty') }),
       h(Dist, { title: t('dist.host'), data: totals.hosts, empty: t('dist.empty') }),
     ),
-    totals.requests > 0 ? h('div', { className: 'pgw-meta' }, t('took', time)) : null,
-    h('div', { className: 'pgw-dist__title' }, t('recent.title')),
-    o.recent.length === 0
-      ? h('div', { className: 'pgw-empty' }, t('recent.empty'))
-      : h(
-          'div',
-          { className: 'pgw-list' },
-          shown.items.map((r) =>
-            h(Record_, { key: r.key, ctx: props.ctx, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), tr: t, viewable: viewable.has(r.key) }),
+    h(
+      'div',
+      { className: 'pgw-section' },
+      h('div', { className: 'pgw-section__head' }, h('span', { className: 'pgw-section__title' }, t('recent.title')), o.recent.length > 0 ? h('span', { className: 'pgw-meta' }, t('recent.count', { n: o.recent.length })) : null),
+      o.recent.length === 0
+        ? h('div', { className: 'pgw-empty pgw-empty--block' }, t('recent.empty'))
+        : h(
+            'div',
+            { className: 'pgw-recs', role: 'table' },
+            h(RecordHead, { t }),
+            shown.items.map((r) => h(RecordRow, { key: r.key, ctx: props.ctx, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), t, viewable: viewable.has(r.key) })),
           ),
-        ),
-    shown.pages > 1
-      ? h(
-          'div',
-          { className: 'pgw-pager' },
-          h('button', { type: 'button', className: 'pgw-btn', disabled: shown.page === 0, onClick: () => go(0) }, t('page.first')),
-          h('button', { type: 'button', className: 'pgw-btn', disabled: shown.page === 0, onClick: () => go(shown.page - 1) }, t('page.prev')),
-          h('span', { className: 'pgw-meta' }, t('page.of', { page: shown.page + 1, pages: shown.pages, n: o.recent.length })),
-          h('button', { type: 'button', className: 'pgw-btn', disabled: shown.page >= shown.pages - 1, onClick: () => go(shown.page + 1) }, t('page.next')),
-        )
-      : null,
+      shown.pages > 1
+        ? h(
+            'div',
+            { className: 'pgw-pager' },
+            h(Button, { variant: 'ghost', size: 'sm', disabled: shown.page === 0, onClick: () => go(0) }, t('page.first')),
+            h(Button, { variant: 'ghost', size: 'sm', disabled: shown.page === 0, 'aria-label': t('page.prev'), title: t('page.prev'), onClick: () => go(shown.page - 1) }, h(IconChevronLeftOutlineRegular, { size: 14 })),
+            h('span', { className: 'pgw-meta pgw-pager__at' }, t('page.at', { page: shown.page + 1, pages: shown.pages })),
+            h(Button, { variant: 'ghost', size: 'sm', disabled: shown.page >= shown.pages - 1, 'aria-label': t('page.next'), title: t('page.next'), onClick: () => go(shown.page + 1) }, h(IconChevronRightOutlineRegular, { size: 14 })),
+          )
+        : null,
+    ),
   )
 }

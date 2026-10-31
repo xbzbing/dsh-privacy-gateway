@@ -250,3 +250,30 @@ test('record turned on writes from then on and reads the days on disk once; turn
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('reset clears memory, the sums and every day file, and leaves other files', async () => {
+  const dir = tmp()
+  try {
+    const a = store(dir)
+    a.add(record(new Date(), { n: 3 }))
+    a.add(record(new Date(Date.now() - 2 * 86400_000), { n: 5 }))
+    await a.flush()
+    writeFileSync(join(dir, 'notes.txt'), 'keep me')
+    a.add(record(new Date(), { n: 7 }))
+    const r = await a.reset()
+    assert.ok(r.files >= 1)
+    assert.equal(a.recent().length, 0)
+    assert.equal(a.stats().month.n, 0)
+    assert.deepEqual(readdirSync(dir), ['notes.txt'])
+    // what comes after is kept and written as before
+    a.add(record(new Date(), { n: 11 }))
+    await a.flush()
+    assert.equal(a.stats().today.n, 11)
+    // a store with writing off clears the directory it is given
+    const off = store(undefined)
+    assert.equal((await off.reset(dir)).files, 1)
+    assert.deepEqual(readdirSync(dir), ['notes.txt'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

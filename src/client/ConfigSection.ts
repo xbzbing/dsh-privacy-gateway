@@ -184,7 +184,7 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
     { className: 'pgw-cfg' },
     // the row page carries its own heading; the inline section on the bundle page needs one
     props.form ? null : h('h3', { className: 'pgw-title' }, t('cfg.title')),
-    failed ? h('div', { className: 'pgw-warn pgw-warn--error', role: 'alert' }, t('cfg.failed')) : null,
+    failed ? h('div', { className: 'pgw-notice pgw-notice--error', role: 'alert' }, t('cfg.failed')) : null,
     GROUPS.map(group),
     h('div', { className: 'pgw-cfg__desc' }, t('cfg.applies')),
     h('div', { className: 'pgw-cfg__desc' }, t('cfg.others')),

@@ -63,10 +63,42 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     onClick?(): void
     children?: ReactNode
     className?: string
+    title?: string
+    'aria-label'?: string
   }): JSX.Element
   /** The themed native input: every `<input>` attribute passes through. */
   export function Input(props: import('react').InputHTMLAttributes<HTMLInputElement> & { className?: string }): JSX.Element
   /** A small label pill. */
-  export function Tag(props: { tone?: 'neutral' | 'outline' | 'solid'; className?: string; title?: string; children?: ReactNode }): JSX.Element
+  export function Tag(props: { tone?: 'neutral' | 'outline' | 'solid' | 'success' | 'warning' | 'danger' | 'info'; className?: string; title?: string; children?: ReactNode }): JSX.Element
   export const IconCloseOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconRefreshOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconTrashOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconWarningOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconChevronRightOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconChevronLeftOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  /** A row of mutually exclusive options. */
+  export function SegmentedControl<V extends string>(props: {
+    id: string
+    label?: string
+    value: V
+    disabled?: boolean
+    options: ReadonlyArray<{ value: V; label: ReactNode; title?: string; disabled?: boolean }>
+    onChange(next: V): void
+    className?: string
+  }): JSX.Element
+  /** The shell's confirmation for a risky step: an acknowledgement box gates the confirm button. */
+  export function RiskConfirmation(props: {
+    open: boolean
+    title: string
+    description: ReactNode
+    acknowledgeLabel: string
+    cancelLabel: string
+    closeLabel: string
+    confirmLabel: string
+    acknowledged: boolean
+    disabled?: boolean
+    onAcknowledgedChange(next: boolean): void
+    onCancel(): void
+    onConfirm(): void
+  }): JSX.Element
 }

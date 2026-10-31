@@ -79,7 +79,7 @@ The head keeps a few characters to recognize it by: a key with a prefix keeps th
 
 Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
 
-The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. With `showPanel` on, the same view is a Privacy tab at the top of the session, counting only that session.
+The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. The card's Clear data button, once its confirmation box is checked, deletes the records, counts and record files of every session; this cannot be undone ([ADR-0022](docs/adr/0022-reset.md)). With `showPanel` on, the same view is a Privacy tab at the top of the session, counting only that session.
 
 With `vendorView` on, a record's details have a Vendor view button: on the right the body the vendor got, on the left the same body with each replaced place shown as a "kind · head · length" marker; by default only the lines with replacements are listed. Neither side has a value in it; a value a warn action sent as written is a placeholder in the copy too.
 
