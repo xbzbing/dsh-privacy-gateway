@@ -153,7 +153,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                             'td',
                             { colSpan: 7 },
                             v.at ? h(Tag, { tone: 'neutral', className: 'pgw-ctx__place', title: v.at.path }, t(placeKey(v.at))) : null,
-                            h('span', { className: 'pgw-ctx__text pgw-mono', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark' }, v.placeholder), v.after ?? ''),
+                            h('span', { className: 'pgw-ctx__text', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark pgw-mono' }, v.placeholder), v.after ?? ''),
                           ),
                         )
                       : null,
