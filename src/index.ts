@@ -60,6 +60,8 @@ const COMMAND_TEXT = {
 export const name = 'dsh-privacy-gateway'
 
 export { Config } from './config.ts'
+/** The composition contract other dispatcher plugins rely on (docs/adr/0012). */
+export type { ChainOptions, LayerInfo, LayerRole, MaskingDispatcher } from './dispatcher.ts'
 
 export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): void {
   const cfg = resolveConfig(config)

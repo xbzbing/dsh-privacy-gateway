@@ -101,6 +101,7 @@ For CI and releases see [ADR-0007](docs/adr/0007-release-process.md) and [.githu
 - State lives in `~/.dsh/privacy-gateway/`; the `DSH_PRIVACY_GATEWAY_HOME` environment variable moves it.
 - The config schema holds no `.transform()` or other callback-bearing node.
 - `scripts` declares no install-time lifecycle script.
+- Other dispatcher plugins join under the gateway through the composition contract of [ADR-0012](docs/adr/0012-dispatcher-composition.md) (`chainTo`, `below`, `release`, `downstreams`).
 - Architecture decisions are recorded in [docs/adr/](docs/adr/README.md).
 - `README.en.md` follows `README.md` item by item.
 

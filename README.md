@@ -101,6 +101,7 @@ CI 与发布见 [ADR-0007](docs/adr/0007-release-process.md) 和 [.github/RELEAS
 - 状态目录 `~/.dsh/privacy-gateway/`，可用环境变量 `DSH_PRIVACY_GATEWAY_HOME` 改。
 - 配置 schema 里不放 `.transform()` 或任何带回调的节点。
 - `scripts` 里不挂安装期生命周期脚本。
+- 其它 dispatcher 插件挂到网关下游时，按 [ADR-0012](docs/adr/0012-dispatcher-composition.md) 的合成契约（`chainTo`、`below`、`release`、`downstreams`）。
 - 架构决策记在 [docs/adr/](docs/adr/README.md)。
 - `README.en.md` 逐条跟随本文件。
 

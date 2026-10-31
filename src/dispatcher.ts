@@ -31,9 +31,9 @@ const wrapHandler = (Dispatcher1Wrapper as unknown as { wrapHandler(h: unknown):
 const utf8 = new TextDecoder('utf-8', { fatal: true })
 
 /**
- * Marks a request the gateway passed on, with the index of the downstream
- * dispatcher it went to. Object spread copies it, so a dispatcher on top of
- * the gateway that sends the request back through it is recognised.
+ * Marks a request the gateway passed on, with the layer it went to. Object
+ * spread copies it, so a layer on top of the gateway that sends the request
+ * back through it is recognised.
  */
 const kHop = Symbol('dsh-privacy-gateway.hop')
 
@@ -305,65 +305,140 @@ function isClosed(d: Dispatcher): boolean {
 }
 
 /**
+ * Where a layer under the gateway goes (docs/adr/0012). `route` layers choose
+ * where a request goes (oc2dsh's egress pool) and come first; `proxy` layers
+ * make the connection (dsh-http-proxy's agent, the dispatcher the gateway was
+ * installed on) and come last. Within a role the layer chained last comes
+ * first.
+ */
+export type LayerRole = 'route' | 'proxy'
+
+export interface ChainOptions {
+  /** Default `route` for a layer new to the chain; a layer already in it keeps its role unless one is given. */
+  role?: LayerRole
+}
+
+/** One layer under the gateway, as `downstreams()` lists it. */
+export interface LayerInfo {
+  readonly dispatcher: Dispatcher
+  readonly role: LayerRole
+  readonly closed: boolean
+}
+
+interface Layer {
+  d: Dispatcher
+  role: LayerRole
+  seq: number
+}
+
+const RANK: Record<LayerRole, number> = { route: 0, proxy: 1 }
+
+/**
  * The gateway: an undici dispatcher chained in front of whatever dispatcher
  * was global before it (docs/adr/0001). A POST whose body is a JSON model
  * request goes on masked, its reply restored; everything else goes on
  * untouched. Masking that throws fails the request instead of sending it
- * (docs/adr/0005).
+ * (docs/adr/0005). The layers under it are ordered by role (docs/adr/0012).
  */
 export class MaskingDispatcher extends Dispatcher {
   readonly #engine: RedactionEngine
   readonly #excludeHosts: readonly string[]
   readonly #logger: GatewayLogger | undefined
-  /** Downstream dispatchers, newest last; one closed under us is skipped for the one before it. */
-  #downstream: Dispatcher[]
+  #layers: Layer[]
+  #seq = 0
+  #order: Layer[] | undefined
   /** Set once the gateway is disposed while another dispatcher sits on top of it: every request passes through. */
   bypass = false
+  /** Run before each request: installGateway puts the gateway back on top if it was replaced. */
+  heal: (() => void) | undefined
 
   constructor(downstream: Dispatcher, engine: RedactionEngine, options: MaskingDispatcherOptions = {}) {
     super()
-    this.#downstream = [downstream]
+    this.#layers = [{ d: downstream, role: 'proxy', seq: 0 }]
     this.#engine = engine
     this.#excludeHosts = options.excludeHosts ?? []
     this.#logger = options.logger
   }
 
-  /** Puts `d` downstream of the gateway (it replaced the gateway as the global dispatcher). */
-  chainTo(d: Dispatcher): void {
-    if (d === this || this.#downstream.includes(d)) return
-    this.#downstream.push(d)
-  }
-
-  /** The newest downstream dispatcher below index `below` that is still open, or the oldest one. */
-  #pick(below = this.#downstream.length): number {
-    for (let i = Math.min(below, this.#downstream.length) - 1; i >= 0; i--) {
-      if (!isClosed(this.#downstream[i] as Dispatcher)) return i
+  /**
+   * Puts `d` under the gateway, by its role. Chaining a layer already there
+   * again makes it the first of its role, with the role given if one is.
+   */
+  chainTo(d: Dispatcher, options: ChainOptions = {}): void {
+    if (d === (this as Dispatcher)) return
+    const had = this.#layers.find((l) => l.d === d)
+    if (had) {
+      had.seq = ++this.#seq
+      if (options.role) had.role = options.role
+    } else {
+      this.#layers.push({ d, role: options.role ?? 'route', seq: ++this.#seq })
     }
-    return 0
+    this.#order = undefined
   }
 
-  /** The dispatcher requests go on to. */
+  /** Puts a dispatcher found on top of the gateway under it, as a `proxy` layer; one already there stays where it is. */
+  adopt(d: Dispatcher): void {
+    if (d === (this as Dispatcher) || this.#layers.some((l) => l.d === d)) return
+    this.chainTo(d, { role: 'proxy' })
+  }
+
+  /** Takes `d` out from under the gateway; the last layer stays. True when it was there. */
+  release(d: Dispatcher): boolean {
+    const i = this.#layers.findIndex((l) => l.d === d)
+    if (i < 0 || this.#layers.length === 1) return false
+    this.#layers.splice(i, 1)
+    this.#order = undefined
+    return true
+  }
+
+  #ordered(): Layer[] {
+    return (this.#order ??= [...this.#layers].sort((a, b) => RANK[a.role] - RANK[b.role] || b.seq - a.seq))
+  }
+
+  /** The first open layer after `after` in the order (from the top when absent), or undefined. */
+  #next(after?: Dispatcher): Dispatcher | undefined {
+    const order = this.#ordered()
+    let i = after === undefined ? 0 : order.findIndex((l) => l.d === after) + 1
+    // `after` not there (released while a request was on its way through it): from the top
+    for (; i < order.length; i++) {
+      const l = order[i] as Layer
+      if (l.d !== after && !isClosed(l.d)) return l.d
+    }
+    return undefined
+  }
+
+  /** The dispatcher requests go on to: the first open layer, or the last one when all are closed. */
   downstream(): Dispatcher {
-    return this.#downstream[this.#pick()] as Dispatcher
+    return this.#next() ?? (this.#ordered().at(-1) as Layer).d
+  }
+
+  /** The layer a request goes on to after `d`, the next open one in the order; undefined after the last. */
+  below(d: Dispatcher): Dispatcher | undefined {
+    return this.#next(d)
+  }
+
+  /** The layers under the gateway, in the order requests try them. */
+  downstreams(): readonly LayerInfo[] {
+    return this.#ordered().map((l) => ({ dispatcher: l.d, role: l.role, closed: isClosed(l.d) }))
   }
 
   override dispatch(opts: Options, handler: Handler): boolean {
-    const hop = (opts as Options & { [kHop]?: number })[kHop]
+    const hop = (opts as Options & { [kHop]?: Dispatcher })[kHop]
     if (hop !== undefined) {
-      // back through a downstream dispatcher that sits on top of the gateway
-      // (one composed from it, or one that captured it as its own previous):
-      // the request was handled on its way in, so it goes on to the one
-      // below, never round again
-      if (hop === 0) {
-        failRequest(wrapHandler(handler), new PrivacyGatewayError('dispatcher loop: the oldest downstream dispatcher routes back to the gateway'))
+      // back through a layer that sits on top of the gateway (one composed
+      // from it, or one that captured it as its own previous): the request
+      // was handled on its way in, so it goes on to the layer after that one,
+      // never round again
+      const next = this.#next(hop)
+      if (next === undefined) {
+        failRequest(wrapHandler(handler), new PrivacyGatewayError('dispatcher loop: the last layer under the gateway routes back to it'))
         return true
       }
-      const i = this.#pick(hop)
-      return (this.#downstream[i] as Dispatcher).dispatch({ ...opts, [kHop]: i } as Options, handler)
+      return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
     }
-    const i = this.#pick()
-    const next = this.#downstream[i] as Dispatcher
-    if (this.bypass || !this.#candidate(opts)) return next.dispatch({ ...opts, [kHop]: i } as Options, handler)
+    if (!this.bypass) this.heal?.()
+    const next = this.downstream()
+    if (this.bypass || !this.#candidate(opts)) return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
     void this.#intercept(opts, wrapHandler(handler))
     return true
   }
@@ -428,11 +503,11 @@ export class MaskingDispatcher extends Dispatcher {
       }
     }
     const body = exchange === null || exchange.text === text ? raw : Buffer.from(exchange.text, 'utf8')
-    const i = this.#pick()
-    const next = { ...opts, body, headers: withContentLength(opts.headers, body.length), [kHop]: i } as Options
+    const to = this.downstream()
+    const next = { ...opts, body, headers: withContentLength(opts.headers, body.length), [kHop]: to } as Options
     const h = exchange === null ? handler : new RestoringHandler(handler, exchange, this.#logger)
     try {
-      ;(this.#downstream[i] as Dispatcher).dispatch(next, h)
+      to.dispatch(next, h)
     } catch (err) {
       exchange?.finish()
       failRequest(handler, err instanceof Error ? err : new Error(String(err)))
@@ -446,7 +521,7 @@ export class MaskingDispatcher extends Dispatcher {
 const LEGACY_GLOBAL = Symbol.for('undici.globalDispatcher.1')
 
 export interface GatewayInstallOptions extends MaskingDispatcherOptions {
-  /** How often to check the gateway is still the global dispatcher; 0 turns the check off. Default 60 s. */
+  /** How often to check the gateway is still the global dispatcher; 0 turns the timer off. Default 1 s. */
   checkIntervalMs?: number
 }
 
@@ -477,17 +552,23 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
     const current = getGlobalDispatcher()
     const legacyNow = slots[LEGACY_GLOBAL]
     if (current === gateway && legacyNow === legacy) return false
-    if (current !== gateway) gateway.chainTo(current)
+    if (current !== gateway) gateway.adopt(current)
     // set through an older undici: only the legacy slot moved
     else if (legacyNow instanceof Dispatcher || typeof (legacyNow as Dispatcher | undefined)?.dispatch === 'function') {
-      gateway.chainTo(legacyNow as Dispatcher)
+      gateway.adopt(legacyNow as Dispatcher)
     }
     put()
     options.logger?.warn('dsh-privacy-gateway: another dispatcher replaced the gateway; chained it downstream and reinstalled')
     return true
   }
 
-  const interval = options.checkIntervalMs ?? 60_000
+  // a request through the gateway checks first; the timer covers a gateway replaced
+  // by one that sends it nothing, whose requests go unmasked until it runs
+  gateway.heal = () => {
+    if (getGlobalDispatcher() !== gateway) check()
+  }
+
+  const interval = options.checkIntervalMs ?? 1_000
   const timer = interval > 0 ? setInterval(check, interval) : undefined
   timer?.unref()
 
@@ -499,6 +580,7 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
       if (disposed) return
       disposed = true
       if (timer) clearInterval(timer)
+      gateway.heal = undefined
       if (getGlobalDispatcher() === gateway) setGlobalDispatcher(gateway.downstream())
       else gateway.bypass = true
     },

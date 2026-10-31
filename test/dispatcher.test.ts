@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { gzipSync } from 'node:zlib'
 
-import { Agent, getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from 'undici'
+import { Agent, Dispatcher, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { defaults } from '../src/config.ts'
 import { installGateway, MaskingDispatcher, type InstalledGateway } from '../src/dispatcher.ts'
@@ -259,6 +259,119 @@ test('dispose with another dispatcher on top leaves the gateway passing everythi
     assert.equal(o.seen[0]?.body, chat(OPENAI))
   } finally {
     setGlobalDispatcher(before)
+    await o.close()
+  }
+})
+
+/** A route layer as oc2dsh's pool would be: it sends each request on to the layer the gateway has after it. */
+class RouteLayer extends Dispatcher {
+  count = 0
+  closed = false
+  readonly gateway: MaskingDispatcher
+  constructor(gateway: MaskingDispatcher) {
+    super()
+    this.gateway = gateway
+  }
+  override dispatch(opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+    this.count++
+    const next = this.gateway.below(this)
+    if (!next) throw new Error('no layer after the route layer')
+    return next.dispatch(opts, handler)
+  }
+  override close(): Promise<void> {
+    this.closed = true
+    return Promise.resolve()
+  }
+  override destroy(): Promise<void> {
+    return this.close()
+  }
+}
+
+test('layers go by role: route layers before proxy layers, whichever was installed first', async () => {
+  const o = await origin((_s, res) => res.end('{}'))
+  const proxy = new CountingAgent()
+  try {
+    await withGateway(async (g) => {
+      const base = g.dispatcher.downstream()
+      const route = new RouteLayer(g.dispatcher)
+      g.dispatcher.chainTo(route) // oc2dsh joins: a route layer by default
+      setGlobalDispatcher(proxy) // dsh-http-proxy installs after it
+      g.check()
+      assert.equal(g.dispatcher.downstream(), route, 'the route layer is still the next hop')
+      assert.equal(g.dispatcher.below(route), proxy, 'and the proxy is the one after it')
+      assert.deepEqual(g.dispatcher.downstreams().map((l) => [l.dispatcher, l.role]), [[route, 'route'], [proxy, 'proxy'], [base, 'proxy']])
+      await (await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })).text()
+      assert.equal(route.count, 1)
+      assert.equal(proxy.count, 1, 'the user’s proxy policy still applies')
+      // a third plugin replacing the slot goes in as a proxy layer: the route layer keeps its place
+      const third = new CountingAgent()
+      setGlobalDispatcher(third)
+      g.check()
+      assert.equal(g.dispatcher.downstream(), route)
+      assert.equal(g.dispatcher.below(route), third)
+      await third.close()
+    })
+    assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
+  } finally {
+    await proxy.close()
+    await o.close()
+  }
+})
+
+test('chaining a layer again puts it first in its role; release takes it out; a closed one is skipped', async () => {
+  await withGateway(async (g) => {
+    const base = g.dispatcher.downstream()
+    const a = new RouteLayer(g.dispatcher)
+    const b = new RouteLayer(g.dispatcher)
+    g.dispatcher.chainTo(a)
+    g.dispatcher.chainTo(b)
+    assert.equal(g.dispatcher.downstream(), b)
+    g.dispatcher.chainTo(a)
+    assert.equal(g.dispatcher.downstream(), a)
+    g.dispatcher.chainTo(a, { role: 'proxy' })
+    assert.equal(g.dispatcher.downstream(), b)
+    assert.equal(g.dispatcher.below(b), a)
+    await b.close()
+    assert.equal(g.dispatcher.downstream(), a)
+    assert.equal(g.dispatcher.release(b), true)
+    assert.equal(g.dispatcher.release(b), false)
+    assert.equal(g.dispatcher.release(a), true)
+    assert.deepEqual(g.dispatcher.downstreams().map((l) => l.dispatcher), [base])
+    assert.equal(g.dispatcher.release(base), false, 'the last layer stays')
+    assert.equal(g.dispatcher.below(base), undefined)
+  })
+})
+
+test('a gateway replaced by a dispatcher that sends it nothing is back on top within the check interval', async () => {
+  const o = await origin((_s, res) => res.end('{}'))
+  const before = getGlobalDispatcher()
+  const gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 20, logger: { warn() {} } })
+  const other = new CountingAgent()
+  try {
+    setGlobalDispatcher(other)
+    await new Promise((r) => setTimeout(r, 80))
+    assert.equal(getGlobalDispatcher(), gateway.dispatcher)
+    await (await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })).text()
+    assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
+    assert.equal(other.count, 1)
+  } finally {
+    gateway.dispose()
+    setGlobalDispatcher(before)
+    await other.close()
+    await o.close()
+  }
+})
+
+test('a request through a layer put on top of the gateway puts the gateway back on top', async () => {
+  const o = await origin((_s, res) => res.end('{}'))
+  try {
+    await withGateway(async (g) => {
+      setGlobalDispatcher(g.dispatcher.compose((dispatch) => dispatch))
+      await (await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })).text()
+      assert.equal(getGlobalDispatcher(), g.dispatcher)
+    })
+    assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
+  } finally {
     await o.close()
   }
 })
