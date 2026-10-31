@@ -2,7 +2,7 @@
 
 dsh-privacy-gateway 是 DSH 的进程级脱敏网关（Cordis 插件，host + client 两半）。host 端把一个 undici dispatcher 挂在全局 dispatcher 前面：发往模型服务的请求里，密钥、凭据、个人信息和自定义敏感词换成占位符；回复里的占位符再换回原值。所有 provider 都经过它。ESM（`"type": "module"`）、TypeScript、Node >= 22.19、pnpm。
 
-设计文档在 `docs/local/privacy-gateway-design.md`（gitignore，不入库）；每个决策都有 ADR，见 [docs/adr/README.md](docs/adr/README.md)。改行为前先读相关 ADR。
+每个决策都有 ADR，见 [docs/adr/README.md](docs/adr/README.md)。改行为前先读相关 ADR。
 
 ## 仓库布局
 
