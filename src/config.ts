@@ -109,6 +109,8 @@ export interface PrivacyGatewayConfig {
   keepRecords?: number
   /** Keep in memory what the vendor got for the latest recorded requests, for the side-by-side view (docs/adr/0016). */
   vendorView?: boolean
+  /** Each value in a record keeps where it was and about 32 characters each side, as sent (docs/adr/0024). */
+  recordContext?: boolean
   /**
    * Offer a Privacy tab in the session's right sidebar (docs/adr/0017).
    * Volatile: cordis hands it over as a live reference the detail page's
@@ -139,6 +141,7 @@ export const Config = Schema.object({
   keepMegabytes: Schema.number().step(1).min(1).default(100),
   keepRecords: Schema.number().step(1).min(10).default(500),
   vendorView: Schema.boolean().default(false).volatile(),
+  recordContext: Schema.boolean().default(true).volatile(),
   // volatile: the configuration page edits these live, without remounting the gateway (docs/adr/0017, 0021)
   showPanel: Schema.boolean().default(false).volatile().description(SHOW_PANEL_DESCRIPTION),
 }) as unknown as Schema<PrivacyGatewayConfig>
@@ -146,7 +149,7 @@ export const Config = Schema.object({
 export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders'>> & { showPanel: boolean; excludeProviders: string[] }
 
 /** The volatile fields the gateway rebuilds its rules and stores from (showPanel and excludeProviders are read where they are used). */
-export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'record', 'keepDays', 'vendorView'] as const
+export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
 
 /** A string that changes when one of LIVE_FIELDS does. */
 export function liveMark(cfg: ResolvedConfig): string {
@@ -174,6 +177,7 @@ export const defaults: ResolvedConfig = {
   keepMegabytes: 100,
   keepRecords: 500,
   vendorView: false,
+  recordContext: true,
   showPanel: false,
 }
 
@@ -227,6 +231,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     keepMegabytes: int(c.keepMegabytes, 1, defaults.keepMegabytes),
     keepRecords: int(c.keepRecords, 10, defaults.keepRecords),
     vendorView: bool(c.vendorView, defaults.vendorView),
+    recordContext: bool(c.recordContext, defaults.recordContext),
     showPanel: bool(c.showPanel, defaults.showPanel),
   }
 }

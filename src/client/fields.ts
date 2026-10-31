@@ -21,7 +21,7 @@ interface Base<K extends string> {
 }
 
 export type FieldSpec =
-  | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'record' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
+  | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
   | (Base<'toolGuard'> & { kind: 'choice'; choices: readonly string[]; default: string })
   | (Base<'words' | 'allow'> & { kind: 'list'; default: readonly string[]; anyCase: boolean })
   | (Base<'keepDays'> & { kind: 'count'; min: number; default: number })
@@ -40,6 +40,7 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'allow', group: 'lists', kind: 'list', default: [], anyCase: true, half: true },
   { key: 'record', group: 'record', kind: 'switch', default: true, half: true },
   { key: 'keepDays', group: 'record', kind: 'count', min: 1, default: 30, half: true },
+  { key: 'recordContext', group: 'record', kind: 'switch', default: true },
   { key: 'vendorView', group: 'record', kind: 'switch', default: false },
   { key: 'showPanel', group: 'view', kind: 'switch', default: false },
   { key: 'excludeProviders', group: 'view', kind: 'providers', default: [] },

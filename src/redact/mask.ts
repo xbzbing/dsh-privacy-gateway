@@ -24,6 +24,15 @@ export interface MaskOptions {
   actions?: Readonly<Record<string, 'warn' | 'block'>>
   /** A secret goes as a made-up key of its own form, not a placeholder, where it can (docs/adr/0015). */
   shape?: boolean
+  /** Each hit of a request body says where it was and the text around it, as sent (docs/adr/0024). */
+  context?: boolean
+}
+
+/** Where in a request body a value was: the string's dotted path, and the role and block type around it. */
+export interface Place {
+  path: string
+  role?: string
+  type?: string
 }
 
 /** One value masked, as the record keeps it: never the value itself. */
@@ -38,6 +47,38 @@ export interface Hit {
   len: number
   /** Not masked: sent as written (warn) or the request stopped (block). The placeholder is the one it would have had. */
   action?: 'warn' | 'block'
+  /** The text just before and after it as it went, every value found there already its placeholder (docs/adr/0024). */
+  before?: string
+  after?: string
+  /** Where in the request body it was. */
+  at?: Place
+}
+
+/** How many characters of context each side keeps. */
+export const CONTEXT_CHARS = 32
+
+/** The last (`end`) or first `n` characters of `s` with its runs of white space made one space. */
+export function clip(s: string, n: number, end: boolean): string {
+  const flat = s.replace(/\s+/g, ' ')
+  const chars = [...flat]
+  if (chars.length <= n) return flat
+  return end ? `…${chars.slice(-n).join('')}` : `${chars.slice(0, n).join('')}…`
+}
+
+/** The role and block type of the objects along `path` in `doc`, the innermost of each. */
+export function placeOf(doc: unknown, path: string): Place {
+  const place: Place = { path }
+  let node: unknown = doc
+  for (const seg of path.split('.')) {
+    if (typeof node !== 'object' || node === null) break
+    if (!Array.isArray(node)) {
+      const o = node as Record<string, unknown>
+      if (typeof o.role === 'string') place.role = o.role
+      if (typeof o.type === 'string') place.type = o.type
+    }
+    node = (node as Record<string, unknown>)[seg]
+  }
+  return place
 }
 
 export interface MaskResult {
@@ -152,6 +193,8 @@ interface Pass {
   preview: boolean
   hits: Hit[]
   warned?: Array<[string, string]>
+  /** The string being masked is at this place; set while maskJSON keeps context. */
+  at?: Place
 }
 
 /**
@@ -264,6 +307,20 @@ export class Masker {
     let last = 0
     let next = 0
     let n = 0
+    // the string as it went, but with a warned value as its placeholder too: the context is cut from it
+    const context = pass.at !== undefined
+    const safe: string[] = []
+    let safeLen = 0
+    let safeLast = 0
+    const marks: Array<{ hit: Hit; at: number; len: number }> = []
+    const mark = (hit: Hit, start: number, end: number, shown: string): void => {
+      if (!context) return
+      const piece = raw.slice(safeLast, start)
+      safe.push(piece, shown)
+      marks.push({ hit, at: safeLen + piece.length, len: shown.length })
+      safeLen += piece.length + shown.length
+      safeLast = end
+    }
     for (const f of found) {
       if (f.start < next) continue
       next = f.end
@@ -274,16 +331,32 @@ export class Masker {
       const h = hint(f.kind, v, PERSONAL_KINDS.has(f.kind))
       if (action !== undefined) {
         const tag = tagOf(this.#key, f.kind, v)
-        pass.hits.push({ placeholder: tag, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len, action })
+        const hit: Hit = { placeholder: tag, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len, action }
+        pass.hits.push(hit)
+        mark(hit, f.start, f.end, tag)
         if (action === 'warn' && pass.warned) pass.warned.push([written, tag])
         // a preview never shows a value: it has the placeholder there still
         if (!pass.preview) continue
       }
       const p = action === undefined ? this.#standIn(f.kind, v, pass.preview) : { text: tagOf(this.#key, f.kind, v), id: '' }
-      out.push(raw.slice(last, f.start), f.bare ? `"${p.text}"` : p.text)
-      if (action === undefined) pass.hits.push({ placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len })
+      const text = f.bare ? `"${p.text}"` : p.text
+      out.push(raw.slice(last, f.start), text)
+      if (action === undefined) {
+        const hit: Hit = { placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len }
+        pass.hits.push(hit)
+        mark(hit, f.start, f.end, text)
+      }
       last = f.end
       n++
+    }
+    if (context && marks.length > 0) {
+      safe.push(raw.slice(safeLast))
+      const all = safe.join('')
+      for (const m of marks) {
+        m.hit.before = clip(all.slice(Math.max(0, m.at - CONTEXT_CHARS * 4), m.at), CONTEXT_CHARS, true)
+        m.hit.after = clip(all.slice(m.at + m.len, m.at + m.len + CONTEXT_CHARS * 4), CONTEXT_CHARS, false)
+        if (pass.at) m.hit.at = pass.at
+      }
     }
     if (n === 0) return { text: raw, n: 0 }
     out.push(raw.slice(last))
@@ -313,6 +386,7 @@ export class Masker {
     const out = walkJSON(body, (path, key, s) => {
       if (protectTools && under(path, TOOL_ROOTS)) return s
       if (keepIn(path, key, s, args, defs)) return s
+      if (this.#options.context) pass.at = placeOf(doc, path)
       const r = this.#mask(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [], pass)
       n += r.n
       return r.text

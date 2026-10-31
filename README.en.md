@@ -34,7 +34,7 @@ In the default web profile a first install takes effect immediately, with no res
 
 ## Configuration
 
-The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `words`, `allow`, `record`, `keepDays`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in `cordis.patch.yml`.
+The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in `cordis.patch.yml`.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -55,6 +55,7 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `maxValues` | `5000` | Size of the in-memory value table; when full, the oldest half is dropped |
 | `record` | `true` | Write the masking records to disk; when off, the statistics stay in memory |
 | `keepDays` | `30` | Days of records kept |
+| `recordContext` | `true` | Each value in a record keeps where it was (a user message, a tool result and so on) and about 32 characters each side, taken from what was sent, with every masked value a placeholder ([ADR-0024](docs/adr/0024-record-context.md)) |
 | `keepMegabytes` | `100` | Megabytes of records kept; past it, the oldest days are deleted |
 | `keepRecords` | `500` | Latest records kept in memory |
 | `vendorView` | `false` | Keep in memory the body each recorded request went out with, for the side-by-side view in the statistics card; at most 100 bodies and 64 MiB in all, never on disk ([ADR-0016](docs/adr/0016-vendor-view.md)) |

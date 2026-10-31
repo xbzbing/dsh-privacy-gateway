@@ -113,6 +113,20 @@ export function pageOf<T>(items: readonly T[], page: number, size: number): { it
   return { items: items.slice(at * size, at * size + size), page: at, pages }
 }
 
+export type PlaceKey = 'place.system' | 'place.toolResult' | 'place.toolCall' | 'place.user' | 'place.assistant' | 'place.other'
+
+/** What part of the conversation a value was in, read from its place in the request body (docs/adr/0024). */
+export function placeKey(at: { path: string; role?: string; type?: string }): PlaceKey {
+  const { path, role, type } = at
+  const root = path.split('.')[0] ?? ''
+  if (role === 'system' || role === 'developer' || root === 'system' || root === 'instructions' || root === 'systemInstruction') return 'place.system'
+  if (role === 'tool' || type === 'tool_result' || type === 'function_call_output' || type === 'functionResponse') return 'place.toolResult'
+  if (type === 'tool_use' || type === 'function_call' || /(^|\.)(tool_calls|function_call)(\.|$)/.test(path) || path.endsWith('.arguments')) return 'place.toolCall'
+  if (role === 'user') return 'place.user'
+  if (role === 'assistant' || role === 'model') return 'place.assistant'
+  return 'place.other'
+}
+
 /** A value's hint as the records keep it: its head, then its tail where the record spared one (docs/adr/0019). */
 export function hintOf(v: { head?: string; tail?: string }): string {
   if (!v.head) return ''

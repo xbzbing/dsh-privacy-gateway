@@ -34,7 +34,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 ## 配置
 
-插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`words`、`allow`、`record`、`keepDays`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 `cordis.patch.yml` 里改。
+插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 `cordis.patch.yml` 里改。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -55,6 +55,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | `maxValues` | `5000` | 内存值表上限，满了淘汰最老的一半 |
 | `record` | `true` | 脱敏记录写盘；关掉只在内存里统计 |
 | `keepDays` | `30` | 记录保留天数 |
+| `recordContext` | `true` | 记录里每个值带上它所在的位置（用户消息、工具结果等）和前后各约 32 个字符，取自发出的内容，被脱敏的值都是占位符（[ADR-0024](docs/adr/0024-record-context.md)） |
 | `keepMegabytes` | `100` | 记录总量上限（MB），超了从最老的一天删 |
 | `keepRecords` | `500` | 内存里保留的最近记录条数 |
 | `vendorView` | `false` | 在内存里留最近记录的请求实际发出的 body，统计卡里可以左右对照；最多 100 份、共 64 MiB，不落盘（[ADR-0016](docs/adr/0016-vendor-view.md)） |

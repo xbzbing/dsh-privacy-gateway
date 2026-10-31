@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 
-import { bars, isOverview, timeLabel, took, warnings } from '../src/client/view.ts'
+import { bars, isOverview, placeKey, timeLabel, took, warnings } from '../src/client/view.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { emptyTotals, type Stats } from '../src/records.ts'
 import { clampLimit, NAMESPACE, PrivacyGatewayService, type Overview } from '../src/remote.ts'
@@ -164,4 +164,16 @@ test('the settings namespace is ours by its name, its other field, or showPanel 
   assert.equal(findNamespace([{ ns: 'n0', schema: WIRE }]), 'n0')
   assert.equal(findNamespace([{ ns: 'n1', schema: { dict: { showPanel: { meta: { description: '… / Show the Privacy panel in the right sidebar' } } } } }]), 'n1')
   assert.equal(findNamespace([{ ns: 'n2', schema: { dict: { showPanel: { meta: { description: 'x' } } } } }]), undefined)
+})
+
+test('a value’s place reads as the part of the conversation it was in', () => {
+  assert.equal(placeKey({ path: 'system.0.text' }), 'place.system')
+  assert.equal(placeKey({ path: 'messages.0.content', role: 'system' }), 'place.system')
+  assert.equal(placeKey({ path: 'messages.3.content.0.content', role: 'user', type: 'tool_result' }), 'place.toolResult')
+  assert.equal(placeKey({ path: 'messages.4.content', role: 'tool' }), 'place.toolResult')
+  assert.equal(placeKey({ path: 'messages.2.tool_calls.0.function.arguments', role: 'assistant' }), 'place.toolCall')
+  assert.equal(placeKey({ path: 'messages.2.content.1.input.command', role: 'assistant', type: 'tool_use' }), 'place.toolCall')
+  assert.equal(placeKey({ path: 'messages.1.content', role: 'user' }), 'place.user')
+  assert.equal(placeKey({ path: 'messages.2.content', role: 'assistant' }), 'place.assistant')
+  assert.equal(placeKey({ path: 'prompt' }), 'place.other')
 })

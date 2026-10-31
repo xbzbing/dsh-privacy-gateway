@@ -14,7 +14,7 @@ volatile 字段改了，cordis 不重新挂载插件，只把新值放进同一�
 - 页面上放日常要改的项，按组排列：
   - 脱敏：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`
   - 词表：`words`、`allow`
-  - 记录：`record`、`keepDays`、`vendorView`
+  - 记录：`record`、`keepDays`、`recordContext`、`vendorView`
   - 标签页与 provider：`showPanel`、`excludeProviders`
 - 每组是一个可折叠的区块。折叠时标题行右侧用一行字概括该组状态（如「写盘，保留 30 天」「敏感词 2 个 · 放行 1 个」），关闭类的状态用警示色；组内有错误提示时显示「有提示，展开查看」。第一次打开只展开「脱敏」，之后展开了哪些组记在浏览器的 localStorage 里。
 - 开关、单选、天数的控件放在标题和说明右边，和设置页一致；词表和 provider 选择放在说明下方。页面宽度够时，短的项两两并排（`fields.ts` 里标 `half`），窄于 600px 时改为单列，按容器宽度判断，不按窗口宽度。

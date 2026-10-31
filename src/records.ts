@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { Finder } from './redact/ids.ts'
-import type { Hit } from './redact/mask.ts'
+import type { Hit, Place } from './redact/mask.ts'
 
 /**
  * The record of what masking swapped for placeholders (design §7, magpie
@@ -28,6 +28,11 @@ export interface ValueRecord {
   n: number
   /** Not masked, by the kind's action: sent as written (warn) or the request stopped (block). */
   action?: 'warn' | 'block'
+  /** The text around its first place as it went, every value there a placeholder (docs/adr/0024). */
+  before?: string
+  after?: string
+  /** Where in the request body that first place was. */
+  at?: Place
 }
 
 /** chat, embeddings, count or search, by the request's path. */
@@ -80,7 +85,20 @@ export function valuesOf(hits: readonly Hit[]): ValueRecord[] {
   for (const h of hits) {
     const v = by.get(h.placeholder)
     if (v) v.n++
-    else by.set(h.placeholder, { placeholder: h.placeholder, kind: h.kind, finder: h.by, head: h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len, n: 1, ...(h.action ? { action: h.action } : {}) })
+    else
+      by.set(h.placeholder, {
+        placeholder: h.placeholder,
+        kind: h.kind,
+        finder: h.by,
+        head: h.head,
+        ...(h.tail ? { tail: h.tail } : {}),
+        len: h.len,
+        n: 1,
+        ...(h.action ? { action: h.action } : {}),
+        ...(h.before !== undefined ? { before: h.before } : {}),
+        ...(h.after !== undefined ? { after: h.after } : {}),
+        ...(h.at ? { at: h.at } : {}),
+      })
   }
   return [...by.values()]
 }

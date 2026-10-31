@@ -117,6 +117,7 @@ export class PrivacyEngine implements RedactionEngine {
       cookies: { names: config.cookieNames, keep: config.cookieKeep },
       actions: notMasked(config.actions),
       shape: config.shape,
+      context: config.recordContext,
     })
   }
 

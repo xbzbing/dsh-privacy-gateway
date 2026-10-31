@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
 import { resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
-import { bars, hintOf, timeLabel, took, type WarningKey } from './view.ts'
+import { bars, hintOf, placeKey, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 /** The signals worth a line of their own, one tinted line each with a warning icon. */
@@ -133,10 +133,10 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                 h(
                   'tbody',
                   null,
-                  r.values.map((v) =>
+                  r.values.flatMap((v) => [
                     h(
                       'tr',
-                      { key: v.placeholder },
+                      { key: v.placeholder, className: v.before !== undefined || v.after !== undefined ? 'pgw-values__has' : undefined },
                       h('td', { className: 'pgw-mono' }, v.placeholder),
                       h('td', null, v.kind),
                       h('td', null, v.finder),
@@ -145,7 +145,19 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                       h('td', null, v.n),
                       h('td', null, v.action ? t(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
                     ),
-                  ),
+                    v.before !== undefined || v.after !== undefined
+                      ? h(
+                          'tr',
+                          { key: `${v.placeholder}:ctx`, className: 'pgw-values__ctx' },
+                          h(
+                            'td',
+                            { colSpan: 7 },
+                            v.at ? h(Tag, { tone: 'neutral', className: 'pgw-ctx__place', title: v.at.path }, t(placeKey(v.at))) : null,
+                            h('span', { className: 'pgw-ctx__text pgw-mono', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark' }, v.placeholder), v.after ?? ''),
+                          ),
+                        )
+                      : null,
+                  ]),
                 ),
               ),
           props.viewable && !viewing ? h('div', null, h(Button, { variant: 'outline', size: 'sm', onClick: () => setViewing(true) }, t('view.open'))) : null,

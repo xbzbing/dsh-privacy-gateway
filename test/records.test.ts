@@ -48,7 +48,10 @@ test('one request makes one record: its values, the places restored and the plac
   assert.equal(r.host, 'api.example.com')
   assert.equal(r.what, 'chat')
   // the hint keeps the prefix and the 4 characters after it, and the last 2 (docs/adr/0019)
-  assert.deepEqual(r.values, [{ placeholder: p, kind: 'API_KEY', finder: 'rule', head: 'sk-proj-SENT', tail: 'cd', len: SENTINEL.length, n: 2 }])
+  // the context is cut from the text as it went: the value's other place is its placeholder (docs/adr/0024)
+  assert.deepEqual(r.values, [
+    { placeholder: p, kind: 'API_KEY', finder: 'rule', head: 'sk-proj-SENT', tail: 'cd', len: SENTINEL.length, n: 2, before: 'key ', after: ` and again ${p}`, at: { path: 'messages.0.content', role: 'user' } },
+  ])
   assert.equal(r.restored, 2)
   assert.equal(r.unmapped, 1)
   assert.ok(!JSON.stringify(r).includes(SENTINEL))
@@ -276,4 +279,37 @@ test('reset clears memory, the sums and every day file, and leaves other files',
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('the context around a value is short, flat, and never holds a value, a warned one included', () => {
+  const warn = new PrivacyEngine(randomBytes(32), { ...defaults, personal: true, actions: { EMAIL: 'warn' } })
+  const long = 'x'.repeat(200)
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'system', content: 'rules' }, { role: 'user', content: `${long}\n\n  key ${SENTINEL} mail zhang.wei.private@baidu.com ${long}` }] })
+  const ex = warn.maskRequest(body, info)
+  assert.ok(ex)
+  ex.finish()
+  const r = warn.records.recent()[0] as MaskRecord
+  const key = r.values.find((v) => v.kind === 'API_KEY')
+  assert.ok(key)
+  const before = key.before ?? ''
+  const after = key.after ?? ''
+  assert.ok(before.startsWith('…') && before.endsWith(' key '), before)
+  assert.ok(!before.includes('\n'))
+  assert.ok(after.endsWith('…'))
+  assert.ok([...before].length <= 33)
+  assert.deepEqual(key.at, { path: 'messages.1.content', role: 'user' })
+  // the warned email went as written, but the context shows its placeholder
+  assert.ok(after.includes('{{EMAIL_'), after)
+  assert.ok(!JSON.stringify(r).includes('zhang.wei.private'), JSON.stringify(r.values))
+  assert.ok(!JSON.stringify(r).includes(SENTINEL))
+})
+
+test('recordContext off keeps no context', () => {
+  const engine = new PrivacyEngine(randomBytes(32), { ...defaults, recordContext: false })
+  const ex = engine.maskRequest(chat(`key ${SENTINEL}`), info)
+  assert.ok(ex)
+  ex.finish()
+  const v = (engine.records.recent()[0] as MaskRecord).values[0]
+  assert.equal(v?.before, undefined)
+  assert.equal(v?.at, undefined)
 })

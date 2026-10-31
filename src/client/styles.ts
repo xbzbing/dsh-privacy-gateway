@@ -63,6 +63,11 @@ const CSS = `
 .pgw-values{border-collapse:collapse;width:100%}
 .pgw-values th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:4px 12px 4px 0;border-bottom:.5px solid var(--dsw-alias-border-l2);white-space:nowrap}
 .pgw-values td{padding:4px 12px 4px 0;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pgw-values__ctx td{padding:0 12px 8px 0;white-space:normal}
+.pgw-values__ctx td>*{vertical-align:middle}
+.pgw-ctx__place{margin-right:8px}
+.pgw-ctx__text{color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.pgw-ctx__mark{margin:0 2px;padding:0 3px;border-radius:3px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 16%,transparent);color:var(--dsw-alias-label-primary)}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:2px}
 .pgw-pager__at{min-width:56px;text-align:center;font-variant-numeric:tabular-nums}
 @media (max-width:640px){.pgw-rec{grid-template-columns:16px 64px minmax(0,1fr) 48px 48px}.pgw-rec__from{display:none}.pgw-rec--head>:nth-child(4){display:none}}

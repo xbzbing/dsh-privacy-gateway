@@ -165,7 +165,16 @@ export const zh = {
   'session.offAck': '我知道本会话的内容会原样发给模型服务',
   'session.offConfirm': '关闭脱敏',
   'session.offNotice': '本会话已关闭脱敏：请求原样发给模型服务，不留记录。',
-  'session.failed': '没能切换：{message}'
+  'session.failed': '没能切换：{message}',
+  'cfg.f.recordContext': '记录替换处的上下文',
+  'cfg.f.recordContext.hint': '每个替换处前后各约 32 个字符和它所在的位置（用户消息、工具结果等）一起记下，方便确认是在什么场合替换的。这段文字取自发出的内容，里面被脱敏的值都已是占位符；没开个人信息脱敏时，邮箱、手机号等会原样出现在这段文字里。',
+  'recent.contextHint': '替换处前后的文字，取自发出的内容，被脱敏的值都是占位符',
+  'place.system': '系统提示',
+  'place.toolResult': '工具结果',
+  'place.toolCall': '工具调用',
+  'place.user': '用户消息',
+  'place.assistant': '模型回复',
+  'place.other': '其他'
 } as const
 
 export type Key = keyof typeof zh
@@ -335,6 +344,15 @@ export const en: Record<Key, string> = {
   'session.offConfirm': 'Turn off',
   'session.offNotice': 'Masking is off for this session: requests go out as they are and nothing is recorded.',
   'session.failed': 'Could not switch: {message}',
+  'cfg.f.recordContext': 'Record the text around each value',
+  'cfg.f.recordContext.hint': 'About 32 characters each side of every replaced place, and where it was (a user message, a tool result and so on), are kept with the record, so you can tell what it was replaced in. The text is taken from what was sent, so masked values in it are placeholders; with personal data not masked, emails, phone numbers and the like appear in it as they are.',
+  'recent.contextHint': 'The text around the place, as sent; masked values in it are placeholders',
+  'place.system': 'System prompt',
+  'place.toolResult': 'Tool result',
+  'place.toolCall': 'Tool call',
+  'place.user': 'User message',
+  'place.assistant': 'Model reply',
+  'place.other': 'Other',
 }
 
 export const DICTIONARIES: Record<string, Record<Key, string>> = { zh, en }
