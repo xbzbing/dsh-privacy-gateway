@@ -88,6 +88,14 @@ export interface OverviewSource {
 
 export const NAMESPACE = 'privacyGateway'
 
+/** The longest session id the service takes. */
+export const MAX_SESSION_ID = 128
+
+/** A session id as the host makes them: up to MAX_SESSION_ID letters, digits, `_`, `.`, `:` or `-`. */
+export function isSessionId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= MAX_SESSION_ID && /^[\w.:-]+$/.test(id)
+}
+
 export function clampLimit(limit: unknown): number {
   return typeof limit === 'number' && Number.isFinite(limit) ? Math.min(200, Math.max(1, Math.floor(limit))) : 50
 }
@@ -121,7 +129,8 @@ export class PrivacyGatewayService extends TypertRemoteService {
   /** Turns masking on or off for one session; answers whether it is on now. */
   async sessionMasking(request: SessionMaskingRequest): Promise<{ on: boolean }> {
     const session = request?.session
-    if (typeof session !== 'string' || session === '' || typeof request?.on !== 'boolean') throw new Error('a session id and on: true|false are needed')
+    // the id is written to the switch file and the log: one the host would not make is refused
+    if (!isSessionId(session) || typeof request?.on !== 'boolean') throw new Error(`a session id (1–${MAX_SESSION_ID} of A–Z, a–z, 0–9, _ . : -) and on: true|false are needed`)
     if (!this.source.setSessionMasking) throw new Error('per-session masking is not offered')
     return { on: this.source.setSessionMasking(session, request.on) }
   }

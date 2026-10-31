@@ -64,6 +64,16 @@ const COMMAND_TEXT = {
 
 export const name = 'dsh-privacy-gateway'
 
+/** The longest title or workspace name a record keeps, in characters (docs/adr/0020). */
+const NAME_CHARS = 200
+
+/** The first `max` characters of `text`, by code point, so no surrogate pair is split. */
+function clipChars(text: string, max: number): string {
+  if (text.length <= max) return text
+  const chars = [...text]
+  return chars.length <= max ? text : chars.slice(0, max).join('')
+}
+
 export { Config } from './config.ts'
 /** The composition contract other dispatcher plugins rely on (docs/adr/0012). */
 export type { ChainOptions, LayerInfo, LayerRole, MaskingDispatcher } from './dispatcher.ts'
@@ -97,6 +107,17 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       return undefined
     }
   }
+  // A title is written by another model call, whose reply has had the values put back: a name goes
+  // into the record with every value the masker knows or finds as its placeholder, as a request
+  // would have it, and a name that cannot be masked is not kept (docs/adr/0020).
+  const masked = (text: string): string | undefined => {
+    try {
+      const out = clipChars(engine.preview(text).text, NAME_CHARS)
+      return out === '' ? undefined : out
+    } catch {
+      return undefined
+    }
+  }
   // a record says which workspace and session the call came from, by name (docs/adr/0020): read from the
   // live session and the workspace registry, both optional so the gateway runs without them
   const names = (session: string): { title?: string; workspace?: string } => {
@@ -107,14 +128,16 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     try {
       const session_ = live?.get?.(session)
       const title = session_ === undefined ? undefined : titles?.get?.(session_)?.title
-      if (typeof title === 'string' && title !== '') out.title = title.slice(0, 200)
+      const shown = typeof title === 'string' && title !== '' ? masked(title) : undefined
+      if (shown !== undefined) out.title = shown
     } catch {
       // a title that cannot be read is no title
     }
     try {
       for (const w of workspaces?.list?.() ?? []) {
         if (!w.sessionIds?.some((id) => String(id) === session)) continue
-        if (typeof w.title === 'string' && w.title !== '') out.workspace = w.title.slice(0, 200)
+        const shown = typeof w.title === 'string' && w.title !== '' ? masked(w.title) : undefined
+        if (shown !== undefined) out.workspace = shown
         break
       }
     } catch {
@@ -175,24 +198,29 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   // the settings card's Remote service; the gateway does not depend on it
   if (ctx.plugin) {
     const source: OverviewSource = {
-      overview: (limit, session) => ({
-        active: engine.active && current().enabled,
-        secrets: cfg.secrets,
-        personal: cfg.personal,
-        record: cfg.record,
-        values: engine.values,
-        ...(session ? { session } : {}),
-        stats: records.stats(session),
-        recent: records.recent(limit, session),
-        vendorView: cfg.vendorView,
-        views: views.keys(),
-        // read now: the detail page's switch changes it without remounting the plugin
-        showPanel: liveBool(config.showPanel, cfg.showPanel),
-        excludeProviders: excludedProviders(),
-        ...(session ? { sessionMasking: !sessions.isOff(session) } : {}),
-      }),
+      overview: (limit, session) => {
+        // first: a change the configuration page made is applied before anything is read
+        const c = current()
+        return {
+          active: engine.active && c.enabled,
+          secrets: c.secrets,
+          personal: c.personal,
+          record: c.record,
+          values: engine.values,
+          ...(session ? { session } : {}),
+          stats: records.stats(session),
+          recent: records.recent(limit, session),
+          vendorView: c.vendorView,
+          views: c.vendorView ? views.keys() : [],
+          // read now: the detail page's switch changes it without remounting the plugin
+          showPanel: liveBool(config.showPanel, c.showPanel),
+          excludeProviders: excludedProviders(),
+          ...(session ? { sessionMasking: !sessions.isOff(session) } : {}),
+        }
+      },
       setSessionMasking: (session, on) => {
-        if (sessions.set(session, on)) ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} for session ${session} from its Privacy tab`)
+        // quoted: the id comes from the browser, and a line break in it would forge a log line
+        if (sessions.set(session, on)) ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} for session ${JSON.stringify(session)} from its Privacy tab`)
         return !sessions.isOff(session)
       },
       providers: () => {
@@ -215,6 +243,12 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         return r
       },
       vendorView: (key) => {
+        // read now: vendorView turned off on the configuration page serves no body from then on,
+        // and drops the ones kept, without waiting for the next request to apply the change
+        if (!current().vendorView) {
+          views.clear()
+          return null
+        }
         const body = views.get(key)
         return body === undefined ? null : { key, body }
       },
