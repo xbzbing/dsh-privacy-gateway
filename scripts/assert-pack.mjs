@@ -11,7 +11,7 @@
  *
  * Usage: node scripts/assert-pack.mjs <unpacked-package-dir>
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /** Lifecycle hooks that must never be present (docs/adr/0006). */
@@ -65,6 +65,20 @@ for (const target of new Set(targets)) {
   if (typeof target === 'string' && !existsSync(join(root, target))) {
     problems.push(`manifest points at a file the package does not ship: ${target}`)
   }
+}
+
+// Plugin Manager renders each locale's `meta.detail` as the details page, so
+// a dropped `docs/details` entry would show an empty page instead of failing.
+for (const name of readdirSync(join(root, 'locale')).filter((f) => f.endsWith('.json'))) {
+  const detail = JSON.parse(readFileSync(join(root, 'locale', name), 'utf8')).meta?.detail
+  if (typeof detail !== 'string') problems.push(`locale/${name} has no meta.detail`)
+  else if (!existsSync(join(root, detail))) problems.push(`locale/${name} meta.detail points at a file the package does not ship: ${detail}`)
+}
+
+// The client loader only registers a bundle that announces itself under this package's id.
+const clientPath = join(root, 'lib/client.js')
+if (existsSync(clientPath) && !readFileSync(clientPath, 'utf8').startsWith(`window.__ModuleLoader__.load({ id: ${JSON.stringify(manifest.name)}`)) {
+  problems.push(`lib/client.js does not register itself as '${manifest.name}'`)
 }
 
 // The loader imports the patch row's `name`; it must be this package.

@@ -34,7 +34,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 ## 配置
 
-插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 `cordis.patch.yml` 里改。
+插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 profile 的 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里改，写在 `id: dsh-privacy-gateway` 那一行的 `config` 下；插件包自带的 `cordis.patch.yml` 升级时会被覆盖，不要改它。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 插件详情页下方有一张统计卡：今日 / 7 天 / 30 天切换，计数、按 kind / finder / host 的分布、最近 200 条记录（每页 10 条，每条带着工作区 · 会话标题），点开一条看每个值的明细。卡片右上角的「清空数据」勾选确认后，删除所有会话的记录、统计和磁盘上的记录文件，无法恢复（[ADR-0022](docs/adr/0022-reset.md)）。打开 `showPanel` 后，同样的内容也出现在会话顶部的「隐私保护」标签页里，只统计当前会话。标签页头部的「本会话脱敏」开关可以只关掉这一个会话的脱敏，确认后生效，其他会话照常脱敏，重启后仍然保持（[ADR-0023](docs/adr/0023-session-switch.md)）。
 
-打开 `vendorView`（配置页上叫「保留发出内容，供对照查看」）后，记录明细里多一个「查看发出内容」按钮，用来核对模型服务实际收到了什么、有没有漏脱敏：右边是模型服务收到的原文，左边是同一份内容 里每个替换处换成「kind · 开头 · 长度」的标记，默认只列有替换的行。两边都不出现真值，warn 照发的值在副本里也换成了占位符。
+打开 `vendorView`（配置页上叫「保留发出内容，供对照查看」）后，记录明细里多一个「查看发出内容」按钮，用来核对模型服务实际收到了什么、有没有漏脱敏：右边是模型服务收到的原文，左边是同一份内容里每个替换处换成「kind · 开头 · 长度」的标记，默认只列有替换的行。两边都不出现真值，warn 照发的值在副本里也换成了占位符。
 
 ## 须知
 

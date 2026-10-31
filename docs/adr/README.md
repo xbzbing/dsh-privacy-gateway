@@ -1,6 +1,6 @@
 # 架构决策记录（ADR）
 
-本目录记录 `dsh-privacy-gateway` 已经做出的架构决策。设计稿在 `docs/local/`（被 `.gitignore` 忽略，不入库），这里只固定定下来的结论和理由。
+本目录记录 `dsh-privacy-gateway` 已经做出的架构决策，固定定下来的结论和理由。
 
 ## 约定
 
