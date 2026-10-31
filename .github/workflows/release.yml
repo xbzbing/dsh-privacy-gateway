@@ -118,9 +118,12 @@ jobs:
           git tag -a "v$V" -m "v$V"
           git push origin "refs/tags/v$V"
 
-      # Trusted Publishing (OIDC) is preferred: register this workflow as a
-      # trusted publisher on npmjs.com and leave NPM_TOKEN unset. With the
-      # secret present, npm authenticates with it instead.
+      # Trusted publishing (OIDC) wins whenever it is set up: with
+      # `id-token: write` the CLI exchanges the OIDC token for a publish token
+      # and overrides NPM_TOKEN. The secret is only the fallback for a package
+      # that has no trusted publisher yet, which is the case until the first
+      # version is on the registry (npm only registers trust for an existing
+      # package).
       - name: Publish to npm
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.prerelease != 'true' && steps.state.outputs.npm != 'done'
         env:

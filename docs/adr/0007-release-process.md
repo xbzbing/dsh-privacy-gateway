@@ -19,6 +19,21 @@
 - **正文**：正式版的 `docs/releases/v<版本>.md` 随发版提交入库，格式以 `.github/RELEASE_TEMPLATE.md` 为唯一来源（四段双语 + compare 链接）。文件缺失时在门禁之前失败。预发布用 `.github/PRERELEASE_BODY.md` 的固定说明建页，正文发布后用 `gh release edit` 补，不入库。
 - npm 认证优先 Trusted Publishing（OIDC）；退回 `NPM_TOKEN` 时用只限本包、只能 publish 的 granular token。
 
+### Trusted Publishing 的登记
+
+- npm 只允许给**已经存在**的包登记 trusted publisher（`npm trust` 把「包必须已在 registry 上」写成前置条件，网站上也只有包的设置页里才有这一节）。所以首次正式发布拿不到 OIDC：先用 token（或本机 `npm login`）把 0.1.0 发出去，之后的版本才走 OIDC。
+- 登记命令（npm >= 11.15，账号需开 2FA，会走一次 2FA 确认）：
+
+  ```bash
+  npm trust github dsh-privacy-gateway \
+    --repo xbzbing/dsh-privacy-gateway --file release.yml --allow-publish
+  ```
+
+  在网站上登记时，「Allowed actions」必须勾上 **npm publish**：2026-09-03 之后新建的配置默认只允许 `npm stage publish`，不勾就发不出去。
+- 新建的配置要在 2 天内完成一次成功的 publish 才算验证通过，否则失效。所以登记放在一次发版之前做，别提前几周配好。
+- 验证通过后删掉仓库的 `NPM_TOKEN` secret，并把包设置里的 Publishing access 改成「要求 2FA 且禁用 token」。
+- npm >= 11.5.1 在 `id-token: write` 下会先换 OIDC token 再发版，OIDC 一旦可用就优先于 `NPM_TOKEN`；换不到（没登记或权限不对）才退回 token。
+
 ## Consequences
 
 - 发版由人发起（`pnpm version <v> --no-git-tag-version` + 正文 + 推 main），之后全部由 workflow 完成，不要手工在 main 上打 tag。

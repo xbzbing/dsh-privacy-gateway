@@ -4,16 +4,16 @@
 
 A DeepSeek Harness plugin that adds a redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
-Status: P1 is implemented; not on npm yet.
+Status: v0.1.0, the first stable release.
 
 ## Install
 
 ```bash
-# Release (npm, published with OIDC trusted publishing)
+# Stable (npm)
 dsh plugin --profile web add dsh-privacy-gateway@latest
 
-# Prerelease, or before the first release (GitHub Release asset)
-dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0-rc.1/dsh-privacy-gateway-0.1.0-rc.1.tgz
+# The same version as a GitHub Release asset (prereleases get one too)
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0/dsh-privacy-gateway-0.1.0.tgz
 ```
 
 A prerelease version has a `-` in it and goes to GitHub Releases only, never to npm. The repository does not commit `lib/`, so `dsh plugin add github:…` cannot load the plugin ([ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)).

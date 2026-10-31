@@ -4,16 +4,16 @@
 
 DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
-状态：P1 已实现，尚未发布到 npm。
+状态：v0.1.0，首个正式版。
 
 ## 安装
 
 ```bash
-# 正式版（npm，OIDC 信任发布）
+# 正式版（npm）
 dsh plugin --profile web add dsh-privacy-gateway@latest
 
-# 预发布、或正式版发布之前（GitHub Release 附件）
-dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0-rc.1/dsh-privacy-gateway-0.1.0-rc.1.tgz
+# 同一版本的 GitHub Release 附件（预发布也发在这里）
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0/dsh-privacy-gateway-0.1.0.tgz
 ```
 
 预发布版本号带 `-`，只发 GitHub Release、不发 npm。仓库不提交 `lib/`，`dsh plugin add github:…` 拿到的树加载不了（[ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)）。
