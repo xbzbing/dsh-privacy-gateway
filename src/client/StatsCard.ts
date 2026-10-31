@@ -165,12 +165,16 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
       'div',
       { className: 'pgw-head' },
       props.panel ? null : h('h3', { className: 'pgw-title' }, t('card.title')),
+      props.sessionId ? h('span', { className: 'pgw-badge' }, t('panel.session')) : null,
       ...extra,
       h('span', { className: 'pgw-spacer' }),
       h('button', { type: 'button', className: 'pgw-btn', onClick: reload, disabled: busy }, t('card.refresh')),
     )
   if (state.status !== 'ready') {
     return h('section', { className: cardClass }, head([]), h('div', { className: 'pgw-empty' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
+  }
+  if (props.sessionId && state.data.recent.length === 0) {
+    return h('section', { className: cardClass }, head([]), h('div', { className: 'pgw-empty' }, t('panel.empty')))
   }
   const o = state.data
   const totals = o.stats[range]
