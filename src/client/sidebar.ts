@@ -38,6 +38,9 @@ interface Registry {
   register(definition: TabDefinition): () => void
 }
 
+/** Why the last registration attempt failed, for the configuration page to show. */
+export let lastFailure: string | undefined
+
 export function registryOf(ctx: ClientCtx): Registry | undefined {
   try {
     const r = ctx.get('sidebarRightTabs') as Registry | undefined
@@ -67,8 +70,12 @@ export function ShieldIcon(props: { size?: number; className?: string }): ReactN
  * disposer, or undefined when the host has no right sidebar.
  */
 export function registerSidebarTab(ctx: ClientCtx, t: T): (() => void) | undefined {
+  lastFailure = undefined
   const registry = registryOf(ctx)
-  if (!registry) return undefined
+  if (!registry) {
+    lastFailure = 'no sidebarRightTabs service'
+    return undefined
+  }
   let releaseType: (() => void) | undefined
   try {
     releaseType = registry.register({
@@ -78,7 +85,8 @@ export function registerSidebarTab(ctx: ClientCtx, t: T): (() => void) | undefin
       title: () => t('panel.tab'),
       guide: [{ id: 'privacy', order: 40, title: () => t('panel.tab'), description: () => t('panel.guide'), icon: ShieldIcon }],
     })
-  } catch {
+  } catch (err) {
+    lastFailure = err instanceof Error ? err.message : String(err)
     return undefined
   }
   const releases: Array<() => void> = []
@@ -111,7 +119,8 @@ export function registerSidebarTab(ctx: ClientCtx, t: T): (() => void) | undefin
       ),
     )
     if (typeof title === 'function') releases.push(title as () => void)
-  } catch {
+  } catch (err) {
+    lastFailure = err instanceof Error ? err.message : String(err)
     rollback()
     return undefined
   }
