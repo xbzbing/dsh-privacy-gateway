@@ -21,23 +21,41 @@ import { PERSONAL_KINDS } from './ids.ts'
 export const MIN_SHAPE = 8
 const MIN_RANDOM = 6
 
-/** Prefixes that name a key's kind across more than one part, kept as they are. */
-const KEY_PREFIXES = ['sk-ant-api03-', 'sk-ant-oat01-', 'sk-ant-admin01-', 'sk-proj-', 'sk-svcacct-', 'sk-or-v1-', 'github_pat_']
+/**
+ * The prefixes a vendor puts before its keys' random part, kept as they are:
+ * they say whose key it is and are the same in every key of the vendor, so
+ * they are no secret. Longer ones first, so sk-proj- is taken before sk-.
+ */
+const KEY_PREFIXES = [
+  'sk-ant-api03-', 'sk-ant-oat01-', 'sk-ant-admin01-', 'sk-proj-', 'sk-svcacct-', 'sk-admin-', 'sk-or-v1-', 'sk-ant-', 'sk-or-',
+  'sk_live_', 'sk_test_', 'rk_live_', 'rk_test_', 'github_pat_', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'glpat-',
+  'xoxa-', 'xoxb-', 'xoxo-', 'xoxp-', 'xoxr-', 'xoxs-', 'dop_v1_', 'whsec_', 'pypi-', 'gsk_', 'xai-', 'npm_', 'hf_', 'SG.',
+  'AKIA', 'ASIA', 'AIza', 'LTAI', 'AKID', 'sk-',
+].sort((a, b) => b.length - a.length)
+
+/** A gateway's or a relay's own key prefix (oc_sk_, or_sk_), as the API_KEY rule finds them. */
+const RELAY_PREFIX = /^[a-z]{2,4}_sk_/
 
 /**
- * The start of v that names its kind and stays: one of KEY_PREFIXES, up to
- * four letters and the - or _ after them (sk-, ghp_, xoxb-), or AWS's AKIA
- * and ASIA. A head without its separator could be the key's own letters.
+ * The kinds whose values are vendors' keys, so a known prefix at their start
+ * is the vendor's and not the value's own characters. A password or a named
+ * secret that happens to start with ghp_ keeps it hidden.
+ */
+export const KEY_KINDS: ReadonlySet<string> = new Set(['API_KEY', 'TOKEN'])
+
+/**
+ * The start of v that names its kind and stays: one of KEY_PREFIXES or a
+ * relay's prefix, nothing else. Letters before a - or _ in any other value
+ * are its own characters and stay hidden.
  */
 export function keyHead(v: string): string {
   for (const p of KEY_PREFIXES) if (v.startsWith(p)) return p
-  if (v.startsWith('AKIA') || v.startsWith('ASIA')) return v.slice(0, 4)
-  for (let i = 0; i < v.length && i <= 4; i++) {
-    const c = v[i] as string
-    if ((c === '-' || c === '_') && i > 0) return v.slice(0, i + 1)
-    if (!/[A-Za-z]/.test(c)) break
-  }
-  return ''
+  return RELAY_PREFIX.exec(v)?.[0] ?? ''
+}
+
+/** keyHead for a value of `kind`: none unless the kind is a vendor's key. */
+export function publicHead(kind: string, v: string): string {
+  return KEY_KINDS.has(kind) ? keyHead(v) : ''
 }
 
 /** A name before = or : and the value after it. */
@@ -61,7 +79,7 @@ const DIGIT = '0123456789'
 /** The made-up key `v` of `kind` goes as, or undefined where it goes as a placeholder. */
 export function shapeOf(key: Uint8Array, kind: string, v: string): string | undefined {
   if (PERSONAL_KINDS.has(kind) || kind === 'TERM' || v.length < MIN_SHAPE || !/^[A-Za-z0-9._-]+$/.test(v)) return undefined
-  const head = keyHead(v)
+  const head = publicHead(kind, v)
   const rest = v.slice(head.length)
   // a hex key's characters are any hex digit, of the case it has
   let hexLower = true

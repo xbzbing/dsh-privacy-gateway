@@ -8,19 +8,28 @@ import { createHash } from 'node:crypto'
 import type { Found } from './ids.ts'
 import type { KnownSpan } from './known.ts'
 import type { Rule } from './rules.ts'
-import { keyHead } from './shape.ts'
+import { publicHead } from './shape.ts'
 
 /**
  * How much of a value a hint keeps, so a human can tell which one it was and
- * check the masking against the value: by length, a few characters at the
- * start (after any prefix a key class has, which is public anyway) and, once
- * it is long enough to spare them, a couple at the end.
+ * check the masking against the value: by the length of what follows any
+ * public prefix, a few characters at the start and, once it is long enough
+ * to spare them, a couple at the end. Never more than `hintMax` allows.
  */
 function hintSpan(len: number): { keep: number; tail: number } {
   if (len < 6) return { keep: 1, tail: 0 }
   if (len < 10) return { keep: 2, tail: 0 }
   if (len < 16) return { keep: 3, tail: 1 }
   return { keep: 4, tail: 2 }
+}
+
+/**
+ * The most characters of `len` (after any public prefix) a hint may show: at
+ * least max(4, half of them) stay hidden, so a short value is never shown
+ * whole or nearly whole (docs/adr/0019).
+ */
+export function hintMax(len: number): number {
+  return Math.max(0, len - Math.max(4, Math.ceil(len / 2)))
 }
 
 /** s with its ASCII letters in lower case, as long as s, so a place in one is the same place in the other. */
@@ -226,21 +235,26 @@ export class SentMemo {
 
 /**
  * As much of a value as a record may keep (magpie `Hint`, widened in
- * docs/adr/0019): a key's prefix up to where its random part starts (sk-,
- * ghp_, AKIA) and a few characters after it, a couple of characters at the
- * end once the value is long enough, and how many characters it has. Two keys
- * of one kind are told apart, and a masked value is recognizable as the one
- * that was there (sk-proj-g6sx…3QaZ), while the rest never leaves the mask.
+ * docs/adr/0019): a vendor key's prefix (sk-, ghp_, AKIA) and a few
+ * characters after it, a couple of characters at the end once the value is
+ * long enough, and how many characters it has. Two keys of one kind are told
+ * apart, and a masked value is recognizable as the one that was there
+ * (sk-proj-g6sx…3QaZ), while most of it never leaves the mask: of what follows
+ * the prefix, at least max(4, half) characters stay hidden.
  */
 export function hint(kind: string, v: string, personal: boolean): { head: string; tail?: string; len: number } {
   const chars = [...v]
   const len = chars.length
   if (len < 2) return { head: '', len }
   // personal data and the user's words: one character, they are not a key to recognize
-  if (personal || kind === 'TERM') return { head: chars[0] as string, len }
-  const { keep, tail } = hintSpan(len)
-  const prefix = keyHead(v)
-  const head = prefix.length > 0 ? prefix + chars.slice(prefix.length, prefix.length + keep).join('') : chars.slice(0, keep).join('')
-  // the tail only where it cannot reach back into the head
-  return tail > 0 && head.length + tail < len ? { head, tail: chars.slice(-tail).join(''), len } : { head, len }
+  if (personal || kind === 'TERM') return { head: hintMax(len) >= 1 ? (chars[0] as string) : '', len }
+  const prefix = [...publicHead(kind, v)].length
+  const rest = len - prefix
+  let { keep, tail } = hintSpan(rest)
+  const max = hintMax(rest)
+  // the tail goes first, then the head, until enough stays hidden
+  if (keep + tail > max) tail = Math.max(0, max - keep)
+  if (keep > max) keep = max
+  const head = chars.slice(0, prefix + keep).join('')
+  return tail > 0 ? { head, tail: chars.slice(-tail).join(''), len } : { head, len }
 }

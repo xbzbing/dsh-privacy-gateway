@@ -170,7 +170,7 @@ test('a hint keeps a key\'s prefix and its next characters, plus a couple at the
   // no prefix: the first characters themselves, so a bare secret is recognizable too
   assert.deepEqual(hint('SECRET', '3f9a1b2c4d5e6f708192a3b4c5d6e7f8', false), { head: '3f9a', tail: 'f8', len: 32 })
   assert.deepEqual(hint('SECRET', 'n4k9x2b7q', false), { head: 'n4', len: 9 })
-  assert.deepEqual(hint('SECRET', 'abc', false), { head: 'a', len: 3 })
+  assert.deepEqual(hint('SECRET', 'abc', false), { head: '', len: 3 })
   // personal data and the user's words: one character, they are not a key to recognize
   assert.deepEqual(hint('EMAIL', 'someone@example.com', true), { head: 's', len: 19 })
   assert.deepEqual(hint('TERM', 'project-x', false), { head: 'p', len: 9 })
