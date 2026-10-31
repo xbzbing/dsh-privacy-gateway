@@ -10,17 +10,22 @@ import { AsyncLocalStorage } from 'node:async_hooks'
  * context goes with every promise from there.
  */
 export interface CallContext {
-  /** The provider whose stream this is, while that stream runs. */
-  provider: string
+  /** The excluded provider whose stream this is, while that stream runs; absent for a masked one. */
+  provider?: string
   /** The session the call belongs to, when the host names one. */
   session?: string
 }
 
 const current = new AsyncLocalStorage<CallContext | undefined>()
 
-/** The excluded provider whose stream the caller runs in, if any. */
+/**
+ * The excluded provider whose stream the caller runs in, if any. A context
+ * that only carries the session (a masked provider's stream) names none: an
+ * empty or absent provider is never a bypass.
+ */
 export function bypassedProvider(): string | undefined {
-  return current.getStore()?.provider
+  const provider = current.getStore()?.provider
+  return typeof provider === 'string' && provider !== '' ? provider : undefined
 }
 
 /** The session the request being started belongs to, when it is one the host named (docs/adr/0020). */
@@ -35,7 +40,7 @@ export function bypassing<T>(provider: string, open: () => AsyncIterable<T>, ses
 
 /** `open`'s stream run outside any excluded provider: a nested call to a provider that is masked is masked. */
 export function unbypassing<T>(open: () => AsyncIterable<T>, session?: string): AsyncIterable<T> {
-  return within((f) => current.run(session ? { provider: '', session } : undefined, f), open)
+  return within((f) => current.run(session ? { session } : undefined, f), open)
 }
 
 /**

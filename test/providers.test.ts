@@ -96,6 +96,11 @@ test('a request made inside an excluded provider goes out unmasked and its reply
     for await (const c of bypassing('deepseek', adapter)) got.push(c)
     assert.ok(bodies[2]?.includes(OPENAI), bodies[2])
     assert.deepEqual(got, [`echo ${placeholder}`])
+    // a masked provider's stream that carries a session is masked all the same (it once read as a bypass)
+    const routed: unknown[] = []
+    for await (const c of routeStream('openai', ['deepseek'], adapter, 'sess-1')) routed.push(c)
+    assert.ok(!bodies[3]?.includes(OPENAI), bodies[3])
+    assert.deepEqual(routed, [`echo ${OPENAI}`])
   } finally {
     gateway.dispose()
     setGlobalDispatcher(before)
@@ -132,6 +137,12 @@ test('the stream carries the session the host named, so a record can say which o
     yield* await collect(routeStream('openai', [], probe, 'sess-2'))
   }
   assert.deepEqual(await collect(routeStream('deepseek', [], outer, 'sess-1')), ['sess-2'])
+  // carrying a session is no bypass
+  async function* bypassProbe() {
+    yield bypassedProvider()
+  }
+  assert.deepEqual(await collect(routeStream('deepseek', [], bypassProbe, 'sess-1')), [undefined])
+  assert.deepEqual(await collect(routeStream('deepseek', ['deepseek'], bypassProbe, 'sess-1')), ['deepseek'])
   // outside any stream there is none
   assert.equal(currentSession(), undefined)
 })
