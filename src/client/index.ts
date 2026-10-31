@@ -9,7 +9,7 @@
  */
 import { createElement as h } from 'react'
 
-import { ConfigSection } from './ConfigSection.ts'
+import { ConfigSection, type RowForm } from './ConfigSection.ts'
 import { DICTIONARIES, NS, type T } from './locales.ts'
 import { watchShowPanel } from './panelConfig.ts'
 import type { ClientCtx } from './rpc.ts'
@@ -19,6 +19,8 @@ import { ensureStyles } from './styles.ts'
 
 /** The bundle's package name: the page whose subject it is gets the card. */
 export const PACKAGE = 'dsh-privacy-gateway'
+/** The row this bundle's patch inserts: its configuration page is keyed by it. */
+export const ROW_ID = 'dsh-privacy-gateway'
 
 interface DetailProps {
   subject?: { kind?: string; pkg?: { name?: string } }
@@ -39,11 +41,12 @@ function apply(ctx: ClientCtx): void {
     )
     return typeof handle === 'function' ? (handle as () => void) : undefined
   }, 'dsh-privacy-gateway: statistics card')
-  // the detail page draws no form for a bundle: only an entry under its package name gives it a configuration section
+  // the configuration page is the plugin manager's own row page: it hands over the entry's form, so the
+  // page writes through the shell's revision-aware mutate instead of finding a namespace by shape
   ctx.effect(() => {
-    const handle = ctx.slots.inject('plugins.bundle.config', () =>
-      ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE, locale: NS }, (props: { view?: string }) =>
-        props.view === 'summary' ? t('cfg.title') : h(ConfigSection, { ctx, t }),
+    const handle = ctx.slots.inject('plugins.row.config', () =>
+      ctx.slots.register({ name: 'plugins.row.config', key: `${PACKAGE}#${ROW_ID}`, locale: NS }, (props: { view?: string; form?: RowForm }) =>
+        props.view === 'summary' ? t('cfg.title') : h(ConfigSection, { ctx, t, form: props.form }),
       ),
     )
     return typeof handle === 'function' ? (handle as () => void) : undefined

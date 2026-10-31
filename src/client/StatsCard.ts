@@ -104,7 +104,7 @@ function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: 
     ? h('span', { className: 'pgw-row__fail' }, tr('recent.failed'))
     : r.blocked
       ? h('span', { className: 'pgw-row__fail' }, tr('recent.blocked'))
-      : h('span', { className: r.exfil ? 'pgw-row__fail' : undefined }, tr('recent.places', { n: r.n }))
+      : h('span', { className: r.exfil ? 'pgw-row__fail' : undefined, title: tr('recent.placesHint') }, tr('recent.places', { n: r.n }))
   return h(
     Fragment,
     null,
@@ -115,7 +115,7 @@ function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: 
       h('span', { className: 'pgw-row__where', title: where }, where),
       from ? h('span', { className: 'pgw-row__from', title: from }, from) : h('span', { className: 'pgw-row__from' }, ''),
       right,
-      h('span', { className: 'pgw-row__time' }, tr('recent.restored', { n: r.restored })),
+      h('span', { className: 'pgw-row__time', title: tr('recent.restoredHint') }, tr('recent.restored', { n: r.restored })),
     ),
     props.open
       ? h(
