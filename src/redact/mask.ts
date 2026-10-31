@@ -19,6 +19,8 @@ export interface MaskOptions {
   /** Values sent as written whichever finder finds them: each a whole value, in any case. */
   allow?: readonly string[]
   cookies?: CookieOptions
+  /** Kinds whose values are not masked: warn sends them as written, block stops the request. Each is recorded. */
+  actions?: Readonly<Record<string, 'warn' | 'block'>>
 }
 
 /** One value masked, as the record keeps it: never the value itself. */
@@ -29,6 +31,8 @@ export interface Hit {
   /** Its first character, a key's prefix (sk-) or a cookie's name. */
   head: string
   len: number
+  /** Not masked: sent as written (warn) or the request stopped (block). The placeholder is the one it would have had. */
+  action?: 'warn' | 'block'
 }
 
 export interface MaskResult {
@@ -241,10 +245,16 @@ export class Masker {
       const written = raw.slice(f.start, f.end)
       const v = escaped ? unescaped(written) : written
       if (this.#allow.has(v.toLowerCase())) continue
+      const action = o.actions?.[f.kind]
+      const h = hint(f.kind, v, PERSONAL_KINDS.has(f.kind))
+      if (action !== undefined) {
+        pass.hits.push({ placeholder: tagOf(this.#key, f.kind, v), kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len, action })
+        // a preview never shows a value: it has the placeholder there still
+        if (!pass.preview) continue
+      }
       const p = pass.preview ? tagOf(this.#key, f.kind, v) : this.placeholder(f.kind, v)
       out.push(raw.slice(last, f.start), f.bare ? `"${p}"` : p)
-      const h = hint(f.kind, v, PERSONAL_KINDS.has(f.kind))
-      pass.hits.push({ placeholder: p, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len })
+      if (action === undefined) pass.hits.push({ placeholder: p, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len })
       last = f.end
       n++
     }

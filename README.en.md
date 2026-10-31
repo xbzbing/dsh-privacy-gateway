@@ -41,6 +41,7 @@ In the default web profile a first install takes effect immediately, with no res
 | `personal` | `false` | Mask email addresses, phone numbers, ID card and bank card numbers |
 | `words` | `[]` | Your own words (a project's code name, a customer's name), masked as written as `TERM` |
 | `allow` | `[]` | Values never masked: whole values, in any case |
+| `actions` | `{}` | An action per kind: `mask` (the default, a placeholder), `warn` (sent as written and recorded) or `block` (the whole request is not sent). For example `{ PRIVATE_KEY: block, EMAIL: warn }` ([ADR-0013](docs/adr/0013-actions.md)) |
 | `cookieNames` | `[]` | More cookie names to mask |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | Cookie names never masked |
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them ([ADR-0004](docs/adr/0004-protected-regions.md)) |

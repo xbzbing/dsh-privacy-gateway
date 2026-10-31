@@ -25,3 +25,4 @@
 | [ADR-0010](0010-cookie-recognition.md) | COOKIE 按上下文识别，一个 cookie 值是一个值 | Accepted | 脱敏 |
 | [ADR-0011](0011-command-and-statistics-card.md) | `/privacy` 命令与统计卡 | Accepted | 界面 |
 | [ADR-0012](0012-dispatcher-composition.md) | 网关下游按角色排序，并公开合成契约 | Accepted | 架构 |
+| [ADR-0013](0013-actions.md) | 按 kind 选动作：mask、warn、block | Accepted | 脱敏 |

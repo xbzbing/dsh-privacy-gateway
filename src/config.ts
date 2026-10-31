@@ -9,6 +9,11 @@ import Schema from '@deepseek-ai/schemastery'
  * never leaves its loading state. Validate at the edit and request boundaries
  * (`resolveConfig`).
  */
+/** What is done with a value a finder found. */
+export type Action = 'mask' | 'warn' | 'block'
+
+export const ACTIONS: readonly Action[] = ['mask', 'warn', 'block']
+
 export interface PrivacyGatewayConfig {
   /** Master switch. */
   enabled?: boolean
@@ -20,6 +25,12 @@ export interface PrivacyGatewayConfig {
   words?: string[]
   /** Values never masked, whichever rule finds them: each a whole value, in any case. */
   allow?: string[]
+  /**
+   * What is done with a value of a kind (API_KEY, EMAIL, COOKIE, …): mask it
+   * (the default), warn (send it as written and record it), or block (do not
+   * send the request).
+   */
+  actions?: Record<string, Action>
   /** Cookie names masked wherever NAME=value is written, beside the built-in list (BDUSS, JSESSIONID, …). */
   cookieNames?: string[]
   /** Cookie names never masked. */
@@ -48,6 +59,7 @@ export const Config: Schema<PrivacyGatewayConfig> = Schema.object({
   personal: Schema.boolean().default(false),
   words: Schema.array(Schema.string()).default([]),
   allow: Schema.array(Schema.string()).default([]),
+  actions: Schema.dict(Schema.union(['mask', 'warn', 'block'] as const)).default({}),
   cookieNames: Schema.array(Schema.string()).default([]),
   cookieKeep: Schema.array(Schema.string()).default(['lang', 'locale', 'theme', 'tz']),
   protectEnvBlock: Schema.boolean().default(true),
@@ -68,6 +80,7 @@ export const defaults: ResolvedConfig = {
   personal: false,
   words: [],
   allow: [],
+  actions: {},
   cookieNames: [],
   cookieKeep: ['lang', 'locale', 'theme', 'tz'],
   protectEnvBlock: true,
@@ -89,6 +102,17 @@ function strings(v: unknown, fallback: string[] = []): string[] {
   return v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
 }
 
+/** The actions by kind, the kind in upper case; anything but warn and block is the default, mask. */
+function actions(v: unknown): Record<string, Action> {
+  const out: Record<string, Action> = {}
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return out
+  for (const [k, a] of Object.entries(v as Record<string, unknown>)) {
+    const kind = k.trim().toUpperCase()
+    if (kind !== '' && (a === 'warn' || a === 'block')) out[kind] = a
+  }
+  return out
+}
+
 function bool(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback
 }
@@ -102,6 +126,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     personal: bool(c.personal, defaults.personal),
     words: strings(c.words),
     allow: strings(c.allow),
+    actions: actions(c.actions),
     cookieNames: strings(c.cookieNames),
     cookieKeep: strings(c.cookieKeep, defaults.cookieKeep),
     protectEnvBlock: bool(c.protectEnvBlock, defaults.protectEnvBlock),

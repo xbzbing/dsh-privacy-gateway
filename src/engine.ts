@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from './config.ts'
 import { valuesOf, whatOf, RecordStore, type MaskRecord } from './records.ts'
 import { ValueTable } from './redact/known.ts'
-import { Masker, type MaskResult } from './redact/mask.ts'
+import { Masker, type Hit, type MaskResult } from './redact/mask.ts'
 import { newTally, Restorer, type StreamRestorer, type Tally } from './redact/restore.ts'
 
 /** Where a request goes, as the record keeps it. */
@@ -31,6 +31,26 @@ export interface Exchange {
 export interface RedactionEngine {
   /** The request as it goes, or null when it goes as it is (not a model request, or masking is off). Throws when masking fails. */
   maskRequest(body: string, info: RequestInfo): Exchange | null
+}
+
+/**
+ * A block action stopped the request (design §6): it is not sent. The message
+ * names each value by its kind, its head and its length, never the value.
+ */
+export class RequestBlocked extends Error {
+  readonly hits: readonly Hit[]
+  constructor(hits: readonly Hit[]) {
+    const seen = new Set<string>()
+    const what: string[] = []
+    for (const h of hits) {
+      if (seen.has(h.placeholder)) continue
+      seen.add(h.placeholder)
+      what.push(`${h.kind} (${h.head}…, ${h.len} characters)`)
+    }
+    super(`request blocked: it has ${what.join(', ')}; remove the value or change the kind's action`)
+    this.name = 'RequestBlocked'
+    this.hits = hits
+  }
 }
 
 export interface EngineOptions {
@@ -67,6 +87,7 @@ export class PrivacyEngine implements RedactionEngine {
       words: config.words,
       allow: config.allow,
       cookies: { names: config.cookieNames, keep: config.cookieKeep },
+      actions: notMasked(config.actions),
     })
     this.#restorer = new Restorer(this.#table)
     this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
@@ -98,7 +119,17 @@ export class PrivacyEngine implements RedactionEngine {
     if (r === null) return null
     const tookMs = elapsed(started)
     const model = r.model ?? modelInPath(info.path)
-    const record: Omit<MaskRecord, 'key'> = { ...base, ...(model ? { model } : {}), tookMs, n: r.n, values: valuesOf(r.hits), restored: 0, unmapped: 0 }
+    let warned = 0
+    const blocks: Hit[] = []
+    for (const h of r.hits) {
+      if (h.action === 'warn') warned++
+      else if (h.action === 'block') blocks.push(h)
+    }
+    const record: Omit<MaskRecord, 'key'> = { ...base, ...(model ? { model } : {}), tookMs, n: r.n, ...(warned > 0 ? { warned } : {}), values: valuesOf(r.hits), restored: 0, unmapped: 0 }
+    if (blocks.length > 0) {
+      this.records.add({ ...record, blocked: true })
+      throw new RequestBlocked(blocks)
+    }
     const tally: Tally = newTally()
     let done = false
     return {
@@ -112,11 +143,18 @@ export class PrivacyEngine implements RedactionEngine {
         let restored = 0
         for (const n of tally.restored.values()) restored += n
         // a request with nothing masked and nothing put back is not recorded (docs/adr/0008)
-        if (record.n === 0 && restored === 0 && tally.unmapped === 0) return
+        if (record.n === 0 && warned === 0 && restored === 0 && tally.unmapped === 0) return
         this.records.add({ ...record, restored, ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}), unmapped: tally.unmapped })
       },
     }
   }
+}
+
+/** The actions that leave a value unmasked. */
+function notMasked(actions: ResolvedConfig['actions']): Record<string, 'warn' | 'block'> {
+  const out: Record<string, 'warn' | 'block'> = {}
+  for (const [kind, a] of Object.entries(actions)) if (a === 'warn' || a === 'block') out[kind] = a
+  return out
 }
 
 function elapsed(started: number): number {

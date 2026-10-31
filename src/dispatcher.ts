@@ -1,6 +1,6 @@
 import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
-import type { Exchange, RedactionEngine, RequestInfo } from './engine.ts'
+import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
 
 type Options = Dispatcher.DispatchOptions
 type Handler = Dispatcher.DispatchHandler
@@ -9,9 +9,11 @@ type IncomingHeaders = Parameters<NonNullable<Handler['onResponseStart']>>[2]
 
 /** The error a request fails with when masking throws: it is not sent (docs/adr/0005). */
 export class PrivacyGatewayError extends Error {
-  readonly code = 'DSH_PRIVACY_GATEWAY_FAIL_CLOSED'
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** DSH_PRIVACY_GATEWAY_FAIL_CLOSED when masking failed, DSH_PRIVACY_GATEWAY_BLOCKED when a block action stopped the request. */
+  readonly code: string
+  constructor(message: string, options?: { cause?: unknown }, code = 'DSH_PRIVACY_GATEWAY_FAIL_CLOSED') {
     super(`dsh-privacy-gateway: ${message}`, options)
+    this.code = code
     this.name = 'PrivacyGatewayError'
   }
 }
@@ -497,6 +499,11 @@ export class MaskingDispatcher extends Dispatcher {
       try {
         exchange = this.#engine.maskRequest(text, requestInfo(opts))
       } catch (err) {
+        if (err instanceof RequestBlocked) {
+          this.#logger?.warn(`dsh-privacy-gateway: ${err.message}`)
+          failRequest(handler, new PrivacyGatewayError(err.message, undefined, 'DSH_PRIVACY_GATEWAY_BLOCKED'))
+          return
+        }
         this.#logger?.warn('dsh-privacy-gateway: masking failed, request not sent', err)
         failRequest(handler, new PrivacyGatewayError('masking failed, request not sent', { cause: err }))
         return

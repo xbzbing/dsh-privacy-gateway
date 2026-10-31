@@ -24,6 +24,8 @@ export interface ValueRecord {
   len: number
   /** The places the request had it. */
   n: number
+  /** Not masked, by the kind's action: sent as written (warn) or the request stopped (block). */
+  action?: 'warn' | 'block'
 }
 
 /** chat, embeddings, count or search, by the request's path. */
@@ -44,6 +46,10 @@ export interface MaskRecord {
   session?: string
   /** Values swapped, each place counted. */
   n: number
+  /** Places sent as written by a warn action. */
+  warned?: number
+  /** A block action stopped the request: it was not sent. */
+  blocked?: true
   values: ValueRecord[]
   /** Places the reply had a placeholder put back. */
   restored: number
@@ -61,7 +67,7 @@ export function valuesOf(hits: readonly Hit[]): ValueRecord[] {
   for (const h of hits) {
     const v = by.get(h.placeholder)
     if (v) v.n++
-    else by.set(h.placeholder, { placeholder: h.placeholder, kind: h.kind, finder: h.by, head: h.head, len: h.len, n: 1 })
+    else by.set(h.placeholder, { placeholder: h.placeholder, kind: h.kind, finder: h.by, head: h.head, len: h.len, n: 1, ...(h.action ? { action: h.action } : {}) })
   }
   return [...by.values()]
 }
@@ -85,6 +91,10 @@ export interface Totals {
   restoredInTools: number
   unmapped: number
   failed: number
+  /** Places a warn action sent as written. */
+  warned: number
+  /** Requests a block action stopped. */
+  blocked: number
   tookMs: { sum: number; max: number }
   /** Places by kind, by finder, by host and by model. */
   kinds: Record<string, number>
@@ -94,7 +104,7 @@ export interface Totals {
 }
 
 export function emptyTotals(): Totals {
-  return { requests: 0, masked: 0, n: 0, restored: 0, restoredInTools: 0, unmapped: 0, failed: 0, tookMs: { sum: 0, max: 0 }, kinds: {}, finders: {}, hosts: {}, models: {} }
+  return { requests: 0, masked: 0, n: 0, restored: 0, restoredInTools: 0, unmapped: 0, failed: 0, warned: 0, blocked: 0, tookMs: { sum: 0, max: 0 }, kinds: {}, finders: {}, hosts: {}, models: {} }
 }
 
 function bump(m: Record<string, number>, k: string, by: number): void {
@@ -109,9 +119,12 @@ export function addRecord(t: Totals, r: MaskRecord): void {
   t.restoredInTools += r.restoredInTools ?? 0
   t.unmapped += r.unmapped
   if (r.failed) t.failed++
+  t.warned += r.warned ?? 0
+  if (r.blocked) t.blocked++
   t.tookMs.sum += r.tookMs
   t.tookMs.max = Math.max(t.tookMs.max, r.tookMs)
   for (const v of r.values) {
+    if (v.action) continue
     bump(t.kinds, v.kind, v.n)
     bump(t.finders, v.finder, v.n)
   }
@@ -127,6 +140,8 @@ export function addTotals(into: Totals, t: Totals): void {
   into.restoredInTools += t.restoredInTools
   into.unmapped += t.unmapped
   into.failed += t.failed
+  into.warned += t.warned
+  into.blocked += t.blocked
   into.tookMs.sum += t.tookMs.sum
   into.tookMs.max = Math.max(into.tookMs.max, t.tookMs.max)
   for (const k of ['kinds', 'finders', 'hosts', 'models'] as const) {
@@ -150,6 +165,7 @@ function parseRecord(line: string): MaskRecord | undefined {
     r.restored = typeof r.restored === 'number' ? r.restored : 0
     r.unmapped = typeof r.unmapped === 'number' ? r.unmapped : 0
     if (typeof r.restoredInTools !== 'number') delete r.restoredInTools
+    if (typeof r.warned !== 'number') delete r.warned
     r.tookMs = typeof r.tookMs === 'number' ? r.tookMs : 0
     r.host = typeof r.host === 'string' ? r.host : ''
     return r

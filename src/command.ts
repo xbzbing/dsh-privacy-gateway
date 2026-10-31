@@ -46,6 +46,8 @@ const TEXT = {
     failedToday: (n: number) => `今日遮蔽失败 ${n} 次`,
     unmapped: (n: number) => `⚠ 今日回复里有 ${n} 个值表里没有的占位符（可能被模型改坏）`,
     took: (avg: number, max: number) => `遮蔽耗时：平均 ${avg} ms，最长 ${max} ms`,
+    action: { warn: '（warn：会按原文发出并记一条）', block: '（block：整个请求不会发出）' },
+    actedToday: (warned: number, blocked: number) => `今日 warn 放行 ${warned} 处，block 拦下 ${blocked} 次请求`,
   },
   en: {
     usage: 'Usage: /privacy [status | on | off | test <text>]',
@@ -69,6 +71,8 @@ const TEXT = {
     failedToday: (n: number) => `Masking failures today: ${n}`,
     unmapped: (n: number) => `⚠ Replies today had ${n} placeholders the table has no value for (a model may have changed them)`,
     took: (avg: number, max: number) => `Masking time: ${avg} ms on average, ${max} ms at most`,
+    action: { warn: ' (warn: goes as written, and is recorded)', block: ' (block: the request would not be sent)' },
+    actedToday: (warned: number, blocked: number) => `Today warn let ${warned} places through and block stopped ${blocked} requests`,
   },
 } as const
 
@@ -80,8 +84,8 @@ function counts(m: Record<string, number>): string {
 }
 
 /** A value as an answer may show it: kind, finder, head and length. */
-function hintOf(h: Hit): string {
-  return `${h.placeholder}  ${h.kind} · ${h.by} · ${h.head ? `${h.head}… ` : ''}${h.len}`
+function hintOf(h: Hit, lang: Lang): string {
+  return `${h.placeholder}  ${h.kind} · ${h.by} · ${h.head ? `${h.head}… ` : ''}${h.len}${h.action ? TEXT[lang].action[h.action] : ''}`
 }
 
 function status(face: PrivacyFace, lang: Lang): string {
@@ -90,6 +94,7 @@ function status(face: PrivacyFace, lang: Lang): string {
   const out = [T.state(face.active), T.covers(face.secrets, face.personal), T.table(face.values), '', T.line(T.today, s.today), T.line(T.week, s.week), T.line(T.month, s.month)]
   if (Object.keys(s.today.kinds).length > 0) out.push(T.kinds + counts(s.today.kinds))
   if (Object.keys(s.today.finders).length > 0) out.push(T.finders + counts(s.today.finders))
+  if (s.today.warned > 0 || s.today.blocked > 0) out.push(T.actedToday(s.today.warned, s.today.blocked))
   if (s.today.requests > 0) out.push(T.took(Math.round((s.today.tookMs.sum / s.today.requests) * 100) / 100, s.today.tookMs.max))
   const warn: string[] = []
   if (s.failStreak > 0) warn.push(T.failed(s.failStreak))
@@ -123,7 +128,7 @@ export function runPrivacyCommand(face: PrivacyFace, rawInput: string, lang: Lan
       if (r.hits.length === 0) return { kind: 'success', text: T.nothing }
       const seen = new Set<string>()
       const values = r.hits.filter((h) => !seen.has(h.placeholder) && seen.add(h.placeholder))
-      return { kind: 'success', text: [T.wouldGo, r.text, '', T.values(values.length), ...values.map(hintOf)].join('\n') }
+      return { kind: 'success', text: [T.wouldGo, r.text, '', T.values(values.length), ...values.map((h) => hintOf(h, lang))].join('\n') }
     }
     default:
       return { kind: 'error', text: T.usage }

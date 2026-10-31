@@ -41,6 +41,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 | `personal` | `false` | 遮蔽邮箱、手机号、身份证号、银行卡号 |
 | `words` | `[]` | 自己的词（项目代号、客户名），按原样遮成 `TERM` |
 | `allow` | `[]` | 永不遮的值：整值匹配，不分大小写 |
+| `actions` | `{}` | 按 kind 选动作：`mask`（默认，换成占位符）、`warn`（照发并记一条）、`block`（整个请求不发）。例：`{ PRIVATE_KEY: block, EMAIL: warn }`（[ADR-0013](docs/adr/0013-actions.md)） |
 | `cookieNames` | `[]` | 追加要遮的 cookie 名 |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不遮的 cookie 名 |
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用（[ADR-0004](docs/adr/0004-protected-regions.md)） |
