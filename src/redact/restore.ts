@@ -133,27 +133,55 @@ function eventEnd(b: string): [number, number] {
   return [i, 2]
 }
 
-/** The one data line of an event that has JSON in it: the event's name, what comes before the JSON, the JSON, and after it. */
-function splitEvent(ev: string): { name: string; pre: string; data: string; post: string } | undefined {
+/**
+ * The JSON an event's data lines hold, joined as SSE joins them (a line break
+ * between each), with its name, and how to write the event again with other
+ * JSON in their place. A data line may hold any part of the JSON, but a JSON
+ * text has line breaks only between its tokens, so the restored JSON, which
+ * has the same ones, splits back into the same lines.
+ */
+interface Split {
+  name: string
+  data: string
+  /** The event with `data` in its data lines; undefined where it no longer splits into as many. */
+  render(data: string): string | undefined
+}
+
+function splitEvent(ev: string): Split | undefined {
   let name = ''
-  let at = -1
-  let off = 0
-  let lineAt = 0
-  for (const l of ev.split(/(?<=\n)/)) {
+  const lines = ev.split(/(?<=\n)/)
+  const at: Array<{ line: number; head: string; eol: string }> = []
+  const bodies: string[] = []
+  lines.forEach((l, i) => {
     const t = l.replace(/\r?\n$/, '')
     if (t.startsWith('event:')) name = t.slice(6).trim()
     else if (t.startsWith('data:')) {
-      if (at >= 0) return undefined // data over more than one line
-      at = off
-      lineAt = t.length
+      const start = t[5] === ' ' ? 6 : 5
+      at.push({ line: i, head: t.slice(0, start), eol: l.slice(t.length) })
+      bodies.push(t.slice(start))
     }
-    off += l.length
-  }
-  if (at < 0) return undefined
-  const start = ev[at + 5] === ' ' ? 6 : 5
-  const data = ev.slice(at + start, at + lineAt)
+  })
+  if (at.length === 0) return undefined
+  const data = bodies.join('\n')
   if (data[0] !== '{' && data[0] !== '[') return undefined
-  return { name, pre: ev.slice(0, at + start), data, post: ev.slice(at + lineAt) }
+  return {
+    name,
+    data,
+    render(d) {
+      const pieces = d.split('\n')
+      if (pieces.length !== at.length) return undefined
+      const out = [...lines]
+      at.forEach((a, k) => {
+        out[a.line] = a.head + (pieces[k] as string) + a.eol
+      })
+      return out.join('')
+    },
+  }
+}
+
+/** Whether a text that is no JSON event as a whole has data that reads as JSON, where a value put back would need escaping. */
+function jsonData(text: string): boolean {
+  return /^data:[ ]?[{[]/m.test(text)
 }
 
 /** What says which text an event goes on with: its type, its item and the indexes it has. */
@@ -205,22 +233,24 @@ export class Restorer {
   /**
    * `escaped` is for text that is itself JSON (a tool call's arguments), where
    * a value goes in escaped. `leave` puts nothing back: the places are counted
-   * as left (toolGuard block).
+   * as left (toolGuard block). `plain` puts back only values that need no
+   * escaping: the text is JSON this restorer could not read, and a value with
+   * a quote in it would break it.
    */
-  restoreText(s: string, escaped = false, tally?: Tally, tool = false, leave = false): string {
+  restoreText(s: string, escaped = false, tally?: Tally, tool = false, leave = false, plain = false): string {
     if (this.#table.size === 0) return s
     const shapes = this.#table.shapes > 0
     if (!shapes && !s.includes('_')) return s
     if (leave) {
       const scratch = newTally()
-      this.restoreText(s, escaped, scratch, tool)
+      this.restoreText(s, escaped, scratch, tool, false, plain)
       if (tally) {
         for (const n of scratch.restored.values()) tally.exfilBlocked += n
         tally.unmapped += scratch.unmapped
       }
       return s
     }
-    const out = s.includes('_') ? this.#placeholders(s, escaped, tally, tool) : s
+    const out = s.includes('_') ? this.#placeholders(s, escaped, tally, tool, plain) : s
     return shapes ? this.#shapes(out, tally, tool) : out
   }
 
@@ -245,7 +275,7 @@ export class Restorer {
     return out.join('')
   }
 
-  #placeholders(s: string, escaped: boolean, tally: Tally | undefined, tool: boolean): string {
+  #placeholders(s: string, escaped: boolean, tally: Tally | undefined, tool: boolean, plain: boolean): string {
     if (tally && s.includes('{{')) {
       for (const m of s.matchAll(STRICT)) if (this.#table.get(m[0]) === undefined) tally.unmapped++
     }
@@ -257,7 +287,7 @@ export class Restorer {
       if (a < last) continue
       const p = canonical(m[0])
       const v = this.#table.get(p)
-      if (v === undefined) continue
+      if (v === undefined || (plain && jsonEscape(v) !== v)) continue
       ;[a, z] = braces(s, a, z)
       if (a < last) continue
       if (tally) {
@@ -346,10 +376,12 @@ export class Restorer {
       pending = undefined
       return out
     }
+    // an event read as no JSON: a value goes back where it needs no escaping, or none where it is left
+    const loose = (ev: string, leave: boolean): string => this.restoreText(ev, false, tally, leave, leave, jsonData(ev))
     const event = (ev: string, leave = false): string => {
       if (!pending && this.#table.size === 0) return ev
       const e = splitEvent(ev)
-      if (!e) return release() + this.restoreText(ev, false, tally)
+      if (!e) return release() + loose(ev, leave)
       const ctx = `${e.name}|${eventCtx(e.data)}`
       let out = ''
       let carry: Map<string, string> | undefined
@@ -388,12 +420,14 @@ export class Restorer {
         const tool = inToolCall(path, key, type)
         return this.restoreText(s, escaped, tally, tool, leave && tool)
       })
-      if (restored === null) return out + this.restoreText(ev, false, tally)
-      const full = e.pre + restored + e.post
+      const full = restored === null ? undefined : e.render(restored)
+      if (restored === null || full === undefined) return out + loose(ev, leave)
       if (!tails || !cuts) return out + full
       const cutMap = cuts
       const cutData = walkJSON(restored, (path, _k, s) => cutMap.get(path) ?? s) ?? restored
-      pending = { ctx, tails, full, cut: e.pre + cutData + e.post }
+      const cut = e.render(cutData)
+      if (cut === undefined) return out + full
+      pending = { ctx, tails, full, cut }
       return out
     }
     // the tool arguments of the events in a row that have some: judged as one when the row ends (toolGuard)
@@ -447,7 +481,7 @@ export class Restorer {
         let out = drain()
         out += closeRun()
         out += release()
-        if (buf !== '') out += this.restoreText(buf, false, tally)
+        if (buf !== '') out += loose(buf, false)
         buf = ''
         return out
       },
