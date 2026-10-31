@@ -4,7 +4,7 @@
  * host's display mask knows added (design §5.1). A rule's value is its
  * pattern's group 1 when it has one, else all of what it matches.
  */
-import { ALNUM, TOKEN_CH, fieldAt, keyAt, notASlug, notAVariable, secretValue } from './checks.ts'
+import { ALNUM, TOKEN_CH, basicValue, bearerValue, fieldAt, keyAt, notASlug, notAVariable, pemBody, secretValue } from './checks.ts'
 import { chineseID, emailAt, hiddenInURL, luhn, phoneAt, realEmail } from './personal.ts'
 
 export { ALNUM, TOKEN_CH, notASlug }
@@ -47,7 +47,7 @@ const SECRET_CH = `[A-Za-z0-9_\\-./+=~!@#%^&*]`
  */
 const MAX_SECRET = 1024
 /** What a field holding a secret has in its name: DB_PASSWORD, apiKey, x-api-key, client_secret. */
-const SECRET_NAMES = ['password', 'passwd', 'secret', 'token', 'api[_-]?key', 'access[_-]?key', 'private[_-]?key', 'credential']
+const SECRET_NAMES = ['password', 'passwd', 'pwd', 'secret', 'token', 'api[_-]?key', 'access[_-]?key', 'private[_-]?key', 'credential']
 
 const CJK_PASSWORD_NAMES = ['密码', '密碼', '口令', 'PIN码', 'PIN碼', 'PIN 码', '安全码', '安全碼', 'パスワード', '暗証番号', '비밀번호', '암호', '비번']
 const CJK_KEY_NAMES = [
@@ -87,10 +87,30 @@ const localPart = (s: string, i: number): number => {
   while (k > 0 && i - k <= 64 && /[A-Za-z0-9._%+-]/.test(s[k - 1] as string)) k--
   return k < i ? k : -1
 }
-const SECRET_STARTS = ['pass', 'secret', 'token', 'api', 'access', 'private', 'credential']
+const SECRET_STARTS = ['pass', 'pwd', 'secret', 'token', 'api', 'access', 'private', 'credential']
+
+/*
+ * A private key in PEM: its BEGIN line, then only what a PEM body has (base64,
+ * line breaks, written as \n in JSON text too, and the Proc-Type: and
+ * DEK-Info: lines of an encrypted one), then its END line. Code that names
+ * both lines with code between them is no key. A key cut off before its END
+ * line is still one: its BEGIN line and the whole base64 lines after it.
+ */
+const DASHES = '-----'
+const PEM_LABEL = '(?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?'
+const PEM_BEGIN = `${DASHES}BEGIN ${PEM_LABEL}${DASHES}`
+const PEM_HEADER = '(?:Proc-Type|DEK-Info):[^\\n\\r\\\\]{0,200}'
+const PEM_CHAR = `(?:${PEM_HEADER}|\\\\[nrt/]|[A-Za-z0-9+/=\\s])`
+/** A line break, or \n as JSON text writes one, and any blank space and breaks after it. */
+const PEM_BREAK = '[ \\t]*(?:\\r?\\n|(?:\\\\r)?\\\\n)(?:[ \\t\\r\\n]|\\\\[rn])*'
+/** A whole line of base64: what ends it is a line break, a quote or the text's end. */
+const PEM_LINE = '[A-Za-z0-9+/=]{4,128}(?=[ \\t]*(?:[\\r\\n"\'`]|\\\\[rn"]|$))'
+/** The most characters a PEM body is read to: an RSA 8192 key's is under 7000. */
+const MAX_PEM = 16384
 
 export const rules: readonly Rule[] = [
-  s({ kind: 'PRIVATE_KEY', re: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]+?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g, markers: ['PRIVATE KEY'] }),
+  s({ kind: 'PRIVATE_KEY', re: new RegExp(`${PEM_BEGIN}${PEM_CHAR}{1,${MAX_PEM}}${DASHES}END ${PEM_LABEL}${DASHES}`, 'g'), markers: ['PRIVATE KEY'] }),
+  s({ kind: 'PRIVATE_KEY', re: new RegExp(`${PEM_BEGIN}(?:${PEM_BREAK}(?:${PEM_HEADER}|${PEM_LINE})){1,256}`, 'g'), markers: ['PRIVATE KEY'], ok: pemBody }),
   s({ kind: 'API_KEY', re: /sk-(?:ant-|proj-|or-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}/g, markers: ['sk-'], bound: TOKEN_CH, ok: notASlug }),
   // a gateway's or a relay's own: oc_sk_…, or_sk_…
   s({ kind: 'API_KEY', re: /[a-z]{2,4}_sk_[A-Za-z0-9_-]{20,}/g, markers: ['_sk_'], bound: TOKEN_CH, ok: secretValue }),
@@ -113,6 +133,21 @@ export const rules: readonly Rule[] = [
   s({ kind: 'TOKEN', re: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, markers: ['eyJ'], bound: TOKEN_CH }),
   // the password of user:password@host, or of :password@host as a Redis URL has it with no user
   s({ kind: 'PASSWORD', re: /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:@/?#"'<>]*:([^\s@/?#"'<>]{3,})@/dy, fold: ['://'], anchor: scheme, ok: notAVariable, at: hiddenInURL }),
+  // an Authorization header's credential: an opaque token after Bearer or Token, user:password in base64 after Basic
+  s({
+    kind: 'TOKEN',
+    re: new RegExp(`authorization${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}(?:bearer|token)[ \\t]+([A-Za-z0-9._~+/-]{12,${MAX_SECRET}}=*)(?![A-Za-z0-9._~+/=-])`, 'yid'),
+    fold: ['authorization'],
+    anchor: at,
+    ok: bearerValue,
+  }),
+  s({
+    kind: 'PASSWORD',
+    re: new RegExp(`authorization${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}basic[ \\t]+([A-Za-z0-9+/]{8,${MAX_SECRET}}={0,2})(?![A-Za-z0-9+/=])`, 'yid'),
+    fold: ['authorization'],
+    anchor: at,
+    ok: basicValue,
+  }),
   // password = …, API_KEY: "…", as .env files and configs have them
   s({
     kind: 'SECRET',
@@ -139,11 +174,11 @@ export const rules: readonly Rule[] = [
   s({
     kind: 'SECRET',
     re: new RegExp(
-      `(?:${SECRET_NAMES.join('|')}|pwd|api[ ]key|access[ ]key|secret[ ]key|key|\\bpin(?:[ ]?code)?)${QUOTE}[ \\t]*(?:[为為是][ \\t]*[:：]?|：)[ \\t]*(?:\\\\?["'“「])?(${SECRET_CH}{3,${MAX_SECRET}}[A-Za-z0-9_\\-/+=~!@#%^&*])`,
+      `(?:${SECRET_NAMES.join('|')}|api[ ]key|access[ ]key|secret[ ]key|key|\\bpin(?:[ ]?code)?)${QUOTE}[ \\t]*(?:[为為是][ \\t]*[:：]?|：)[ \\t]*(?:\\\\?["'“「])?(${SECRET_CH}{3,${MAX_SECRET}}[A-Za-z0-9_\\-/+=~!@#%^&*])`,
       'yid',
     ),
     markers: ['为', '為', '是', '：'],
-    fold: [...SECRET_STARTS, 'pwd', 'key', 'pin'],
+    fold: [...SECRET_STARTS, 'key', 'pin'],
     anchor: at,
     at: keyAt,
   }),

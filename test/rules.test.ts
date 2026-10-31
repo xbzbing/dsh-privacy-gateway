@@ -195,3 +195,51 @@ test('reconfigure: new words mask from the next request, and a value masked befo
   const reply = JSON.stringify({ choices: [{ message: { role: 'assistant', content: `use ${placeholder}` } }] })
   assert.ok(first.restoreBody(reply).includes(key))
 })
+
+// PEM lines built from pieces, so no tool or gateway reads a key here
+const D = '-----'
+const BEGIN = D + 'BEGIN ' + 'PRIVATE KEY' + D
+const END = D + 'END ' + 'PRIVATE KEY' + D
+const B64 = ['MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7', 'Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wYQ1xS2dF3gH4jK5lM6nO7pQ8rS9tU0vW', 'x1Y2z3A4b5C6d7E8f9G0h1I2j3K4l5M6n7O8p9Q0==']
+
+test('a PEM private key is masked whole, in text and in JSON text, and code naming its lines is not', () => {
+  const pem = [BEGIN, ...B64, END].join('\n')
+  assert.deepEqual(masked(`key:\n${pem}\nthat was it`), [pem])
+  const escaped = [BEGIN, ...B64, END].join('\\n')
+  assert.deepEqual(masked(`{"key":"${escaped}"}`), [escaped])
+  const encrypted = [BEGIN.replace('BEGIN ', 'BEGIN RSA '), 'Proc-Type: 4,ENCRYPTED', 'DEK-Info: DES-EDE3-CBC,0123456789ABCDEF', '', ...B64, END.replace('END ', 'END RSA ')].join('\n')
+  assert.deepEqual(masked(encrypted), [encrypted])
+  const code = `const head = '${BEGIN}'\nfunction wrap(b) { return head + '\\n' + b + '\\n' + tail }\nconst tail = '${END}'`
+  assert.deepEqual(masked(code), [])
+})
+
+test('a PEM key cut off before its END line is masked up to its last base64 line', () => {
+  const cut = [BEGIN, ...B64].join('\n')
+  assert.deepEqual(masked(`${cut}\nand the rest is lost`), [cut])
+  assert.deepEqual(masked(`"${[BEGIN, ...B64].join('\\n')}"`), [[BEGIN, ...B64].join('\\n')])
+  // a BEGIN line with a few words after it is no key
+  assert.deepEqual(masked(`${BEGIN}\nfoo\nbar`), [])
+})
+
+test('an Authorization header\'s Bearer token and Basic credential are masked; stand-ins and prose are not', () => {
+  const bearer = 'abcDEF123456ghiJKL789mno'
+  assert.deepEqual(masked(`curl -H "Authorization: Bearer ${bearer}" https://api.example.com`), [bearer])
+  assert.deepEqual(masked(`{"headers":{"authorization":"bearer ${bearer}"}}`), [bearer])
+  const basic = Buffer.from('alice:s3cretPass').toString('base64')
+  assert.deepEqual(masked(`Authorization: Basic ${basic}`), [basic])
+  for (const s of [
+    'Authorization: Bearer $TOKEN',
+    'Authorization: Bearer ${TOKEN}',
+    'Authorization: Bearer {{TOKEN_abcdefgh}}',
+    'Authorization: Bearer YOUR_ACCESS_TOKEN',
+    'Authorization: Bearer <token>',
+    'The Authorization: Bearer token header is required',
+    'Authorization: Basic realm="api"',
+    'send a Bearer abcDEF123456ghiJKL789 token',
+  ]) assert.equal(setup().masker.maskText(s).n, 0, s)
+})
+
+test('a *_PWD field masks its value', () => {
+  assert.deepEqual(masked('MYSQL_PWD=Hunt3rPass9 mysql -u root'), ['Hunt3rPass9'])
+  assert.deepEqual(masked('cd $PWD && OLDPWD=/Users/me/src'), [])
+})

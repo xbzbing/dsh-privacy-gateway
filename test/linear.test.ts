@@ -7,6 +7,8 @@ import { ValueTable } from '../src/redact/known.ts'
 import { Masker } from '../src/redact/mask.ts'
 import { Restorer } from '../src/redact/restore.ts'
 
+const BEGIN = '-----' + 'BEGIN ' + 'PRIVATE KEY' + '-----'
+
 function ms(f: () => unknown): number {
   const t = performance.now()
   f()
@@ -36,6 +38,14 @@ test('long runs that once made a pattern read the rest of the text from every pl
     'cookie='.repeat(8000),
     'cookie: x '.repeat(8000),
     'BDUSS='.repeat(8000),
+    BEGIN.repeat(2000),
+    (BEGIN + '\n' + 'A'.repeat(64)).repeat(600),
+    BEGIN + '\n' + 'A'.repeat(60000),
+    BEGIN + ('A'.repeat(63) + '\n').repeat(1000),
+    'Proc-Type: '.repeat(5000),
+    'Authorization: Bearer '.repeat(3000),
+    'Authorization: Basic ' + 'QUJD'.repeat(10000),
+    'MYSQL_PWD='.repeat(5000),
   ]
   for (const s of texts) {
     const t = ms(() => masker.maskText(s)) + ms(() => masker.maskText(s, true))

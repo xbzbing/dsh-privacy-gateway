@@ -71,6 +71,27 @@ export function keyAt(s: string, a: number, b: number): boolean {
   return KEY_SEPARATORS.some((c) => before.endsWith(c)) && !QUANTITY_UNITS.some((u) => after.startsWith(u))
 }
 
+/**
+ * An opaque token after Bearer: letters and digits both, and not a stand-in
+ * (YOUR_ACCESS_TOKEN, ${TOKEN} never get this far, as $ and { are no token's).
+ */
+export function bearerValue(v: string): boolean {
+  return notAVariable(v) && !/^[A-Z0-9_]+$/.test(v) && hasLetter(v) && hasDigit(v)
+}
+
+/** Basic's credential: base64 of user:password in printable text, so a word after Basic is none. */
+export function basicValue(v: string): boolean {
+  const t = Buffer.from(v, 'base64').toString('latin1')
+  const colon = t.indexOf(':')
+  return /^[\x20-\x7e]+$/.test(t) && colon >= 0 && colon < t.length - 1
+}
+
+/** A PEM key cut off before its END line: enough base64 after its BEGIN line to be a key's, not a few words of code. */
+export function pemBody(v: string): boolean {
+  const body = v.slice(v.indexOf('-----', 5) + 5)
+  return (body.match(/[A-Za-z0-9+/]/g)?.length ?? 0) >= 64
+}
+
 /** A value that looks like a secret, not code: letters and digits both, and not a call, a reference or a placeholder of its own. */
 export function secretValue(v: string): boolean {
   if (!notAVariable(v) || v.startsWith('process.env') || v.startsWith('os.')) return false
