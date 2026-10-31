@@ -111,7 +111,7 @@ export class PrivacyEngine implements RedactionEngine {
         done = true
         let restored = 0
         for (const n of tally.restored.values()) restored += n
-        this.records.add({ ...record, restored, unmapped: tally.unmapped })
+        this.records.add({ ...record, restored, ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}), unmapped: tally.unmapped })
       },
     }
   }

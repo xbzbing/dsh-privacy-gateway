@@ -47,6 +47,8 @@ export interface MaskRecord {
   values: ValueRecord[]
   /** Places the reply had a placeholder put back. */
   restored: number
+  /** Of those, the places inside a tool call's arguments (design §13 R15, docs/adr/0009). */
+  restoredInTools?: number
   /** Placeholders in the reply no value is known for (design §13 R11). */
   unmapped: number
   /** Masking failed: the request was not sent (docs/adr/0005). */
@@ -80,6 +82,7 @@ export interface Totals {
   masked: number
   n: number
   restored: number
+  restoredInTools: number
   unmapped: number
   failed: number
   tookMs: { sum: number; max: number }
@@ -91,7 +94,7 @@ export interface Totals {
 }
 
 export function emptyTotals(): Totals {
-  return { requests: 0, masked: 0, n: 0, restored: 0, unmapped: 0, failed: 0, tookMs: { sum: 0, max: 0 }, kinds: {}, finders: {}, hosts: {}, models: {} }
+  return { requests: 0, masked: 0, n: 0, restored: 0, restoredInTools: 0, unmapped: 0, failed: 0, tookMs: { sum: 0, max: 0 }, kinds: {}, finders: {}, hosts: {}, models: {} }
 }
 
 function bump(m: Record<string, number>, k: string, by: number): void {
@@ -103,6 +106,7 @@ export function addRecord(t: Totals, r: MaskRecord): void {
   if (r.n > 0) t.masked++
   t.n += r.n
   t.restored += r.restored
+  t.restoredInTools += r.restoredInTools ?? 0
   t.unmapped += r.unmapped
   if (r.failed) t.failed++
   t.tookMs.sum += r.tookMs
@@ -120,6 +124,7 @@ export function addTotals(into: Totals, t: Totals): void {
   into.masked += t.masked
   into.n += t.n
   into.restored += t.restored
+  into.restoredInTools += t.restoredInTools
   into.unmapped += t.unmapped
   into.failed += t.failed
   into.tookMs.sum += t.tookMs.sum
@@ -144,6 +149,7 @@ function parseRecord(line: string): MaskRecord | undefined {
     if (typeof r !== 'object' || r === null || typeof r.time !== 'string' || typeof r.n !== 'number' || !Array.isArray(r.values)) return undefined
     r.restored = typeof r.restored === 'number' ? r.restored : 0
     r.unmapped = typeof r.unmapped === 'number' ? r.unmapped : 0
+    if (typeof r.restoredInTools !== 'number') delete r.restoredInTools
     r.tookMs = typeof r.tookMs === 'number' ? r.tookMs : 0
     r.host = typeof r.host === 'string' ? r.host : ''
     return r

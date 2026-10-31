@@ -12,7 +12,7 @@
 - 遮蔽器抛异常：不发这个请求，向调用方抛出带明确文案的错误（`dsh-privacy-gateway: masking failed, request not sent`）。pi-ai 会把它归一化成 provider 错误，agent 能看到。
 - body 不可解析、不是 JSON、或不是模型请求：不是失败，原样透传。
 - 读取请求 body 失败（调用方中途取消等）：把读取错误交还调用方，不发请求。
-- 连续失败也不自动降级为放行；止血靠配置开关 `enabled: false`（P1 加 `/privacy off`）。
+- 连续失败也不自动降级为放行；止血靠 `/privacy off`（只改本次运行的开关，遮蔽器不参与，遮蔽失败时照样可用）或配置开关 `enabled: false`。
 
 ## Consequences
 

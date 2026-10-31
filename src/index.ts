@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 
+import { langOf, runPrivacyCommand, type PrivacyFace } from './command.ts'
 import { resolveConfig, type PrivacyGatewayConfig } from './config.ts'
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
@@ -21,7 +22,37 @@ export interface PluginContext {
   logger: { info(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void }
   /** cordis: run `execute` now and its returned disposer when the plugin's fiber is disposed. */
   effect(execute: () => () => void): unknown
+  /** cordis: run `callback` with a child context once every named service is there (and dispose it when one goes). */
+  inject?(deps: string[], callback: (child: PluginContext & { commands: CommandsService }) => void): unknown
+  /** cordis: the named service, or undefined. */
+  get?(name: string): unknown
 }
+
+/** The slice of dsh-commands the plugin uses. */
+export interface CommandsService {
+  register(definition: {
+    name: string
+    description: string
+    input?: { hint: string }
+    recordInput?: boolean
+    handler(invocation: { rawInput: string }): { kind: 'success'; text?: string } | { kind: 'error'; text: string }
+  }): () => void
+}
+
+/** The user's locale preference, through dsh-settings; English when it cannot be read. */
+function localeOf(ctx: PluginContext): unknown {
+  try {
+    const settings = ctx.get?.('settings') as { describe?(o: { redactSecrets: boolean }): Array<{ ns: string; value?: Record<string, unknown> }> } | undefined
+    return settings?.describe?.({ redactSecrets: true }).find((e) => e.ns === 'locale')?.value?.preference
+  } catch {
+    return undefined
+  }
+}
+
+const COMMAND_TEXT = {
+  zh: { description: '隐私网关：状态、开关与脱敏预览', hint: 'status | on | off | test <文本>' },
+  en: { description: 'Privacy gateway: status, on/off and a masking preview', hint: 'status | on | off | test <text>' },
+} as const
 
 export const name = 'dsh-privacy-gateway'
 
@@ -47,6 +78,36 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     logger: ctx.logger,
   })
   const engine = new PrivacyEngine(key, cfg, { records })
+  const face: PrivacyFace = {
+    get active() {
+      return engine.active
+    },
+    set active(on: boolean) {
+      engine.active = on
+      ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} by /privacy`)
+    },
+    secrets: cfg.secrets,
+    personal: cfg.personal,
+    get values() {
+      return engine.values
+    },
+    stats: () => records.stats(),
+    preview: (text) => engine.preview(text),
+  }
+  // the command is there when dsh-commands is; the gateway runs either way
+  ctx.inject?.(['commands'], (child) => {
+    child.effect(() => {
+      const text = COMMAND_TEXT[langOf(localeOf(ctx))]
+      return child.commands.register({
+        name: 'privacy',
+        description: text.description,
+        input: { hint: text.hint },
+        // `test <text>` may hold the very secrets the gateway keeps from the log
+        recordInput: false,
+        handler: (invocation) => runPrivacyCommand(face, invocation.rawInput, langOf(localeOf(ctx))),
+      })
+    })
+  })
   ctx.effect(() => {
     const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')

@@ -13,14 +13,28 @@ const STRICT = /\{\{[A-Z][A-Z0-9_]*_[a-z2-7]{8}\}\}/g
 /** The longest placeholder the masker writes: {{, a kind of up to 24, _, the 8 of the hash, }}. */
 const MAX_PLACEHOLDER = 2 + 24 + 1 + 8 + 2
 
-/** What a reply had put back, for the record: places per placeholder, and placeholders no value is known for. */
+/**
+ * What a reply had put back, for the record: places per placeholder, the
+ * places inside a tool call's arguments (where a value put back can leave the
+ * machine when the tool runs, design §13 R15), and placeholders no value is
+ * known for.
+ */
 export interface Tally {
   restored: Map<string, number>
+  inTools: number
   unmapped: number
 }
 
 export function newTally(): Tally {
-  return { restored: new Map(), unmapped: 0 }
+  return { restored: new Map(), inTools: 0, unmapped: 0 }
+}
+
+/** Keys a tool call's arguments sit under, in any vendor's reply. */
+const TOOL_PATH = /(?:^|\.)(?:tool_calls|function_call|functionCall|tool_use|args|arguments|input|partial_json)(?:\.|$)/
+
+/** Whether the string at `path` (its key `key`, in an event of `type`) is part of a tool call's arguments. */
+export function inToolCall(path: string, key: string, type: string): boolean {
+  return asJSON(key, type) || TOOL_PATH.test(path)
 }
 
 function isWordChar(c: string | undefined): boolean {
@@ -163,7 +177,7 @@ export class Restorer {
   }
 
   /** `escaped` is for text that is itself JSON (a tool call's arguments), where a value goes in escaped. */
-  restoreText(s: string, escaped = false, tally?: Tally): string {
+  restoreText(s: string, escaped = false, tally?: Tally, tool = false): string {
     if (this.#table.size === 0 || !s.includes('_')) return s
     if (tally && s.includes('{{')) {
       for (const m of s.matchAll(STRICT)) if (this.#table.get(m[0]) === undefined) tally.unmapped++
@@ -179,7 +193,10 @@ export class Restorer {
       if (v === undefined) continue
       ;[a, z] = braces(s, a, z)
       if (a < last) continue
-      if (tally) tally.restored.set(p, (tally.restored.get(p) ?? 0) + 1)
+      if (tally) {
+        tally.restored.set(p, (tally.restored.get(p) ?? 0) + 1)
+        if (tool) tally.inTools++
+      }
       out.push(s.slice(last, a), escaped ? jsonEscape(v) : v)
       last = z
     }
@@ -192,7 +209,7 @@ export class Restorer {
   restoreJSON(text: string, tally?: Tally): string {
     if (this.#table.size === 0 || !text.includes('_')) return text
     const type = typeOf(text)
-    const out = walkJSON(text, (_path, key, s) => (SIGNATURE_KEYS.has(key) ? s : this.restoreText(s, asJSON(key, type), tally)))
+    const out = walkJSON(text, (path, key, s) => (SIGNATURE_KEYS.has(key) ? s : this.restoreText(s, asJSON(key, type), tally, inToolCall(path, key, type))))
     return out ?? this.restoreText(text, false, tally)
   }
 
@@ -277,7 +294,7 @@ export class Restorer {
           }
         }
         // counted here only: whichever of full and cut goes out, the places are these
-        return this.restoreText(s, escaped, tally)
+        return this.restoreText(s, escaped, tally, inToolCall(path, key, type))
       })
       if (restored === null) return out + this.restoreText(ev, false, tally)
       const full = e.pre + restored + e.post

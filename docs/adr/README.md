@@ -21,3 +21,4 @@
 | [ADR-0006](0006-distribution-and-build-artifacts.md) | 分发渠道与构建产物：`lib/` 不入库 | Accepted | 分发 |
 | [ADR-0007](0007-release-process.md) | 发布流程：GitHub Actions 驱动 | Accepted | 发布 |
 | [ADR-0008](0008-masking-records.md) | 脱敏记录按天 JSONL 落盘，写失败放行 | Accepted | 记录 |
+| [ADR-0009](0009-value-table-and-restore-exfiltration.md) | 值表只留内存；还原外带先记账不拦截 | Accepted | 脱敏 |
