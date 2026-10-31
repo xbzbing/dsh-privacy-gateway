@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -99,5 +99,50 @@ test('a session turned off goes out unmasked; another session stays masked', asy
     gateway.dispose()
     setGlobalDispatcher(before)
     await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('two processes saving the list keep each other’s choices; a session turned back on stays on', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pgw-sessions-'))
+  const file = join(dir, 'sessions.json')
+  try {
+    const a = new SessionSwitches({ file })
+    const b = new SessionSwitches({ file })
+    a.set('s1', false)
+    b.set('s2', false)
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { off: ['s1', 's2'] })
+    // a turns s1 back on; b, which still has s1 off in memory, saves another change
+    a.set('s1', true)
+    b.set('s3', false)
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { off: ['s2', 's3'] })
+    assert.equal(b.isOff('s1'), false, 'b takes the merged list as its own')
+    assert.equal(new SessionSwitches({ file }).isOff('s1'), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the list is saved 0600 in a 0700 directory, and no temporary file is left, even when the rename fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pgw-sessions-'))
+  const state = join(dir, 'state')
+  const file = join(state, 'sessions.json')
+  try {
+    const s = new SessionSwitches({ file })
+    s.set('s1', false)
+    assert.equal(statSync(file).mode & 0o777, 0o600)
+    assert.equal(statSync(state).mode & 0o777, 0o700)
+    assert.deepEqual(readdirSync(state), ['sessions.json'])
+    // a directory where the file goes: the rename fails
+    const blocked = join(dir, 'blocked')
+    mkdirSync(join(blocked, 'sessions.json'), { recursive: true })
+    writeFileSync(join(blocked, 'sessions.json', 'x'), '')
+    const warned: unknown[] = []
+    const t = new SessionSwitches({ file: join(blocked, 'sessions.json'), logger: { warn: (...a: unknown[]) => warned.push(a) } })
+    assert.equal(t.set('s1', false), true)
+    assert.equal(t.isOff('s1'), true, 'the choice holds for this run')
+    assert.ok(warned.length >= 1)
+    assert.deepEqual(readdirSync(blocked), ['sessions.json'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })

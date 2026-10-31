@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 /**
@@ -38,15 +38,8 @@ export class SessionSwitches {
     if (session === '') return false
     const was = this.#off.has(session)
     if (on === !was) return false
-    if (on) this.#off.delete(session)
-    else {
-      this.#off.add(session)
-      for (const old of this.#off) {
-        if (this.#off.size <= MAX_SESSIONS) break
-        this.#off.delete(old)
-      }
-    }
-    this.#save()
+    apply(this.#off, session, on)
+    this.#save(session, on)
     return true
   }
 
@@ -56,32 +49,67 @@ export class SessionSwitches {
   }
 
   #load(file: string): void {
+    const ids = this.#read(file)
+    if (ids) for (const id of ids) this.#off.add(id)
+  }
+
+  /** The sessions listed in `file`; undefined when it cannot be read or is not the list. */
+  #read(file: string): string[] | undefined {
     let raw: string
     try {
       raw = readFileSync(file, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.#logger?.warn(`dsh-privacy-gateway: could not read ${file}`, err)
-      return
+      return (err as NodeJS.ErrnoException).code === 'ENOENT' ? [] : undefined
     }
     try {
       const parsed = JSON.parse(raw) as { off?: unknown }
       const ids = Array.isArray(parsed?.off) ? parsed.off : []
-      for (const id of ids.slice(-MAX_SESSIONS)) if (typeof id === 'string' && id !== '') this.#off.add(id)
+      return ids.slice(-MAX_SESSIONS).filter((id): id is string => typeof id === 'string' && id !== '')
     } catch (err) {
       this.#logger?.warn(`dsh-privacy-gateway: ${file} is not valid JSON; every session is masked`, err)
+      return undefined
     }
   }
 
-  #save(): void {
+  /**
+   * Writes the one change just made. Another dsh process may have saved its
+   * own choices since this one read the file: the file is read again and only
+   * this change applied to it, so a session another process turned back on
+   * is not turned off again by this one's older copy. The merged list is this
+   * process's from then on.
+   */
+  #save(session: string, on: boolean): void {
     const file = this.#file
     if (!file) return
+    const tmp = `${file}.${process.pid}.tmp`
     try {
-      mkdirSync(dirname(file), { recursive: true })
-      const tmp = `${file}.${process.pid}.tmp`
+      const onDisk = this.#read(file)
+      if (onDisk) {
+        const merged = new Set(onDisk)
+        apply(merged, session, on)
+        this.#off.clear()
+        for (const id of merged) this.#off.add(id)
+      }
+      mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
       writeFileSync(tmp, `${JSON.stringify({ off: [...this.#off] })}\n`, { mode: 0o600 })
       renameSync(tmp, file)
     } catch (err) {
+      rmSync(tmp, { force: true })
       this.#logger?.warn(`dsh-privacy-gateway: could not save ${file}; the choice holds until restart`, err)
     }
+  }
+}
+
+/** `off` with `session` turned on (taken out) or off (put last), the oldest dropped past the cap. */
+function apply(off: Set<string>, session: string, on: boolean): void {
+  if (on) {
+    off.delete(session)
+    return
+  }
+  off.add(session)
+  for (const old of off) {
+    if (off.size <= MAX_SESSIONS) break
+    off.delete(old)
   }
 }
