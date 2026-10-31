@@ -41,8 +41,16 @@ function apply(ctx: ClientCtx): void {
     )
     return typeof handle === 'function' ? (handle as () => void) : undefined
   }, 'dsh-privacy-gateway: statistics card')
-  // the configuration page is the plugin manager's own row page: it hands over the entry's form, so the
-  // page writes through the shell's revision-aware mutate instead of finding a namespace by shape
+  // the configuration is drawn in two official places, from one component (docs/adr/0017): the bundle's
+  // detail page, where it is in sight, and the plugin manager's row page, which hands over the entry's form
+  ctx.effect(() => {
+    const handle = ctx.slots.inject('plugins.bundle.config', () =>
+      ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE, locale: NS }, (props: { view?: string }) =>
+        props.view === 'summary' ? t('cfg.title') : h(ConfigSection, { ctx, t }),
+      ),
+    )
+    return typeof handle === 'function' ? (handle as () => void) : undefined
+  }, 'dsh-privacy-gateway: configuration (bundle page)')
   ctx.effect(() => {
     const handle = ctx.slots.inject('plugins.row.config', () =>
       ctx.slots.register({ name: 'plugins.row.config', key: `${PACKAGE}#${ROW_ID}`, locale: NS }, (props: { view?: string; form?: RowForm }) =>
@@ -50,7 +58,7 @@ function apply(ctx: ClientCtx): void {
       ),
     )
     return typeof handle === 'function' ? (handle as () => void) : undefined
-  }, 'dsh-privacy-gateway: configuration')
+  }, 'dsh-privacy-gateway: configuration (row page)')
 
   // the sidebar tab: registered while showPanel is on and the sidebar's registry is there
   let want = false

@@ -15,13 +15,16 @@ export interface FormSnapshot {
   readonly status: string
   readonly value?: Record<string, unknown>
   readonly writable?: boolean
+  /** Namespace revision fencing the next write. */
+  readonly revision?: number
 }
 
-/** One namespace's live form: its value, and a write of one volatile field. */
+/** One namespace's live form: its value, and a write of one volatile field (or of several at once). */
 export interface ConfigForm {
   getSnapshot(): FormSnapshot
   subscribe(listener: () => void): () => void
   set(field: string, value: unknown): Promise<boolean>
+  mutate?(ops: readonly { op: 'set'; path: readonly string[]; value: unknown }[], revision?: number): Promise<boolean>
 }
 
 export interface Mirror {

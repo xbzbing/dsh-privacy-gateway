@@ -1,8 +1,11 @@
 /**
- * This plugin's configuration page, drawn on the plugin manager's own row page
- * (the `plugins.row.config` slot). The page hands the configuration over as
- * `form`: the entry's live values and the write the shell owns, so the page
- * never looks a namespace up by shape (docs/adr/0017, docs/adr/0018).
+ * This plugin's configuration page (docs/adr/0017, docs/adr/0018). It is drawn
+ * in two places, one implementation:
+ *  - the bundle's detail page (`plugins.bundle.config`), inline and without a
+ *    `form` prop, where the namespace is found in the settings mirror;
+ *  - the plugin manager's row page (`plugins.row.config`), which hands the
+ *    entry's `form` over itself.
+ * Both render the same section and write through the same `mutate`.
  *
  * The two fields are the volatile ones — showPanel and excludeProviders — so a
  * write takes effect without remounting the gateway.
@@ -11,6 +14,7 @@ import { createElement as h, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { T } from './locales.ts'
+import { findNamespace, formsOf } from './panelConfig.ts'
 import { excludeChoices, toggleExcluded } from './providerChoice.ts'
 import { fetchProviders, type ClientCtx, type ProviderEntry } from './rpc.ts'
 import { buttonOf, checkboxOf, switchOf } from './ui.ts'
@@ -30,8 +34,56 @@ export interface RowForm {
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
 
+/** The entry's form found in the settings mirror, for the copy of this page that gets no `form` prop. */
+function useMirrorForm(ctx: ClientCtx): RowForm | undefined {
+  const [tick, bump] = useState(0)
+  const forms = useMemo(() => formsOf(ctx), [ctx])
+  const mirror = useMemo(() => {
+    try {
+      return forms?.describe()
+    } catch {
+      return undefined
+    }
+  }, [forms])
+  useEffect(() => {
+    if (!mirror) return
+    void Promise.resolve(mirror.ensure()).catch(() => {})
+    return mirror.subscribe(() => bump((n) => n + 1))
+  }, [mirror])
+  const view = mirror?.getSnapshot().view
+  const ns = useMemo(() => (view ? findNamespace(view.namespaces) : undefined), [view])
+  const form = useMemo(() => {
+    try {
+      return forms && ns !== undefined ? forms.get(ns) : undefined
+    } catch {
+      return undefined
+    }
+  }, [forms, ns])
+  useEffect(() => (form ? form.subscribe(() => bump((n) => n + 1)) : undefined), [form])
+  void tick
+  return useMemo(() => {
+    if (!form) return undefined
+    const snap = form.getSnapshot()
+    const mutate = form.mutate
+    const write = mutate
+      ? (ops: readonly FieldOp[], revision?: number) => mutate.call(form, ops, revision)
+      : async (ops: readonly FieldOp[], revision?: number): Promise<boolean> => {
+          // a form without the batch call: one field at a time, which is all this page writes
+          for (const op of ops) {
+            const ok = await form.set(op.path.join('.'), op.value)
+            if (!ok) return false
+          }
+          void revision
+          return true
+        }
+    return { state: { status: snap.status, value: snap.value, revision: snap.revision, writable: snap.writable !== false }, mutate: write }
+  }, [form, tick, form?.getSnapshot()])
+}
+
 export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): ReactNode {
-  const { ctx, t, form } = props
+  const { ctx, t } = props
+  const mirrored = useMirrorForm(ctx)
+  const form = props.form ?? mirrored
   const [, tick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -79,6 +131,8 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   return h(
     'section',
     { className: 'pgw-cfg' },
+    // the row page carries its own heading; the inline section on the bundle page needs one
+    props.form ? null : h('h3', { className: 'pgw-title' }, t('cfg.title')),
     !form
       ? h('div', { className: 'pgw-empty' }, t('cfg.unavailable'))
       : h(
