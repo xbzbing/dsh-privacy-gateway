@@ -23,6 +23,19 @@ export interface GatewayLogger {
   warn(...args: unknown[]): void
 }
 
+/** `logger` with whatever its `warn` throws dropped. */
+function quiet(logger: GatewayLogger): GatewayLogger {
+  return {
+    warn: (...args: unknown[]) => {
+      try {
+        logger.warn(...args)
+      } catch {
+        // a log line is never worth a request
+      }
+    },
+  }
+}
+
 export interface MaskingDispatcherOptions {
   /** Lower-case `host` or `host:port` entries never rewritten. */
   excludeHosts?: readonly string[]
@@ -32,6 +45,16 @@ export interface MaskingDispatcherOptions {
 }
 
 const wrapHandler = (Dispatcher1Wrapper as unknown as { wrapHandler(h: unknown): Handler }).wrapHandler
+
+/**
+ * The class name of `err`, for a log line: an error's message and stack may
+ * quote the request body it came from, so they are never logged or passed on
+ * (docs/adr/0005). A name that is not a plain identifier is just "Error".
+ */
+export function errorName(err: unknown): string {
+  const name = err instanceof Error ? err.name : typeof err
+  return /^[A-Za-z_$][\w$]{0,63}$/.test(name) ? name : 'Error'
+}
 
 const utf8 = new TextDecoder('utf-8', { fatal: true })
 
@@ -46,57 +69,65 @@ const kHop = Symbol('dsh-privacy-gateway.hop')
 
 type HeaderInput = Options['headers']
 
-/** The value of header `name` in any of the forms undici takes, or undefined. */
-export function headerValue(headers: HeaderInput, name: string): string | undefined {
-  if (!headers) return undefined
-  const want = name.toLowerCase()
-  const pick = (k: unknown, v: unknown): string | undefined =>
-    String(k).toLowerCase() === want && v != null ? (Array.isArray(v) ? v.join(', ') : String(v)) : undefined
+/** Every header of `headers`, in any of the forms undici takes (a record, flat pairs, an array of pairs, an iterable), as [name, value] entries. */
+function headerEntries(headers: HeaderInput): Array<[string, unknown]> {
+  if (!headers) return []
   if (Array.isArray(headers)) {
     if (headers.length > 0 && Array.isArray(headers[0])) {
-      for (const [k, v] of headers as unknown as Array<[string, unknown]>) {
-        const got = pick(k, v)
-        if (got !== undefined) return got
-      }
-      return undefined
+      return (headers as unknown as Array<[unknown, unknown]>).map(([k, v]) => [String(k), v])
     }
-    for (let i = 0; i + 1 < headers.length; i += 2) {
-      const got = pick(headers[i], headers[i + 1])
-      if (got !== undefined) return got
-    }
-    return undefined
+    const out: Array<[string, unknown]> = []
+    for (let i = 0; i + 1 < headers.length; i += 2) out.push([String(headers[i]), headers[i + 1]])
+    return out
   }
   if (typeof (headers as Iterable<unknown>)[Symbol.iterator] === 'function') {
-    for (const [k, v] of headers as Iterable<[string, unknown]>) {
-      const got = pick(k, v)
-      if (got !== undefined) return got
-    }
-    return undefined
+    return [...(headers as Iterable<[unknown, unknown]>)].map(([k, v]) => [String(k), v])
   }
-  for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
-    const got = pick(k, v)
-    if (got !== undefined) return got
+  return Object.entries(headers as Record<string, unknown>)
+}
+
+/** The value of header `name` in any of the forms undici takes, or undefined. */
+export function headerValue(headers: HeaderInput, name: string): string | undefined {
+  const want = name.toLowerCase()
+  for (const [k, v] of headerEntries(headers)) {
+    if (k.toLowerCase() === want && v != null) return Array.isArray(v) ? v.join(', ') : String(v)
   }
   return undefined
 }
 
+/**
+ * `headers` with each header named (in lower case) in `set` given its value
+ * there, or taken out where that is null. A header in `set` the request lacks
+ * is added only when `add` names it. Nothing to change gives `headers` back
+ * as it was; a change gives flat [name, value, …] pairs, the one list form
+ * every undici version reads the same way.
+ */
+export function editHeaders(headers: HeaderInput, set: Readonly<Record<string, string | null>>, add: readonly string[] = []): HeaderInput {
+  const entries = headerEntries(headers)
+  const has = (k: string): boolean => Object.hasOwn(set, k)
+  const present = new Set(entries.map(([k]) => k.toLowerCase()).filter(has))
+  const added = add.filter((k) => has(k) && set[k] != null && !present.has(k))
+  if (present.size === 0 && added.length === 0) return headers
+  const out: Array<string | string[]> = []
+  const done = new Set<string>()
+  for (const [k, v] of entries) {
+    const low = k.toLowerCase()
+    if (has(low)) {
+      const value = set[low]
+      if (value == null || done.has(low)) continue
+      done.add(low)
+      out.push(k, value)
+    } else if (v != null) {
+      out.push(k, Array.isArray(v) ? v.map(String) : String(v))
+    }
+  }
+  for (const k of added) out.push(k, set[k] as string)
+  return out as unknown as HeaderInput
+}
+
 /** `headers` with an existing `content-length` set to `length`; every other header as it was. */
 export function withContentLength(headers: HeaderInput, length: number): HeaderInput {
-  if (!headers || headerValue(headers, 'content-length') === undefined) return headers
-  const value = String(length)
-  const isLength = (k: unknown): boolean => String(k).toLowerCase() === 'content-length'
-  if (Array.isArray(headers)) {
-    if (headers.length > 0 && Array.isArray(headers[0])) {
-      return (headers as unknown as Array<[string, unknown]>).map(([k, v]) => [k, isLength(k) ? value : v]) as unknown as HeaderInput
-    }
-    return headers.map((v, i) => (i % 2 === 1 && isLength(headers[i - 1]) ? value : v))
-  }
-  if (typeof (headers as Iterable<unknown>)[Symbol.iterator] === 'function') {
-    return [...(headers as Iterable<[string, string | string[] | undefined]>)].map(([k, v]) => [k, isLength(k) ? value : v] as [string, string | string[] | undefined])
-  }
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(headers as Record<string, unknown>)) out[k] = isLength(k) ? value : v
-  return out as HeaderInput
+  return editHeaders(headers, { 'content-length': String(length) })
 }
 
 function incomingValue(headers: IncomingHeaders, name: string): string {
@@ -258,8 +289,9 @@ class RestoringHandler implements Handler {
       let body: Buffer = raw
       try {
         body = Buffer.from(this.#exchange.restoreBody(utf8.decode(raw)), 'utf8')
-      } catch {
-        // not UTF-8: on as it came
+      } catch (err) {
+        // not UTF-8, or the restorer failed: on as it came, placeholders and all; the error may quote the body, so only its name is logged
+        this.#logger?.warn(`dsh-privacy-gateway: a JSON reply could not be restored (${errorName(err)}); it goes on with its placeholders`)
       }
       if (body.length > 0) this.#next.onResponseData?.(view, body)
     }
@@ -295,8 +327,8 @@ function requestInfo(opts: Options): RequestInfo {
     session = headerValue(opts.headers, name)
     if (session) break
   }
-  // dsh's own calls carry no header: the `llm/stream` listener knows their session (docs/adr/0020)
-  session ??= currentSession()
+  // dsh's own calls carry no header (or an empty one): the `llm/stream` listener knows their session (docs/adr/0020)
+  session ||= currentSession()
   let path = String(opts.path ?? '')
   try {
     path = new URL(path, 'http://x').pathname
@@ -366,7 +398,8 @@ export class MaskingDispatcher extends Dispatcher {
     this.#engine = engine
     this.#excludeHosts = options.excludeHosts ?? []
     this.#skip = options.skip
-    this.#logger = options.logger
+    // a logger that throws must not keep a failed request from failing
+    this.#logger = options.logger && quiet(options.logger)
   }
 
   /**
@@ -488,38 +521,52 @@ export class MaskingDispatcher extends Dispatcher {
     return true
   }
 
+  /**
+   * Reads, masks and sends one candidate request. Whatever fails before the
+   * request is handed on fails it instead (docs/adr/0005): nothing here may
+   * reject, and nothing it reports quotes the body.
+   */
   async #intercept(opts: Options, handler: Handler): Promise<void> {
-    let raw: Buffer
-    try {
-      raw = await readBody(opts.body)
-    } catch (err) {
-      failRequest(handler, err instanceof Error ? err : new Error(String(err)))
-      return
-    }
     let exchange: Exchange | null = null
-    let text: string | undefined
+    let next: Options
+    let to: Dispatcher
     try {
-      text = utf8.decode(raw)
-    } catch {
-      text = undefined // not UTF-8: no model request
-    }
-    if (text !== undefined) {
+      let raw: Buffer
       try {
-        exchange = this.#engine.maskRequest(text, requestInfo(opts))
+        raw = await readBody(opts.body)
       } catch (err) {
-        if (err instanceof RequestBlocked) {
-          this.#logger?.warn(`dsh-privacy-gateway: ${err.message}`)
-          failRequest(handler, new PrivacyGatewayError(err.message, undefined, 'DSH_PRIVACY_GATEWAY_BLOCKED'))
-          return
-        }
-        this.#logger?.warn('dsh-privacy-gateway: masking failed, request not sent', err)
-        failRequest(handler, new PrivacyGatewayError('masking failed, request not sent', { cause: err }))
+        // the caller's own body stream failed: its error goes back to it, and nothing is sent
+        failRequest(handler, err instanceof Error ? err : new Error(String(err)))
         return
       }
+      let text: string | undefined
+      try {
+        text = utf8.decode(raw)
+      } catch {
+        text = undefined // not UTF-8: no model request
+      }
+      if (text !== undefined) {
+        try {
+          exchange = this.#engine.maskRequest(text, requestInfo(opts))
+        } catch (err) {
+          if (err instanceof RequestBlocked) {
+            // the message names each value by its kind, head and length only (docs/adr/0019)
+            this.#logger?.warn(`dsh-privacy-gateway: ${err.message}`)
+            failRequest(handler, new PrivacyGatewayError(err.message, undefined, 'DSH_PRIVACY_GATEWAY_BLOCKED'))
+            return
+          }
+          throw err
+        }
+      }
+      const body = exchange === null || exchange.text === text ? raw : Buffer.from(exchange.text, 'utf8')
+      to = this.downstream()
+      next = { ...opts, body, headers: withContentLength(opts.headers, body.length), [kHop]: to } as Options
+    } catch (err) {
+      exchange?.finish()
+      this.#logger?.warn(`dsh-privacy-gateway: masking failed (${errorName(err)}), request not sent`)
+      failRequest(handler, new PrivacyGatewayError('masking failed, request not sent'))
+      return
     }
-    const body = exchange === null || exchange.text === text ? raw : Buffer.from(exchange.text, 'utf8')
-    const to = this.downstream()
-    const next = { ...opts, body, headers: withContentLength(opts.headers, body.length), [kHop]: to } as Options
     const h = exchange === null ? handler : new RestoringHandler(handler, exchange, this.#logger)
     try {
       to.dispatch(next, h)

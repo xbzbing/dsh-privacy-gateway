@@ -3,13 +3,15 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 
-import { Agent, Dispatcher, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
+import { Agent, Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, request, setGlobalDispatcher } from 'undici'
 
 import { defaults } from '../src/config.ts'
-import { installGateway, MaskingDispatcher, type InstalledGateway } from '../src/dispatcher.ts'
-import { PrivacyEngine, type RedactionEngine } from '../src/engine.ts'
+import { installGateway, MaskingDispatcher, withContentLength, type InstalledGateway } from '../src/dispatcher.ts'
+import { PrivacyEngine, type Exchange, type RedactionEngine, type RequestInfo } from '../src/engine.ts'
+import { routeStream } from '../src/providers.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
 const PLACEHOLDER = /\{\{API_KEY_[a-z2-7]{8}\}\}/
@@ -349,8 +351,7 @@ test('a gateway replaced by a dispatcher that sends it nothing is back on top wi
   const other = new CountingAgent()
   try {
     setGlobalDispatcher(other)
-    await new Promise((r) => setTimeout(r, 80))
-    assert.equal(getGlobalDispatcher(), gateway.dispatcher)
+    await until(() => getGlobalDispatcher() === gateway.dispatcher)
     await (await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })).text()
     assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
     assert.equal(other.count, 1)
@@ -370,6 +371,193 @@ test('a request through a layer put on top of the gateway puts the gateway back 
       await (await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })).text()
       assert.equal(getGlobalDispatcher(), g.dispatcher)
     })
+    assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
+  } finally {
+    await o.close()
+  }
+})
+
+// ---- review regressions -----------------------------------------------------------
+
+/** An origin that answers every request with an empty JSON object. */
+const emptyOrigin = () => origin((_s, res) => res.end('{}'))
+
+/** Waits until `cond` holds, failing after `ms`. */
+async function until(cond: () => boolean, ms = 2_000): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!cond()) {
+    if (Date.now() > deadline) assert.fail('timed out waiting for the condition')
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
+
+test('Dispatcher1Wrapper.wrapHandler is there: the gateway adapts legacy handlers (fetch, upgrades) with it', () => {
+  assert.equal(typeof (Dispatcher1Wrapper as unknown as { wrapHandler?: unknown }).wrapHandler, 'function')
+})
+
+test('withContentLength gives flat pairs for every header form, so undici reads iterable headers', async () => {
+  const flat = withContentLength(new Map([['content-type', 'application/json'], ['content-length', '1']]) as never, 7)
+  assert.deepEqual(flat, ['content-type', 'application/json', 'content-length', '7'])
+  assert.deepEqual(withContentLength([['Content-Length', '1'], ['x', 'y']] as never, 3), ['Content-Length', '3', 'x', 'y'])
+  assert.deepEqual(withContentLength({ 'content-length': '1', a: ['b', 'c'] }, 2), ['content-length', '2', 'a', ['b', 'c']])
+  const same = { a: 'b' }
+  assert.equal(withContentLength(same, 2), same, 'no content-length: the headers as they were')
+
+  const o = await emptyOrigin()
+  try {
+    await withGateway(async () => {
+      const body = chat(`key ${OPENAI}`)
+      const headers = new Map([['content-type', 'application/json'], ['content-length', String(Buffer.byteLength(body))]])
+      const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: headers as never, body })
+      await res.body.text()
+      assert.equal(res.statusCode, 200)
+    })
+    assert.ok(!o.seen[0]?.body.includes(OPENAI))
+    assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
+    assert.equal(Number(o.seen[0]?.headers['content-length']), Buffer.byteLength(o.seen[0]?.body ?? ''))
+  } finally {
+    await o.close()
+  }
+})
+
+/** An engine that records the info of each request and masks nothing. */
+function spyEngine(infos: RequestInfo[]): RedactionEngine {
+  return {
+    maskRequest(_body, info) {
+      infos.push(info)
+      return null
+    },
+  }
+}
+
+test('an empty session header does not hide the session the stream names', async () => {
+  const o = await emptyOrigin()
+  const infos: RequestInfo[] = []
+  try {
+    await withGateway(async () => {
+      async function* adapter() {
+        const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json', session_id: '' }, body: chat('hi') })
+        yield await res.text()
+      }
+      for await (const _ of routeStream('openai', [], adapter, 'sess-ctx')) void _
+    }, spyEngine(infos))
+    assert.equal(infos[0]?.session, 'sess-ctx')
+  } finally {
+    await o.close()
+  }
+})
+
+test('masking that fails, even past maskRequest, is never sent and nothing reported quotes the body', async () => {
+  const o = await emptyOrigin()
+  const throwing: RedactionEngine = {
+    maskRequest() {
+      throw new Error(`cannot mask ${OPENAI}`)
+    },
+  }
+  // an exchange that fails when its text is read: the failure comes after maskRequest returned
+  const late: RedactionEngine = {
+    maskRequest() {
+      return {
+        get text(): string {
+          throw new TypeError(`late ${OPENAI}`)
+        },
+        restoring: () => false,
+        restoreBody: (t) => t,
+        streamRestorer: () => ({ push: (c) => String(c), end: () => '' }),
+        finish() {},
+      } as Exchange
+    },
+  }
+  const rejections: unknown[] = []
+  const onRejection = (e: unknown) => rejections.push(e)
+  process.on('unhandledRejection', onRejection)
+  try {
+    for (const engine of [throwing, late]) {
+      const warnings = await withGateway(async () => {
+        const err = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) }).then(
+          () => assert.fail('request was sent'),
+          (e: unknown) => e as Error & { cause?: Error & { code?: string; cause?: unknown } },
+        )
+        assert.equal(err.cause?.code, 'DSH_PRIVACY_GATEWAY_FAIL_CLOSED')
+        assert.equal(err.cause?.cause, undefined, 'the engine error is not passed on')
+        assert.ok(!String(err.cause?.message).includes(OPENAI))
+        assert.ok(!String(err.cause?.stack).includes(OPENAI))
+      }, engine)
+      assert.equal(warnings.length, 1)
+      assert.ok(!JSON.stringify(warnings.map((w) => w.map(String))).includes(OPENAI), 'no log line quotes the value')
+    }
+    await new Promise((r) => setTimeout(r, 10))
+    assert.deepEqual(rejections, [])
+    assert.equal(o.seen.length, 0)
+  } finally {
+    process.off('unhandledRejection', onRejection)
+    await o.close()
+  }
+})
+
+test('a JSON reply that cannot be restored goes on as it came, with one warning that has no value', async () => {
+  const o = await origin((_s, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end('{"content":"{{API_KEY_abcdefgh}}"}')
+  })
+  const failing: RedactionEngine = {
+    maskRequest(body) {
+      return {
+        text: body.replace(OPENAI, '{{API_KEY_abcdefgh}}'),
+        restoring: () => true,
+        restoreBody: () => {
+          throw new Error(`restore ${OPENAI}`)
+        },
+        streamRestorer: () => ({ push: (c) => String(c), end: () => '' }),
+        finish() {},
+      } as Exchange
+    },
+  }
+  try {
+    const warnings = await withGateway(async () => {
+      const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
+      assert.equal(await res.text(), '{"content":"{{API_KEY_abcdefgh}}"}')
+    }, failing)
+    assert.equal(warnings.length, 1)
+    assert.match(String(warnings[0]?.[0]), /could not be restored/)
+    assert.ok(!JSON.stringify(warnings.map((w) => w.map(String))).includes(OPENAI))
+  } finally {
+    await o.close()
+  }
+})
+
+test('a request whose body fails while it is read is not sent (docs/adr/0005)', async () => {
+  const o = await emptyOrigin()
+  try {
+    await withGateway(async () => {
+      async function* body() {
+        yield Buffer.from(chat(OPENAI).slice(0, 20))
+        throw new Error('caller went away')
+      }
+      await assert.rejects(request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: Readable.from(body()) }), /caller went away/)
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(o.seen.length, 0)
+  } finally {
+    await o.close()
+  }
+})
+
+test('a streamed request body is read whole and masked, a value split across its chunks too', async () => {
+  const o = await emptyOrigin()
+  try {
+    await withGateway(async () => {
+      const text = chat(`key ${OPENAI}`)
+      const cut = text.indexOf(OPENAI) + 10
+      async function* body() {
+        yield Buffer.from(text.slice(0, cut))
+        await new Promise((r) => setTimeout(r, 1))
+        yield text.slice(cut)
+      }
+      const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: Readable.from(body()) })
+      await res.body.text()
+    })
+    assert.ok(!o.seen[0]?.body.includes(OPENAI))
     assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
   } finally {
     await o.close()
