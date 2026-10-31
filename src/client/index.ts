@@ -1,13 +1,15 @@
 /**
  * dsh-privacy-gateway client half:
+ *  - the bundle's configuration, in the `plugins.bundle.config` slot of its
+ *    detail page: the switch for the sidebar's Privacy panel;
  *  - the statistics card, in the `plugins.detail.section` slot of this
- *    bundle's detail page, under the page's own content (the config form the
- *    host renders stays as it is);
+ *    bundle's detail page, under the page's own content;
  *  - the Privacy tab of the session's right sidebar, while the config's
  *    showPanel is on (docs/adr/0017).
  */
 import { createElement as h } from 'react'
 
+import { ConfigSection } from './ConfigSection.ts'
 import { DICTIONARIES, NS, type T } from './locales.ts'
 import { watchShowPanel } from './panelConfig.ts'
 import type { ClientCtx } from './rpc.ts'
@@ -37,6 +39,15 @@ function apply(ctx: ClientCtx): void {
     )
     return typeof handle === 'function' ? (handle as () => void) : undefined
   }, 'dsh-privacy-gateway: statistics card')
+  // the detail page draws no form for a bundle: only an entry under its package name gives it a configuration section
+  ctx.effect(() => {
+    const handle = ctx.slots.inject('plugins.bundle.config', () =>
+      ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE, locale: NS }, (props: { view?: string }) =>
+        props.view === 'summary' ? t('cfg.title') : h(ConfigSection, { ctx, t }),
+      ),
+    )
+    return typeof handle === 'function' ? (handle as () => void) : undefined
+  }, 'dsh-privacy-gateway: configuration')
 
   // the sidebar tab: registered while showPanel is on and the sidebar's registry is there
   let want = false

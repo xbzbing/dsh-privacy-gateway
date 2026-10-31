@@ -16,6 +16,27 @@ export const ACTIONS: readonly Action[] = ['mask', 'warn', 'block']
 
 export type ToolGuard = 'off' | 'warn' | 'block'
 
+/** showPanel's description: the client half also knows this plugin's settings by it. */
+export const SHOW_PANEL_DESCRIPTION = '在会话右侧栏显示「隐私保护」面板 / Show the Privacy panel in the right sidebar'
+
+/** A volatile config field as cordis hands it over (cosmokit `Volatile`): its current value on each get(). */
+export interface LiveValue<T> {
+  get(): T | undefined
+}
+
+/** A boolean field's value now, whether it came as a value or as a live reference. */
+export function liveBool(v: unknown, fallback: boolean): boolean {
+  if (typeof v === 'object' && v !== null && typeof (v as { get?: unknown }).get === 'function') {
+    try {
+      const now = (v as LiveValue<unknown>).get()
+      return typeof now === 'boolean' ? now : fallback
+    } catch {
+      return fallback
+    }
+  }
+  return typeof v === 'boolean' ? v : fallback
+}
+
 export interface PrivacyGatewayConfig {
   /** Master switch. */
   enabled?: boolean
@@ -63,11 +84,16 @@ export interface PrivacyGatewayConfig {
   keepRecords?: number
   /** Keep in memory what the vendor got for the latest recorded requests, for the side-by-side view (docs/adr/0016). */
   vendorView?: boolean
-  /** Offer a Privacy tab in the session's right sidebar (docs/adr/0017). */
-  showPanel?: boolean
+  /**
+   * Offer a Privacy tab in the session's right sidebar (docs/adr/0017).
+   * Volatile: cordis hands it over as a live reference the detail page's
+   * switch updates without remounting the plugin.
+   */
+  showPanel?: boolean | LiveValue<boolean>
 }
 
-export const Config: Schema<PrivacyGatewayConfig> = Schema.object({
+// the cast: a volatile field's input is a boolean and its output a live reference, which Schema<T> has one type for
+export const Config = Schema.object({
   enabled: Schema.boolean().default(true),
   secrets: Schema.boolean().default(true),
   personal: Schema.boolean().default(false),
@@ -87,10 +113,11 @@ export const Config: Schema<PrivacyGatewayConfig> = Schema.object({
   keepMegabytes: Schema.number().step(1).min(1).default(100),
   keepRecords: Schema.number().step(1).min(10).default(500),
   vendorView: Schema.boolean().default(false),
-  showPanel: Schema.boolean().default(false),
-})
+  // volatile: the detail page's switch edits it live, without remounting the gateway (docs/adr/0017)
+  showPanel: Schema.boolean().default(false).volatile().description(SHOW_PANEL_DESCRIPTION),
+}) as unknown as Schema<PrivacyGatewayConfig>
 
-export type ResolvedConfig = Required<PrivacyGatewayConfig>
+export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel'>> & { showPanel: boolean }
 
 export const defaults: ResolvedConfig = {
   enabled: true,
@@ -162,6 +189,6 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     keepMegabytes: int(c.keepMegabytes, 1, defaults.keepMegabytes),
     keepRecords: int(c.keepRecords, 10, defaults.keepRecords),
     vendorView: bool(c.vendorView, defaults.vendorView),
-    showPanel: bool(c.showPanel, defaults.showPanel),
+    showPanel: liveBool(c.showPanel, defaults.showPanel),
   }
 }

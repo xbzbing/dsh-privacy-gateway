@@ -62,6 +62,16 @@ export const zh = {
   'view.close': '收起',
   'panel.tab': '隐私保护',
   'panel.guide': '脱敏统计、最近记录与厂商视角',
+  'page.first': '首页',
+  'page.prev': '上一页',
+  'page.next': '下一页',
+  'page.of': '第 {page} / {pages} 页，共 {n} 条',
+  'cfg.title': '面板',
+  'cfg.showPanel': '在会话右侧栏显示「隐私保护」面板',
+  'cfg.showPanelHint': '打开后，右侧栏的标签页列表和引导页里会出现「隐私保护」，内容与下方的统计卡相同。',
+  'cfg.unavailable': '读不到设置：宿主没有提供设置服务，或插件的 host 端还没加载新版本。',
+  'cfg.failed': '没能保存，请重试。',
+  'cfg.others': '其余配置项（actions、toolGuard、shape、vendorView 等）在 cordis.patch.yml 里修改，说明见 README。',
 } as const
 
 export type Key = keyof typeof zh
@@ -127,6 +137,16 @@ export const en: Record<Key, string> = {
   'view.close': 'Close',
   'panel.tab': 'Privacy',
   'panel.guide': 'Masking statistics, the latest records and the vendor view',
+  'page.first': 'First',
+  'page.prev': 'Previous',
+  'page.next': 'Next',
+  'page.of': 'Page {page} of {pages}, {n} records',
+  'cfg.title': 'Panel',
+  'cfg.showPanel': 'Show the Privacy panel in the session’s right sidebar',
+  'cfg.showPanelHint': 'When on, Privacy is offered among the right sidebar’s tabs and on its guide page, with the same view as the card below.',
+  'cfg.unavailable': 'Settings cannot be read: the host offers no settings service, or the plugin’s host half has not loaded the new version yet.',
+  'cfg.failed': 'Could not save; try again.',
+  'cfg.others': 'The other settings (actions, toolGuard, shape, vendorView and so on) are changed in cordis.patch.yml; see the README.',
 }
 
 export const DICTIONARIES: Record<string, Record<Key, string>> = { zh, en }

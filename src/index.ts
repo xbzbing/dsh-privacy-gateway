@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import { langOf, runPrivacyCommand, type PrivacyFace } from './command.ts'
-import { resolveConfig, type PrivacyGatewayConfig } from './config.ts'
+import { liveBool, resolveConfig, type PrivacyGatewayConfig } from './config.ts'
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
@@ -129,7 +129,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         recent: records.recent(limit),
         vendorView: cfg.vendorView,
         views: views?.keys() ?? [],
-        showPanel: cfg.showPanel,
+        // read now: the detail page's switch changes it without remounting the plugin
+        showPanel: liveBool(config.showPanel, cfg.showPanel),
       }),
       vendorView: (key) => {
         const body = views?.get(key)

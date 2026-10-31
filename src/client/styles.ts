@@ -45,6 +45,10 @@ const CSS = `
 .pgw-detail table{border-collapse:collapse;width:100%}
 .pgw-detail th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:3px 8px 3px 0}
 .pgw-detail td{padding:3px 8px 3px 0;font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:nowrap}
+.pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.pgw-switch{display:flex;align-items:flex-start;gap:8px;cursor:pointer}
+.pgw-switch input{margin-top:2px}
+.pgw-switch__text{display:flex;flex-direction:column;gap:2px}
 .pgw-tab-icon{flex:none;vertical-align:-3px;margin-right:4px}
 .pgw-card--panel{border:none;border-radius:0;background:transparent;padding:12px}
 .pgw-detail__btn{margin-top:8px}

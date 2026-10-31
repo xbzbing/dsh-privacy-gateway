@@ -6,11 +6,13 @@ import type { MaskRecord, Totals } from '../records.ts'
 import type { Overview } from '../remote.ts'
 import type { Key, T } from './locales.ts'
 import { fetchOverview, type ClientCtx } from './rpc.ts'
-import { bars, timeLabel, took, warnings, type Range } from './view.ts'
+import { bars, pageOf, timeLabel, took, warnings, type Range } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 const REFRESH_MS = 15_000
-const LIMIT = 50
+/** Records asked for: the most the host sends, shown a page at a time. */
+const LIMIT = 200
+const PAGE_SIZE = 10
 const RANGES: Range[] = ['today', 'week', 'month']
 
 type State = { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: Overview }
@@ -153,6 +155,7 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean }): Rea
   const [state, reload, busy] = useOverview(props.ctx)
   const [range, setRange] = useState<Range>('today')
   const [open, setOpen] = useState<number | null>(null)
+  const [page, setPage] = useState(0)
   const cardClass = `pgw-card${props.panel ? ' pgw-card--panel' : ''}`
   const head = (extra: ReactNode[]): ReactNode =>
     h(
@@ -170,6 +173,11 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean }): Rea
   const totals = o.stats[range]
   const time = took(totals)
   const viewable = new Set(o.vendorView ? (o.views ?? []) : [])
+  const shown = pageOf(o.recent, page, PAGE_SIZE)
+  const go = (to: number): void => {
+    setPage(to)
+    setOpen(null)
+  }
   return h(
     'section',
     { className: cardClass },
@@ -199,9 +207,19 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean }): Rea
       : h(
           'div',
           { className: 'pgw-list' },
-          o.recent.map((r) =>
+          shown.items.map((r) =>
             h(Record_, { key: r.key, ctx: props.ctx, r, open: open === r.key, toggle: () => setOpen(open === r.key ? null : r.key), tr: t, viewable: viewable.has(r.key) }),
           ),
         ),
+    shown.pages > 1
+      ? h(
+          'div',
+          { className: 'pgw-pager' },
+          h('button', { type: 'button', className: 'pgw-btn', disabled: shown.page === 0, onClick: () => go(0) }, t('page.first')),
+          h('button', { type: 'button', className: 'pgw-btn', disabled: shown.page === 0, onClick: () => go(shown.page - 1) }, t('page.prev')),
+          h('span', { className: 'pgw-meta' }, t('page.of', { page: shown.page + 1, pages: shown.pages, n: o.recent.length })),
+          h('button', { type: 'button', className: 'pgw-btn', disabled: shown.page >= shown.pages - 1, onClick: () => go(shown.page + 1) }, t('page.next')),
+        )
+      : null,
   )
 }

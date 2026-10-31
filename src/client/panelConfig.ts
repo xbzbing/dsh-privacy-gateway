@@ -11,31 +11,56 @@ interface NamespaceView {
   readonly value?: unknown
 }
 
-interface Mirror {
+export interface FormSnapshot {
+  readonly status: string
+  readonly value?: Record<string, unknown>
+  readonly writable?: boolean
+}
+
+/** One namespace's live form: its value, and a write of one volatile field. */
+export interface ConfigForm {
+  getSnapshot(): FormSnapshot
+  subscribe(listener: () => void): () => void
+  set(field: string, value: unknown): Promise<boolean>
+}
+
+export interface Mirror {
   getSnapshot(): { readonly view?: { readonly namespaces: readonly NamespaceView[] } }
   subscribe(listener: () => void): () => void
   ensure(): Promise<void>
 }
 
-interface ConfigForms {
+export interface ConfigForms {
   describe(): Mirror
+  get(ns: string): ConfigForm
 }
 
-/** Fields only this plugin's schema has together: the namespace that has them all is ours. */
-const MARKERS = ['protectEnvBlock', 'cookieKeep', 'showPanel'] as const
+/**
+ * The words of showPanel's description (host src/config.ts
+ * SHOW_PANEL_DESCRIPTION): the mirror has only the volatile fields of each
+ * schema, and another plugin may have a showPanel of its own.
+ */
+const DESCRIPTION_MARK = 'Show the Privacy panel in the right sidebar'
 
-/** showPanel in the namespace that is ours; undefined when there is none. */
-export function showPanelOf(namespaces: readonly NamespaceView[]): boolean | undefined {
+/** The namespace that is this plugin's: it has showPanel, and its name or showPanel's description says it is ours. */
+export function findNamespace(namespaces: readonly NamespaceView[]): string | undefined {
   for (const row of namespaces) {
     const dict = (row.schema as { dict?: Record<string, unknown> } | undefined)?.dict
-    if (!dict || !MARKERS.every((m) => m in dict)) continue
-    const v = row.value as { showPanel?: unknown } | undefined
-    return typeof v === 'object' && v !== null && v.showPanel === true
+    if (!dict || !('showPanel' in dict)) continue
+    if (row.ns.includes('privacy-gateway') || JSON.stringify(dict.showPanel ?? null).includes(DESCRIPTION_MARK)) return row.ns
   }
   return undefined
 }
 
-function formsOf(ctx: ClientCtx): ConfigForms | undefined {
+/** showPanel in the namespace that is ours; undefined when there is none. */
+export function showPanelOf(namespaces: readonly NamespaceView[]): boolean | undefined {
+  const ns = findNamespace(namespaces)
+  if (ns === undefined) return undefined
+  const v = namespaces.find((row) => row.ns === ns)?.value as { showPanel?: unknown } | undefined
+  return typeof v === 'object' && v !== null && v.showPanel === true
+}
+
+export function formsOf(ctx: ClientCtx): ConfigForms | undefined {
   try {
     const f = ctx.get('configForms') as ConfigForms | undefined
     return f !== undefined && typeof f.describe === 'function' ? f : undefined

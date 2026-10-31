@@ -105,3 +105,10 @@ export function viewLines(body: string, ids: readonly string[], onlyChanged: boo
   }
   return { lines, truncated }
 }
+
+/** One page of `items`: `page` held within the pages there are, counted from 0. */
+export function pageOf<T>(items: readonly T[], page: number, size: number): { items: T[]; page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(items.length / size))
+  const at = Math.min(Math.max(0, Math.floor(page)), pages - 1)
+  return { items: items.slice(at * size, at * size + size), page: at, pages }
+}

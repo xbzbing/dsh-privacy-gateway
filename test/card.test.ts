@@ -115,10 +115,26 @@ test('the side-by-side view pretty-prints JSON, picks out each replaced place, a
   assert.equal(viewLines(body, [], false, 2).truncated, true)
 })
 
-test('showPanel is read from the namespace whose schema has this plugin\'s fields', async () => {
+test('showPanel is read from the namespace that is ours', async () => {
   const { showPanelOf } = await import('../src/client/panelConfig.ts')
-  const ours = { dict: { protectEnvBlock: {}, cookieKeep: {}, showPanel: {} } }
+  const ours = { dict: { showPanel: {} } }
   assert.equal(showPanelOf([{ ns: 'other', schema: { dict: { showPanel: {} } }, value: { showPanel: true } }]), undefined)
-  assert.equal(showPanelOf([{ ns: 'x', schema: ours, value: { showPanel: true } }]), true)
-  assert.equal(showPanelOf([{ ns: 'x', schema: ours, value: {} }]), false)
+  assert.equal(showPanelOf([{ ns: 'dsh-privacy-gateway', schema: ours, value: { showPanel: true } }]), true)
+  assert.equal(showPanelOf([{ ns: 'dsh-privacy-gateway', schema: ours, value: {} }]), false)
+})
+
+test('the records go a page at a time, the page held within the pages there are', async () => {
+  const { pageOf } = await import('../src/client/view.ts')
+  const items = Array.from({ length: 23 }, (_, i) => i)
+  assert.deepEqual(pageOf(items, 0, 10), { items: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], page: 0, pages: 3 })
+  assert.deepEqual(pageOf(items, 2, 10).items, [20, 21, 22])
+  assert.equal(pageOf(items, 9, 10).page, 2)
+  assert.deepEqual(pageOf([], 3, 10), { items: [], page: 0, pages: 1 })
+})
+
+test('the settings namespace is ours by its name or by showPanel\'s description', async () => {
+  const { findNamespace } = await import('../src/client/panelConfig.ts')
+  assert.equal(findNamespace([{ ns: 'other', schema: { dict: { showPanel: { meta: { description: 'x' } } } } }]), undefined)
+  assert.equal(findNamespace([{ ns: 'include:dsh-privacy-gateway', schema: { dict: { showPanel: {} } } }]), 'include:dsh-privacy-gateway')
+  assert.equal(findNamespace([{ ns: 'n1', schema: { dict: { showPanel: { meta: { description: '… / Show the Privacy panel in the right sidebar' } } } } }]), 'n1')
 })
