@@ -12,7 +12,7 @@ import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { defaults } from '../src/config.ts'
 import { installGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine } from '../src/engine.ts'
-import { bypassedProvider, currentSession, routeStream } from '../src/providers.ts'
+import { makeSkip, routeStream } from '../src/providers.ts'
 import { MAX_SESSIONS, SessionSwitches } from '../src/sessions.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
@@ -76,7 +76,7 @@ test('a session turned off goes out unmasked; another session stays masked', asy
   const before = getGlobalDispatcher()
   const gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), {
     checkIntervalMs: 0,
-    skip: () => bypassedProvider() !== undefined || switches.isOff(currentSession()),
+    skip: makeSkip({ enabled: () => true, sessionOff: (session) => switches.isOff(session) }),
     logger: { warn: () => {} },
   })
   async function* adapter() {

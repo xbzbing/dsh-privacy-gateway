@@ -5,7 +5,7 @@ import { liveBool, liveMark, liveStrings, resolveConfig, type PrivacyGatewayConf
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
-import { bypassedProvider, currentSession, routeStream } from './providers.ts'
+import { makeSkip, routeStream } from './providers.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
 import { SessionSwitches } from './sessions.ts'
@@ -266,7 +266,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   }
   ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next, options?.sessionId))
   ctx.effect(() => {
-    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => !current().enabled || bypassedProvider() !== undefined || sessions.isOff(currentSession()), logger: ctx.logger })
+    // `/privacy off` is a bypass too: a request then goes as it is, and a WebSocket may open (docs/adr/0025)
+    const skip = makeSkip({ enabled: () => engine.active && current().enabled, sessionOff: (session) => sessions.isOff(session) })
+    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip, logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
     return () => {
       gateway.dispose()

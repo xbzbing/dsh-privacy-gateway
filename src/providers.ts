@@ -73,3 +73,20 @@ export function isExcluded(provider: unknown, excluded: readonly string[]): prov
   const p = provider.toLowerCase()
   return excluded.some((e) => e.toLowerCase() === p)
 }
+
+export interface SkipSources {
+  /** Whether masking is on at all: config enabled and `/privacy` together. */
+  enabled: () => boolean
+  /** Whether the user turned masking off for `session` (docs/adr/0023); never for an absent one. */
+  sessionOff: (session: string | undefined) => boolean
+}
+
+/**
+ * The dispatcher's `skip`: true only for a request one of the explicit
+ * bypasses names, masking turned off, a stream of an excluded provider
+ * (docs/adr/0018), or a session with masking off. An empty or absent provider
+ * or session is never one of them.
+ */
+export function makeSkip(sources: SkipSources): () => boolean {
+  return () => !sources.enabled() || bypassedProvider() !== undefined || sources.sessionOff(currentSession())
+}
