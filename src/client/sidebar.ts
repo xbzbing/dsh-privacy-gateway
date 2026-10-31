@@ -8,7 +8,7 @@
  * takes; the strip renders one view at a time and passes the session it is
  * showing.
  */
-import { createElement as h, Fragment } from 'react'
+import { createElement as h } from 'react'
 import type { ReactNode } from 'react'
 
 import { NS, type T } from './locales.ts'
@@ -46,8 +46,9 @@ export function registerPanelView(ctx: ClientCtx, t: T): (() => void) | undefine
   try {
     const handle = ctx.slots.inject('conversation.view', () =>
       ctx.slots.register(
-        // beside Chat (0), Trajectory (10) and Git (30)
-        { name: 'conversation.view', id: VIEW_ID, order: 40, locale: NS, label: () => h(Fragment, null, h(ShieldIcon, { size: 14, className: 'pgw-tab-icon' }), h('span', null, t('panel.tab'))) },
+        // beside Chat (0), Trajectory (10), Context (20) and Git (30), ahead of Stats (40); the label is
+        // text, which is what the strip projects
+        { name: 'conversation.view', id: VIEW_ID, order: 35, locale: NS, label: () => t('panel.tab') },
         (props: { sessionId?: string }) => h(StatsCard, { ctx, t, panel: true, ...(props?.sessionId ? { sessionId: props.sessionId } : {}) }),
       ),
     )
