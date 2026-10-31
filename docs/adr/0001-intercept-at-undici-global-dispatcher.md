@@ -28,6 +28,7 @@
 - loopback 不豁免：oc2dsh 的 relay 就在 `127.0.0.1`。另设 `excludeHosts` 显式排除。
 - 除 ADR-0025 的三处外不改请求头：按新 body 重算 `content-length`；明文发出解码过的 body 时去掉 `content-encoding`；脱敏过的请求把 `accept-encoding` 设成 `identity`。
 - 定时自检：全局 dispatcher 被别人顶掉时，以当时的全局 dispatcher 为下游重新装上。下游的顺序与合成契约见 ADR-0012。
+- 卸载（插件重载、卸载、退出）后网关一律放行：仍持有它的层发来的请求原样透传。网关在顶上时，全局 dispatcher 交还给第一个 `proxy` 层（最后一个在顶上被收编的，否则是安装时的那个），不交给 `route` 层。新装的网关遇到已卸载的网关时装在它交还的 dispatcher 上，重载不会层层叠加。
 - 依赖锁 `undici@8.11.2`，与宿主 `dsh-http-proxy` 同版本。undici 8 的 `setGlobalDispatcher` 同时写 `undici.globalDispatcher.2`（原对象）与 `.1`（`Dispatcher1Wrapper` 包装，Node 内置 fetch 读它），所以插件自带一份 undici 也与宿主共用同一个全局 dispatcher。
 
 ## Consequences

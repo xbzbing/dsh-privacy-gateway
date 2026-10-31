@@ -759,3 +759,62 @@ test('a streamed request body is read whole and masked, a value split across its
     await o.close()
   }
 })
+
+test('dispose hands the global slot to a proxy layer, never to a route layer, and the gateway passes through from then on', async () => {
+  const o = await emptyOrigin()
+  const before = getGlobalDispatcher()
+  const proxy = new CountingAgent()
+  try {
+    // a route layer chained, nothing on top: the dispatcher it was installed on is global again
+    let g = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0 })
+    g.dispatcher.chainTo(new RouteLayer(g.dispatcher))
+    g.dispose()
+    assert.equal(getGlobalDispatcher(), before)
+    // a proxy found on top and adopted: it stays global
+    g = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn() {} } })
+    g.dispatcher.chainTo(new RouteLayer(g.dispatcher))
+    setGlobalDispatcher(proxy)
+    g.check()
+    const held = g.dispatcher.compose((dispatch) => dispatch) // a layer that holds the gateway
+    g.dispose()
+    assert.equal(getGlobalDispatcher(), proxy)
+    assert.equal(g.dispatcher.bypass, true)
+    await new Promise<void>((resolve, reject) => {
+      held.dispatch(
+        { origin: o.url, path: '/v1/chat/completions', method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) },
+        { onRequestStart() {}, onResponseStart() {}, onResponseData() {}, onResponseEnd: () => resolve(), onResponseError: (_c, e) => reject(e) },
+      )
+    })
+    assert.equal(o.seen[0]?.body, chat(OPENAI), 'a disposed gateway masks nothing')
+  } finally {
+    setGlobalDispatcher(before)
+    await proxy.close()
+    await o.close()
+  }
+})
+
+test('a new gateway goes on top of what a disposed one handed back, so reloads do not stack gateways', async () => {
+  const o = await emptyOrigin()
+  const before = getGlobalDispatcher()
+  try {
+    const g1 = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0 })
+    const top = g1.dispatcher.compose((dispatch) => dispatch)
+    setGlobalDispatcher(top)
+    g1.dispose()
+    // the dispatcher on top goes away and puts back the one it was installed on: the disposed gateway
+    setGlobalDispatcher(g1.dispatcher)
+    const g2 = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn() {} } })
+    assert.deepEqual(g2.dispatcher.downstreams().map((l) => l.dispatcher), [before])
+    // one found on top later is unwrapped the same way
+    setGlobalDispatcher(g1.dispatcher)
+    g2.check()
+    assert.deepEqual(g2.dispatcher.downstreams().map((l) => l.dispatcher), [before])
+    await (await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })).text()
+    assert.match(o.seen[0]?.body ?? '', PLACEHOLDER)
+    g2.dispose()
+    assert.equal(getGlobalDispatcher(), before)
+  } finally {
+    setGlobalDispatcher(before)
+    await o.close()
+  }
+})

@@ -68,6 +68,33 @@ const utf8 = new TextDecoder('utf-8', { fatal: true })
  */
 const kHop = Symbol('dsh-privacy-gateway.hop')
 
+/** Marks a gateway, from this copy of the plugin or another (a reload, a second install). */
+const kGateway = Symbol.for('dsh-privacy-gateway.gateway')
+
+interface GatewayLike extends Dispatcher {
+  readonly [kGateway]: true
+  bypass: boolean
+  handback(): Dispatcher
+}
+
+function isGateway(d: unknown): d is GatewayLike {
+  return typeof d === 'object' && d !== null && (d as Partial<GatewayLike>)[kGateway] === true && typeof (d as Partial<GatewayLike>).handback === 'function'
+}
+
+/**
+ * `d`, or, where it is a disposed gateway, what that one handed back: a new
+ * gateway goes on top of the dispatcher an old one was on, never on the old
+ * one, so reloads do not stack gateways.
+ */
+function unwrapDisposed(d: Dispatcher): Dispatcher {
+  const seen = new Set<Dispatcher>()
+  while (isGateway(d) && d.bypass && !seen.has(d)) {
+    seen.add(d)
+    d = d.handback()
+  }
+  return d
+}
+
 // ---- headers -------------------------------------------------------------------
 
 type HeaderInput = Options['headers']
@@ -624,8 +651,9 @@ export class MaskingDispatcher extends Dispatcher {
   #layers: Layer[]
   #seq = 0
   #order: Layer[] | undefined
-  /** Set once the gateway is disposed while another dispatcher sits on top of it: every request passes through. */
+  /** Set once the gateway is disposed: every request that still reaches it (through a layer that holds it) passes through. */
   bypass = false
+  readonly [kGateway] = true
   /** Run before each request: installGateway puts the gateway back on top if it was replaced. */
   heal: (() => void) | undefined
 
@@ -684,6 +712,18 @@ export class MaskingDispatcher extends Dispatcher {
       if (l.d !== after && !isClosed(l.d)) return l.d
     }
     return undefined
+  }
+
+  /**
+   * What the global dispatcher goes back to when the gateway is taken out:
+   * the first open `proxy` layer, the one that would be global had the gateway
+   * never been installed (the last dispatcher found on top of it, else the one
+   * it was installed on). Never a `route` layer, which only works under the
+   * gateway.
+   */
+  handback(): Dispatcher {
+    const proxies = this.#ordered().filter((l) => l.role === 'proxy')
+    return (proxies.find((l) => !isClosed(l.d)) ?? (proxies.at(-1) as Layer)).d
   }
 
   /** The dispatcher requests go on to: the first open layer, or the last one when all are closed. */
@@ -865,7 +905,7 @@ export interface InstalledGateway {
   readonly dispatcher: MaskingDispatcher
   /** Puts the gateway back on top if another dispatcher replaced it; true when it had to. */
   check(): boolean
-  /** Takes the gateway out: the dispatcher below it is global again, or, with another one on top, it passes everything through. */
+  /** Takes the gateway out: it passes everything through from then on, and, where it is global, its `handback()` is global again. */
   dispose(): void
 }
 
@@ -875,7 +915,7 @@ export interface InstalledGateway {
  * `check` and put downstream, so the user's proxy policy still applies.
  */
 export function installGateway(engine: RedactionEngine, options: GatewayInstallOptions = {}): InstalledGateway {
-  const gateway = new MaskingDispatcher(getGlobalDispatcher(), engine, options)
+  const gateway = new MaskingDispatcher(unwrapDisposed(getGlobalDispatcher()), engine, options)
   const slots = globalThis as unknown as Record<symbol, unknown>
   let legacy: unknown
   const put = (): void => {
@@ -888,10 +928,10 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
     const current = getGlobalDispatcher()
     const legacyNow = slots[LEGACY_GLOBAL]
     if (current === gateway && legacyNow === legacy) return false
-    if (current !== gateway) gateway.adopt(current)
+    if (current !== gateway) gateway.adopt(unwrapDisposed(current))
     // set through an older undici: only the legacy slot moved
     else if (legacyNow instanceof Dispatcher || typeof (legacyNow as Dispatcher | undefined)?.dispatch === 'function') {
-      gateway.adopt(legacyNow as Dispatcher)
+      gateway.adopt(unwrapDisposed(legacyNow as Dispatcher))
     }
     put()
     options.logger?.warn('dsh-privacy-gateway: another dispatcher replaced the gateway; chained it downstream and reinstalled')
@@ -917,8 +957,9 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
       disposed = true
       if (timer) clearInterval(timer)
       gateway.heal = undefined
-      if (getGlobalDispatcher() === gateway) setGlobalDispatcher(gateway.downstream())
-      else gateway.bypass = true
+      // a layer may still hold the gateway as its own previous dispatcher: whatever reaches it passes through
+      gateway.bypass = true
+      if (getGlobalDispatcher() === gateway) setGlobalDispatcher(gateway.handback())
     },
   }
 }
