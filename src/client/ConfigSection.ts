@@ -18,6 +18,7 @@ import type { ReactNode } from 'react'
 
 import type { T } from './locales.ts'
 import { findNamespace, formsOf } from './panelConfig.ts'
+import { registryOf } from './sidebar.ts'
 import { excludeChoices, toggleExcluded } from './providerChoice.ts'
 import { fetchProviders, type ClientCtx, type ProviderEntry } from './rpc.ts'
 
@@ -142,7 +143,14 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
     h(
       'div',
       { className: 'pgw-cfg__field' },
-      h('div', { className: 'pgw-cfg__text' }, h('span', { className: 'pgw-cfg__name' }, t('cfg.showPanel')), h('span', { className: 'pgw-meta' }, t('cfg.showPanelHint'))),
+      h(
+        'div',
+        { className: 'pgw-cfg__text' },
+        h('span', { className: 'pgw-cfg__name' }, t('cfg.showPanel')),
+        h('span', { className: 'pgw-meta' }, t('cfg.showPanelHint')),
+        // why the tab would not appear, said where the switch is (docs/adr/0017)
+        registryOf(ctx) ? null : h('span', { className: 'pgw-meta pgw-warn' }, t('cfg.noSidebar')),
+      ),
       h('div', { className: 'pgw-cfg__control' }, h(Switch, { checked: showPanel, label: t('cfg.showPanel'), disabled, onChange: (next) => write([{ op: 'set', path: ['showPanel'], value: next }]) })),
     ),
     h(

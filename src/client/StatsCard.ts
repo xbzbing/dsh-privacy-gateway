@@ -17,7 +17,7 @@ const RANGES: Range[] = ['today', 'week', 'month']
 
 type State = { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: Overview }
 
-function useOverview(ctx: ClientCtx): [State, () => void, boolean] {
+function useOverview(ctx: ClientCtx, session?: string): [State, () => void, boolean] {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [busy, setBusy] = useState(false)
   const live = useRef<AbortController | null>(null)
@@ -26,12 +26,12 @@ function useOverview(ctx: ClientCtx): [State, () => void, boolean] {
     const ac = new AbortController()
     live.current = ac
     setBusy(true)
-    void fetchOverview(ctx, LIMIT, ac.signal).then((r) => {
+    void fetchOverview(ctx, LIMIT, ac.signal, session).then((r) => {
       if (ac.signal.aborted) return
       setBusy(false)
       setState((prev) => (r.ok ? { status: 'ready', data: r.value } : prev.status === 'ready' ? prev : { status: 'error' }))
     })
-  }, [ctx])
+  }, [ctx, session])
   useEffect(() => {
     load()
     const timer = setInterval(() => {
@@ -153,9 +153,9 @@ function Record_(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: 
   )
 }
 
-export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean }): ReactNode {
+export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessionId?: string }): ReactNode {
   const { t } = props
-  const [state, reload, busy] = useOverview(props.ctx)
+  const [state, reload, busy] = useOverview(props.ctx, props.sessionId)
   const [range, setRange] = useState<Range>('today')
   const [open, setOpen] = useState<number | null>(null)
   const [page, setPage] = useState(0)

@@ -100,7 +100,9 @@ export function registerSidebarTab(ctx: ClientCtx, t: T): (() => void) | undefin
   }
   try {
     const body = ctx.slots.inject('sidebar.right.pane.tab', () =>
-      ctx.slots.register({ name: 'sidebar.right.pane.tab', key: SIDEBAR_ID, locale: NS }, () => h(StatsCard, { ctx, t, panel: true })),
+      ctx.slots.register({ name: 'sidebar.right.pane.tab', key: SIDEBAR_ID, locale: NS }, (props: { sessionId?: string }) =>
+        h(StatsCard, { ctx, t, panel: true, ...(props?.sessionId ? { sessionId: props.sessionId } : {}) }),
+      ),
     )
     if (typeof body === 'function') releases.push(body as () => void)
     const title = ctx.slots.inject('sidebar.right.pane.tab.title', () =>

@@ -12,6 +12,8 @@ import type { MaskRecord, Stats } from './records.ts'
 export interface OverviewRequest {
   /** How many of the latest records to send; 1–200, default 50. */
   limit?: number
+  /** Only this session's records and sums (the sidebar panel, docs/adr/0021). */
+  session?: string
 }
 
 export interface Overview {
@@ -26,6 +28,8 @@ export interface Overview {
   stats: Stats
   /** The latest records, newest first. */
   recent: MaskRecord[]
+  /** The session the sums and records are about; absent means every session. */
+  session?: string
   /** The vendor view is on (config vendorView). */
   vendorView?: boolean
   /** The keys of the records whose body as it went is kept. */
@@ -57,7 +61,7 @@ export interface ProviderEntry {
 
 /** What the service reads from the plugin. */
 export interface OverviewSource {
-  overview(limit: number): Overview
+  overview(limit: number, session?: string): Overview
   /** The providers with an adapter now (host `llm.listProviders()`). */
   providers?(): ProviderEntry[]
   /** The body kept for `key`, or null when the view is off or it is not kept. */
@@ -79,9 +83,10 @@ export class PrivacyGatewayService extends TypertRemoteService {
     this.source = source
   }
 
-  /** The state, the sums and the latest records. */
+  /** The state, the sums and the latest records; with `session`, only that session's. */
   async overview(request: OverviewRequest): Promise<Overview> {
-    return this.source.overview(clampLimit(request?.limit))
+    const session = typeof request?.session === 'string' && request.session !== '' ? request.session : undefined
+    return this.source.overview(clampLimit(request?.limit), session)
   }
 
   /** The providers with an adapter, for the excludeProviders choice. */

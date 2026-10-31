@@ -24,7 +24,7 @@ interface ConnectionFace {
 export type OverviewResult = { ok: true; value: Overview } | { ok: false; message: string }
 
 /** The overview, or why there is none; never throws. */
-export async function fetchOverview(ctx: ClientCtx, limit: number, signal?: AbortSignal): Promise<OverviewResult> {
+export async function fetchOverview(ctx: ClientCtx, limit: number, signal?: AbortSignal, session?: string): Promise<OverviewResult> {
   let rpc: ConnectionFace['rpc']
   try {
     rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
@@ -33,7 +33,8 @@ export async function fetchOverview(ctx: ClientCtx, limit: number, signal?: Abor
   }
   if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
   try {
-    const r = (await rpc.call('/api', 'privacyGateway/overview', { args: { request: { limit } } }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
+    const request = session ? { limit, session } : { limit }
+    const r = (await rpc.call('/api', 'privacyGateway/overview', { args: { request } }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
     if (r?.ok === true && isOverview(r.value)) return { ok: true, value: r.value }
     return { ok: false, message: r?.error?.message ?? 'malformed reply' }
   } catch (err) {

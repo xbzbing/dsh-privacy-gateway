@@ -155,14 +155,15 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   // the settings card's Remote service; the gateway does not depend on it
   if (ctx.plugin) {
     const source: OverviewSource = {
-      overview: (limit) => ({
+      overview: (limit, session) => ({
         active: engine.active,
         secrets: cfg.secrets,
         personal: cfg.personal,
         record: cfg.record,
         values: engine.values,
-        stats: records.stats(),
-        recent: records.recent(limit),
+        ...(session ? { session } : {}),
+        stats: records.stats(session),
+        recent: records.recent(limit, session),
         vendorView: cfg.vendorView,
         views: views?.keys() ?? [],
         // read now: the detail page's switch changes it without remounting the plugin

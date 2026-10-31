@@ -281,17 +281,34 @@ export class RecordStore {
   }
 
   /** The latest records, newest first. */
-  recent(limit = this.#o.keepRecords): MaskRecord[] {
-    return this.#ring.slice(-limit).reverse()
+  recent(limit = this.#o.keepRecords, session?: string): MaskRecord[] {
+    const rows = session === undefined ? this.#ring : this.#ring.filter((r) => r.session === session)
+    return rows.slice(-limit).reverse()
   }
 
-  stats(): Stats {
+  /**
+   * Sums over some records. With `session`, over the records this run still
+   * holds for that session: the per-day sums on disk are not per session, so a
+   * session's view is bounded by memory (docs/adr/0021).
+   */
+  stats(session?: string): Stats {
     const now = this.#now()
     const since = (days: number): string => dayOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1)))
     const today = dayOf(now)
     const week = since(7)
     const month = since(STAT_DAYS)
     const out: Stats = { today: emptyTotals(), week: emptyTotals(), month: emptyTotals(), failStreak: this.#failStreak }
+    if (session !== undefined) {
+      for (const r of this.#ring) {
+        if (r.session !== session) continue
+        const day = r.time.slice(0, 10)
+        if (day > today || day < month) continue
+        addRecord(out.month, r)
+        if (day >= week) addRecord(out.week, r)
+        if (day === today) addRecord(out.today, r)
+      }
+      return out
+    }
     for (const [day, t] of this.#days) {
       if (day > today || day < month) continue
       addTotals(out.month, t)

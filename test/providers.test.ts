@@ -156,3 +156,24 @@ test('a record says which workspace and session a call came from, by name', asyn
   assert.equal(none?.session, undefined)
   assert.equal(none?.title, undefined)
 })
+
+test('the sums and the latest records can be narrowed to one session', async () => {
+  const { RecordStore } = await import('../src/records.ts')
+  const records = new RecordStore({ keepDays: 30, keepBytes: 64 * 1024 * 1024, keepRecords: 50 })
+  const engine = new PrivacyEngine(randomBytes(32), defaults, { records })
+  const call = (session?: string) => {
+    const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }), { host: 'h', path: '/v1/chat/completions', ...(session ? { session } : {}) })
+    ex?.finish()
+  }
+  call('sess-a')
+  call('sess-b')
+  call('sess-a')
+  assert.equal(records.recent().length, 3)
+  assert.equal(records.recent(10, 'sess-a').length, 2)
+  assert.equal(records.recent(10, 'sess-b').length, 1)
+  assert.equal(records.recent(10, 'sess-none').length, 0)
+  assert.equal(records.stats().today.requests, 3)
+  assert.equal(records.stats('sess-a').today.requests, 2)
+  assert.equal(records.stats('sess-a').today.masked, 2)
+  assert.equal(records.stats('sess-none').today.requests, 0)
+})
