@@ -62,6 +62,27 @@ test('a request that is no model request, or goes while masking is off, makes no
   assert.equal(engine.records.recent().length, 0)
 })
 
+test('a model request with nothing masked and nothing put back makes no record; one whose reply puts a value back does', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const first = engine.maskRequest(chat(`key ${SENTINEL}`), info)
+  assert.ok(first)
+  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(first.text)?.[0] ?? ''
+  first.finish()
+  const plain = engine.maskRequest(chat('hello'), info)
+  assert.ok(plain)
+  plain.restoreBody(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }))
+  plain.finish()
+  assert.equal(engine.records.recent().length, 1)
+  const echo = engine.maskRequest(chat('again'), info)
+  assert.ok(echo)
+  echo.restoreBody(JSON.stringify({ choices: [{ message: { content: p } }] }))
+  echo.finish()
+  const recs = engine.records.recent()
+  assert.equal(recs.length, 2)
+  assert.equal(recs[0]?.n, 0)
+  assert.equal(recs[0]?.restored, 1)
+})
+
 test('what a request is goes by its path', () => {
   assert.equal(whatOf('/v1/chat/completions'), 'chat')
   assert.equal(whatOf('/v1/messages/count_tokens'), 'count')
@@ -86,7 +107,7 @@ test('records go to a 0600 file a day in a 0700 directory, one JSON line each, w
     const text = readFileSync(file, 'utf8')
     assert.ok(!text.includes(SENTINEL))
     const lines = text.trim().split('\n').map((l) => JSON.parse(l) as MaskRecord)
-    assert.deepEqual(lines.map((l) => l.n), [1, 0])
+    assert.deepEqual(lines.map((l) => l.n), [1])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

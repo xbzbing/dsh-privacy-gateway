@@ -46,7 +46,7 @@ test('status gives the counts of today, 7 and 30 days, and never a value', () =>
     assert.equal(r.kind, 'success')
     assert.ok(!r.text.includes(SENTINEL))
     assert.ok(!r.text.includes(SENTINEL.slice(3)))
-    assert.match(r.text, lang === 'zh' ? /今日：1 次请求，1 次有遮蔽，替换 1 处，还原 1 处（工具参数里 1 处）/ : /Today: 1 requests, 1 masked, 1 places replaced, 1 restored \(1 in tool arguments\)/)
+    assert.match(r.text, lang === 'zh' ? /今日：记录 1 次请求，1 次有遮蔽，替换 1 处，还原 1 处（工具参数里 1 处）/ : /Today: 1 requests recorded, 1 masked, 1 places replaced, 1 restored \(1 in tool arguments\)/)
     assert.match(r.text, /API_KEY 1/)
   }
   assert.deepEqual(runPrivacyCommand(faceOf(engine), ' status ', 'en'), runPrivacyCommand(faceOf(engine), '', 'en'))

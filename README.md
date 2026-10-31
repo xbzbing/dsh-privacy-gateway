@@ -65,7 +65,7 @@ dsh plugin --profile web add dsh-privacy-gateway@latest
 
 ## 记录与统计
 
-每个经过网关的模型请求记一条（没有值被遮也记）：时间、遮蔽耗时、host、model、会话 id、替换处数、每个值的占位符 / kind / finder / 开头 / 长度、回复里还原的处数（工具调用参数里的另计），以及回复里出现、值表里却没有的占位符数。记录里不写值本身，也不记 URL 的 query（[ADR-0008](docs/adr/0008-masking-records.md)）。
+只记有脱敏或还原的模型请求，一个请求一条（既没遮也没还原的不记）：时间、遮蔽耗时、host、model、会话 id、替换处数、每个值的占位符 / kind / finder / 开头 / 长度、回复里还原的处数（工具调用参数里的另计），以及回复里出现、值表里却没有的占位符数。记录里不写值本身，也不记 URL 的 query（[ADR-0008](docs/adr/0008-masking-records.md)）。
 
 记录按天写在 `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`，目录 0700、文件 0600。写盘失败只告警，不影响请求。
 

@@ -111,6 +111,8 @@ export class PrivacyEngine implements RedactionEngine {
         done = true
         let restored = 0
         for (const n of tally.restored.values()) restored += n
+        // a request with nothing masked and nothing put back is not recorded (docs/adr/0008)
+        if (record.n === 0 && restored === 0 && tally.unmapped === 0) return
         this.records.add({ ...record, restored, ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}), unmapped: tally.unmapped })
       },
     }

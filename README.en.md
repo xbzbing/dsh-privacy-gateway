@@ -65,7 +65,7 @@ No answer of the command has a value in it.
 
 ## Records and statistics
 
-Every model request through the gateway makes one record, whether or not anything was masked: the time, how long masking took, the host, the model, the session id, the places replaced, each value's placeholder / kind / finder / head / length, the places the reply had restored (with those in tool call arguments counted apart), and the placeholders the reply had that the value table has no value for. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md)).
+Only a model request that had something masked or restored makes a record, one each (a request with neither makes none): the time, how long masking took, the host, the model, the session id, the places replaced, each value's placeholder / kind / finder / head / length, the places the reply had restored (with those in tool call arguments counted apart), and the placeholders the reply had that the value table has no value for. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md)).
 
 Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
 
