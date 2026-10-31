@@ -47,11 +47,19 @@ const CSS = `
 .pgw-detail th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:3px 8px 3px 0}
 .pgw-detail td{padding:3px 8px 3px 0;font-family:var(--dsw-font-mono,ui-monospace,monospace);white-space:nowrap}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:8px}
-.pgw-cfg{display:flex;flex-direction:column;gap:12px}
-.pgw-cfg__body{display:flex;flex-direction:column;gap:16px}
-.pgw-cfg__group{display:flex;flex-direction:column;gap:8px}
-.pgw-cfg__label{display:flex;flex-direction:column;gap:2px}
-.pgw-cfg__row{display:flex;align-items:center;gap:8px}
+.pgw-cfg{display:flex;flex-direction:column;gap:14px}
+.pgw-cfg__field{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.pgw-cfg__text{display:flex;flex-direction:column;gap:3px;min-width:0}
+.pgw-cfg__name{font-size:13px}
+.pgw-cfg__control{flex:none;display:flex;align-items:center;gap:8px}
+.pgw-picker{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}
+.pgw-picker:disabled{opacity:.5;cursor:default}
+.pgw-picker__row{display:inline-flex;align-items:center;gap:6px}
+.pgw-cfg__chips{display:flex;flex-wrap:wrap;gap:6px}
+.pgw-chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 6px 2px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
+.pgw-chip__x{border:0;background:none;color:inherit;font:inherit;font-size:13px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}
+.pgw-chip__x:hover{opacity:1}
+.pgw-chip__x:disabled{opacity:.3;cursor:default}
 .pgw-cfg__add{display:flex;gap:6px;align-items:center}
 .pgw-cfg__add input{flex:1;min-width:0;max-width:240px;font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary)}
 .pgw-fallback{display:flex;align-items:center;gap:8px;cursor:pointer}

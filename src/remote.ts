@@ -47,9 +47,19 @@ export interface VendorView {
   body: string
 }
 
+/** One provider route with an adapter, as the excludeProviders choice lists it. */
+export interface ProviderEntry {
+  /** The provider route key (`deepseek`, `openai`, …). */
+  id: string
+  /** Its human-readable name. */
+  name: string
+}
+
 /** What the service reads from the plugin. */
 export interface OverviewSource {
   overview(limit: number): Overview
+  /** The providers with an adapter now (host `llm.listProviders()`). */
+  providers?(): ProviderEntry[]
   /** The body kept for `key`, or null when the view is off or it is not kept. */
   vendorView?(key: number): VendorView | null
 }
@@ -72,6 +82,11 @@ export class PrivacyGatewayService extends TypertRemoteService {
   /** The state, the sums and the latest records. */
   async overview(request: OverviewRequest): Promise<Overview> {
     return this.source.overview(clampLimit(request?.limit))
+  }
+
+  /** The providers with an adapter, for the excludeProviders choice. */
+  async providers(): Promise<ProviderEntry[]> {
+    return this.source.providers?.() ?? []
   }
 
   /** One recorded request as the vendor got it, or null. */
@@ -106,3 +121,4 @@ function markRemote(cls: { prototype: object }, method: string): void {
 
 markRemote(PrivacyGatewayService, 'overview')
 markRemote(PrivacyGatewayService, 'vendorView')
+markRemote(PrivacyGatewayService, 'providers')

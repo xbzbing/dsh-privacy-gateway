@@ -62,6 +62,7 @@ export async function fetchVendorView(ctx: ClientCtx, key: number, signal?: Abor
   }
 }
 
+/** One provider route with an adapter, as the excludeProviders choice lists it. */
 export interface ProviderEntry {
   id: string
   name: string
@@ -69,32 +70,19 @@ export interface ProviderEntry {
 
 export type ProvidersResult = { ok: true; providers: ProviderEntry[] } | { ok: false; message: string }
 
-/** The providers with an adapter (`llm/listProviders`), for the excludeProviders choice; never throws. */
+/** The providers with an adapter, from this plugin's own host half; never throws. */
 export async function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Promise<ProvidersResult> {
-  let list: unknown
+  let rpc: ConnectionFace['rpc']
   try {
-    // the typed remote the models settings page uses, else the raw channel
-    let remote: { llm?: { listProviders?(): Promise<unknown> } } | undefined
-    try {
-      remote = ctx.get('remote') as typeof remote
-    } catch {
-      remote = undefined
-    }
-    if (typeof remote?.llm?.listProviders === 'function') list = await remote.llm.listProviders()
-    else {
-      let rpc: ConnectionFace['rpc']
-      try {
-        rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
-      } catch {
-        rpc = undefined
-      }
-      if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
-      const r = (await rpc.call('/api', 'llm/listProviders', { args: {} }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
-      if (r?.ok !== true) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
-      list = r.value
-    }
-    if (!Array.isArray(list)) return { ok: false, message: 'malformed reply' }
-    const providers = list.flatMap((p: unknown) => {
+    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
+  } catch {
+    rpc = undefined
+  }
+  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
+  try {
+    const r = (await rpc.call('/api', 'privacyGateway/providers', { args: {} }, signal)) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
+    if (r?.ok !== true || !Array.isArray(r.value)) return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+    const providers = r.value.flatMap((p: unknown) => {
       const e = p as { id?: unknown; name?: unknown } | null
       return e !== null && typeof e === 'object' && typeof e.id === 'string' && e.id !== '' ? [{ id: e.id, name: typeof e.name === 'string' && e.name !== '' ? e.name : e.id }] : []
     })
@@ -103,4 +91,3 @@ export async function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Prom
     return { ok: false, message: err instanceof Error ? err.message : String(err) }
   }
 }
-

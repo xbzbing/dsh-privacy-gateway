@@ -1,15 +1,18 @@
 /**
- * This plugin's configuration page (docs/adr/0017, docs/adr/0018). It is drawn
- * in two places, one implementation:
- *  - the bundle's detail page (`plugins.bundle.config`), inline and without a
- *    `form` prop, where the namespace is found in the settings mirror;
+ * This plugin's configuration, drawn in two official places from one component
+ * (docs/adr/0017, docs/adr/0018):
+ *  - the bundle's detail page (`plugins.bundle.config`), inline, where the
+ *    entry's form is taken from the settings mirror;
  *  - the plugin manager's row page (`plugins.row.config`), which hands the
  *    entry's `form` over itself.
- * Both render the same section and write through the same `mutate`.
+ * Both write through the same revision-aware `mutate`, and both use the Web
+ * shell's own controls — the Switch for the toggle and the Menu for picking
+ * providers, the way the git panel picks a model.
  *
  * The two fields are the volatile ones — showPanel and excludeProviders — so a
  * write takes effect without remounting the gateway.
  */
+import { Button, IconChevronDownOutlineRegular, Menu, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createElement as h, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
@@ -17,7 +20,6 @@ import type { T } from './locales.ts'
 import { findNamespace, formsOf } from './panelConfig.ts'
 import { excludeChoices, toggleExcluded } from './providerChoice.ts'
 import { fetchProviders, type ClientCtx, type ProviderEntry } from './rpc.ts'
-import { buttonOf, checkboxOf, switchOf } from './ui.ts'
 
 /** One path-addressed write, as the settings service takes it. */
 interface FieldOp {
@@ -61,33 +63,36 @@ function useMirrorForm(ctx: ClientCtx): RowForm | undefined {
   }, [forms, ns])
   useEffect(() => (form ? form.subscribe(() => bump((n) => n + 1)) : undefined), [form])
   void tick
+  const snap = form?.getSnapshot()
   return useMemo(() => {
     if (!form) return undefined
-    const snap = form.getSnapshot()
     const mutate = form.mutate
     const write = mutate
       ? (ops: readonly FieldOp[], revision?: number) => mutate.call(form, ops, revision)
-      : async (ops: readonly FieldOp[], revision?: number): Promise<boolean> => {
+      : async (ops: readonly FieldOp[]): Promise<boolean> => {
           // a form without the batch call: one field at a time, which is all this page writes
-          for (const op of ops) {
-            const ok = await form.set(op.path.join('.'), op.value)
-            if (!ok) return false
-          }
-          void revision
+          for (const op of ops) if (!(await form.set(op.path.join('.'), op.value))) return false
           return true
         }
-    return { state: { status: snap.status, value: snap.value, revision: snap.revision, writable: snap.writable !== false }, mutate: write }
-  }, [form, tick, form?.getSnapshot()])
+    const state = form.getSnapshot()
+    return { state: { status: state.status, value: state.value, revision: state.revision, writable: state.writable !== false }, mutate: write }
+  }, [form, write0(snap)])
+}
+
+/** A stable re-render key for the mirror's snapshot, so the memo above re-runs when it changes. */
+function write0(snap: { status: string; revision?: number } | undefined): string {
+  return snap ? `${snap.status}:${snap.revision ?? ''}` : ''
 }
 
 export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): ReactNode {
   const { ctx, t } = props
   const mirrored = useMirrorForm(ctx)
   const form = props.form ?? mirrored
-  const [, tick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [providers, setProviders] = useState<ProviderEntry[] | null>(null)
+  const [unavailable, setUnavailable] = useState(false)
+  const [picker, setPicker] = useState(false)
   const [added, setAdded] = useState('')
   const state = form?.state
   const ready = state?.status === 'ready'
@@ -98,12 +103,12 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   useEffect(() => {
     const abort = new AbortController()
     void fetchProviders(ctx, abort.signal).then((r) => {
-      if (!abort.signal.aborted) setProviders(r.ok ? r.providers : [])
+      if (abort.signal.aborted) return
+      setUnavailable(!r.ok)
+      setProviders(r.ok ? r.providers : [])
     })
     return () => abort.abort()
   }, [ctx])
-  // the shell replaces the state object on every accepted write; a nudge is all a re-render needs
-  void tick
   const write = (ops: readonly FieldOp[]): void => {
     if (!form || busy || !ready || !writable) return
     setBusy(true)
@@ -119,62 +124,87 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
       },
     )
   }
-  const setShowPanel = (next: boolean): void => write([{ op: 'set', path: ['showPanel'], value: next }])
-  const setExcluded = (next: string[]): void => write([{ op: 'set', path: ['excludeProviders'], value: next }])
+  const disabled = !ready || busy || !writable
+  const rows = excludeChoices(providers ?? [], excluded)
   const add = (): void => {
     const id = added.trim()
     if (id === '') return
     setAdded('')
-    if (!excluded.some((e) => e.toLowerCase() === id.toLowerCase())) setExcluded([...excluded, id])
+    if (!excluded.some((e) => e.toLowerCase() === id.toLowerCase())) write([{ op: 'set', path: ['excludeProviders'], value: [...excluded, id] }])
   }
-  const disabled = !ready || busy || !writable
+  const remove = (id: string): void => write([{ op: 'set', path: ['excludeProviders'], value: toggleExcluded(excluded, id) }])
+  if (!form) return h('div', { className: 'pgw-empty' }, t('cfg.unavailable'))
   return h(
     'section',
     { className: 'pgw-cfg' },
     // the row page carries its own heading; the inline section on the bundle page needs one
     props.form ? null : h('h3', { className: 'pgw-title' }, t('cfg.title')),
-    !form
-      ? h('div', { className: 'pgw-empty' }, t('cfg.unavailable'))
+    h(
+      'div',
+      { className: 'pgw-cfg__field' },
+      h('div', { className: 'pgw-cfg__text' }, h('span', { className: 'pgw-cfg__name' }, t('cfg.showPanel')), h('span', { className: 'pgw-meta' }, t('cfg.showPanelHint'))),
+      h('div', { className: 'pgw-cfg__control' }, h(Switch, { checked: showPanel, label: t('cfg.showPanel'), disabled, onChange: (next) => write([{ op: 'set', path: ['showPanel'], value: next }]) })),
+    ),
+    h(
+      'div',
+      { className: 'pgw-cfg__field' },
+      h('div', { className: 'pgw-cfg__text' }, h('span', { className: 'pgw-cfg__name' }, t('cfg.excludeProviders')), h('span', { className: 'pgw-meta' }, t('cfg.excludeProvidersHint'))),
+      h(
+        'div',
+        { className: 'pgw-cfg__control' },
+        h(Menu, {
+          open: picker,
+          align: 'end',
+          portal: true,
+          selection: 'check',
+          selectedIds: excluded,
+          anchor: h(
+            'button',
+            {
+              type: 'button',
+              className: 'pgw-picker',
+              disabled,
+              'aria-haspopup': 'menu',
+              'aria-expanded': picker,
+              onClick: () => setPicker((was) => !was),
+            },
+            h('span', null, excluded.length === 0 ? t('cfg.excludedNone') : t('cfg.excludedCount', { n: excluded.length })),
+            h(IconChevronDownOutlineRegular, { size: 14 }),
+          ),
+          items: rows.length === 0 ? [] : rows.map((c) => ({ id: c.id, label: h('span', { className: 'pgw-picker__row' }, c.name, c.registered ? null : h('span', { className: 'pgw-meta' }, ` · ${t('cfg.providerAbsent')}`)) })),
+          // a menu of checkboxes: choosing one adds or removes it and leaves the menu open, like a filter list
+          onSelect: (id) => write([{ op: 'set', path: ['excludeProviders'], value: toggleExcluded(excluded, id) }]),
+          onClose: () => setPicker(false),
+          footer: [],
+        }),
+      ),
+    ),
+    unavailable ? h('div', { className: 'pgw-meta' }, t('cfg.providerListUnavailable')) : null,
+    excluded.length === 0
+      ? null
       : h(
           'div',
-          { className: 'pgw-cfg__body' },
-          switchOf({ checked: showPanel, label: h('span', { className: 'pgw-cfg__label' }, t('cfg.showPanel'), h('span', { className: 'pgw-meta' }, t('cfg.showPanelHint'))), disabled, onChange: setShowPanel }),
-          h(
-            'div',
-            { className: 'pgw-cfg__group' },
-            h('div', { className: 'pgw-cfg__label' }, t('cfg.excludeProviders'), h('div', { className: 'pgw-meta' }, t('cfg.excludeProvidersHint'))),
-            providers === null
-              ? h('div', { className: 'pgw-meta' }, t('card.loading'))
-              : excludeChoices(providers, excluded).map((c) =>
-                  h(
-                    'div',
-                    { key: c.id, className: 'pgw-cfg__row' },
-                    checkboxOf({
-                      checked: c.excluded,
-                      disabled,
-                      label: h('span', null, c.name, c.name !== c.id ? h('code', { className: 'pgw-meta' }, ` ${c.id}`) : null, c.registered ? null : h('span', { className: 'pgw-meta' }, ` · ${t('cfg.providerAbsent')}`)),
-                      onChange: () => setExcluded(toggleExcluded(excluded, c.id)),
-                    }),
-                  ),
-                ),
-            h(
-              'div',
-              { className: 'pgw-cfg__add' },
-              h('input', {
-                type: 'text',
-                value: added,
-                placeholder: t('cfg.providerPlaceholder'),
-                disabled,
-                onChange: (e: { target: { value: string } }) => setAdded(e.target.value),
-                onKeyDown: (e: { key: string }) => {
-                  if (e.key === 'Enter') add()
-                },
-              }),
-              buttonOf({ variant: 'outline', size: 'sm', disabled: disabled || added.trim() === '', onClick: add, children: t('cfg.providerAdd') }),
-            ),
+          { className: 'pgw-cfg__chips' },
+          excluded.map((id) =>
+            h('span', { key: id, className: 'pgw-chip' }, h('span', null, rows.find((r) => r.id.toLowerCase() === id.toLowerCase())?.name ?? id), h('button', { type: 'button', className: 'pgw-chip__x', 'aria-label': t('cfg.remove', { name: id }), disabled, onClick: () => remove(id) }, '×')),
           ),
-          failed ? h('div', { className: 'pgw-warn pgw-warn--error' }, t('cfg.failed')) : null,
-          h('div', { className: 'pgw-meta' }, t('cfg.others')),
         ),
+    h(
+      'div',
+      { className: 'pgw-cfg__add' },
+      h('input', {
+        type: 'text',
+        value: added,
+        placeholder: t('cfg.providerPlaceholder'),
+        disabled,
+        onChange: (e: { target: { value: string } }) => setAdded(e.target.value),
+        onKeyDown: (e: { key: string }) => {
+          if (e.key === 'Enter') add()
+        },
+      }),
+      h(Button, { variant: 'outline', size: 'sm', disabled: disabled || added.trim() === '', onClick: add }, h('span', null, t('cfg.providerAdd'))),
+    ),
+    failed ? h('div', { className: 'pgw-warn pgw-warn--error' }, t('cfg.failed')) : null,
+    h('div', { className: 'pgw-meta' }, t('cfg.others')),
   )
 }

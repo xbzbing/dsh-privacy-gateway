@@ -169,6 +169,18 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         showPanel: liveBool(config.showPanel, cfg.showPanel),
         excludeProviders: excludedProviders(),
       }),
+      providers: () => {
+        const llm = optional('llm') as { listProviders?(): readonly { id?: unknown; name?: unknown }[] } | undefined
+        try {
+          return (llm?.listProviders?.() ?? []).flatMap((p) => {
+            const id = typeof p?.id === 'string' ? p.id : ''
+            if (id === '') return []
+            return [{ id, name: typeof p.name === 'string' && p.name !== '' ? p.name : id }]
+          })
+        } catch {
+          return []
+        }
+      },
       vendorView: (key) => {
         const body = views?.get(key)
         return body === undefined ? null : { key, body }
