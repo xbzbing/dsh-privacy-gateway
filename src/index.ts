@@ -272,7 +272,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
     return () => {
       gateway.dispose()
-      void records.close()
+      // Handing back the promise lets a shutdown (and the tests) wait for the
+      // last records to reach the day file instead of racing the write.
+      return records.close()
     }
   })
 }

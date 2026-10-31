@@ -41,7 +41,7 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
-  const disposers: Array<() => void> = []
+  const disposers: Array<() => void | Promise<void>> = []
   const logs: string[] = []
   const live = { id: SESSION }
   const services: Record<string, unknown> = {
@@ -53,7 +53,7 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
   const logger = { info: (...a: unknown[]) => logs.push(a.map(String).join(' ')), warn: (...a: unknown[]) => logs.push(a.map(String).join(' ')), error: () => {} }
   let closed = false
   const close = async (wait = true): Promise<string> => {
-    if (!closed) for (const d of disposers) d()
+    if (!closed) for (const d of disposers) await d()
     closed = true
     const dir = join(home, 'masking')
     for (let i = 0; wait && i < 200 && !(existsSync(dir) && readdirSync(dir).length > 0); i++) await new Promise((r) => setTimeout(r, 10))
@@ -74,7 +74,6 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
     await new Promise<void>((resolve) => server.close(() => resolve()))
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
     else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
-    // the disposer flushes the records without waiting, so a last write may still be landing
     rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 25 })
   }
 }
