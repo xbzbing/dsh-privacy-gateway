@@ -26,6 +26,7 @@ src/
 test/             node:test 单测，文件名 *.test.ts（package.json 的 test 脚本按通配符收集）
 scripts/          build-client.mjs（client 打包）、assert-pack.mjs（打包检查）
 docs/adr/         ADR，编号递增；docs/details/ 是插件详情页文档（随包分发）
+docs/assets/      README 用的截图（screenshots.json 列出它们的路径，随包分发）
 locale/           插件管理页的标题、描述字典（zh.json / en.json）
 ```
 

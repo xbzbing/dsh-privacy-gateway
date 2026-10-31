@@ -1,10 +1,24 @@
 # dsh-privacy-gateway
 
-中文 | [English](README.en.md)
+[English](README.en.md) | 简体中文
 
 DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
-状态：P1 已实现，尚未发布。
+状态：P1 已实现，尚未发布到 npm。
+
+## 安装
+
+```bash
+# 正式版（npm，OIDC 信任发布）
+dsh plugin --profile web add dsh-privacy-gateway@latest
+
+# 预发布、或正式版发布之前（GitHub Release 附件）
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0-rc.1/dsh-privacy-gateway-0.1.0-rc.1.tgz
+```
+
+预发布版本号带 `-`，只发 GitHub Release、不发 npm。仓库不提交 `lib/`，`dsh plugin add github:…` 拿到的树加载不了（[ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)）。
+
+在默认的 web profile 里首次安装即装即用，无需重启。更新时，只改 client 的版本立即生效；含 host 改动的版本需重启 dsh。
 
 ## 脱敏范围
 
@@ -20,17 +34,33 @@ DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一�
 
 脱敏过的值在请求的其它地方再出现，也按同一个占位符脱敏（finder 记为 `known`）。同一个 host 重发的历史保持原来的字节，prompt cache 照样命中。
 
-## 安装
+照着试：下面每行都是**假值**，复制进会话发出去，统计卡的对应记录里就会出现替换后的占位符。记录、统计、日志和 vendorView 副本里都没有原值，只有占位符和首尾几个字符。
 
-正式版发布后：
-
-```bash
-dsh plugin --profile web add dsh-privacy-gateway@latest
+```text
+sk-proj-Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY                             → API_KEY
+ghp_Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wYQ7RT2W                           → API_KEY
+AKIAQ7RT2W9KLM4NP8XZ                                                 → API_KEY
+Authorization: Bearer Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY9f2kLm4pQr7sT  → TOKEN
+DB_PASSWORD=Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY9                        → SECRET
+postgres://app:Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY9@db.internal/x       → PASSWORD
+Cookie: BDUSS=Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY                       → COOKIE
+someone@gmail.com                                                    → EMAIL
+13800138000                                                          → PHONE
+11010519491231002X                                                   → ID_CARD
 ```
 
-每个版本的 GitHub Release 也附带同一个 tgz，可以用附件 URL 安装。仓库源码不含构建产物 `lib/`，不带 ref 的 `github:` 安装加载不了（[ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)）。
+- 中文写法「密码：…」「密钥是 …」和 URL 里的密码记为 `{{PASSWORD_p7gqwtns}}`，和 `SECRET` 分开记。
+- `EMAIL`、`PHONE`、`ID_CARD`、`BANK_CARD` 默认不换，打开「脱敏个人信息」才生效。
+- 「自定义敏感词」里的词按词替换，记为 `TERM`；「永不脱敏的值」和 `allow` 里的原样发出。
+- 私钥整段一起换：`-----BEGIN` 到 `-----END`，或只有开头一段 base64 的截断私钥。
+- 文档域名（`example.com`、`.example`）不算邮箱；手机号要 11 位、身份证要过校验位、银行卡要过 Luhn，否则不换。
+- 同一个值重复出现，占位符相同。
 
-在默认的 web profile 里，首次安装即装即用，无需重启。插件有 host 半，升级已安装的版本后需要重启 dsh 才会加载新代码。
+## 界面
+
+| 插件配置 | 会话「隐私保护」 |
+| :---: | :---: |
+| ![插件配置：总开关、脱敏密钥与凭据、个人信息、同形假 key、工具调用外发保护，以及词表、记录、标签页与 provider](docs/assets/screenshots/1-plugin-config.png) | ![会话「隐私保护」标签页：本会话脱敏开关、今日 / 7 天 / 30 天统计、按 kind / finder / host 的分布与最近记录](docs/assets/screenshots/2-privacy-panel.png) |
 
 ## 配置
 

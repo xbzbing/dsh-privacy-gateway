@@ -1,10 +1,24 @@
 # dsh-privacy-gateway
 
-[中文](README.md) | English
+[简体中文](README.md) | English
 
 A DeepSeek Harness plugin that adds a redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
-Status: P1 is implemented; not released yet.
+Status: P1 is implemented; not on npm yet.
+
+## Install
+
+```bash
+# Release (npm, published with OIDC trusted publishing)
+dsh plugin --profile web add dsh-privacy-gateway@latest
+
+# Prerelease, or before the first release (GitHub Release asset)
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0-rc.1/dsh-privacy-gateway-0.1.0-rc.1.tgz
+```
+
+A prerelease version has a `-` in it and goes to GitHub Releases only, never to npm. The repository does not commit `lib/`, so `dsh plugin add github:…` cannot load the plugin ([ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)).
+
+In the default web profile the first install works at once, with no restart. After an upgrade, a release that changed only the client takes effect at once; one with host changes needs a restart of dsh.
 
 ## What is masked
 
@@ -20,17 +34,35 @@ Status: P1 is implemented; not released yet.
 
 A value masked once is masked with the same placeholder wherever else the request has it (its finder is `known`). History sent to the same host again keeps the bytes it went with before, so the prompt cache still hits.
 
-## Install
+To try it: every line below is a **fake** value; paste one into a session and the matching record on the card shows the placeholder it became. Neither the records, the stats, the log nor the vendorView copy holds the value, only the placeholder and a few characters at each end.
 
-Once a stable version is released:
-
-```bash
-dsh plugin --profile web add dsh-privacy-gateway@latest
+```text
+sk-proj-Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY                             → API_KEY
+ghp_Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wYQ7RT2W                           → API_KEY
+AKIAQ7RT2W9KLM4NP8XZ                                                 → API_KEY
+Authorization: Bearer Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY9f2kLm4pQr7sT  → TOKEN
+DB_PASSWORD=Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY9                        → SECRET
+postgres://app:Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY9@db.internal/x       → PASSWORD
+Cookie: BDUSS=Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY                       → COOKIE
+someone@gmail.com                                                    → EMAIL
+13800138000                                                          → PHONE
+11010519491231002X                                                   → ID_CARD
 ```
 
-Each version's GitHub Release also carries the same tgz, which can be installed by its asset URL. The repository source has no build output `lib/`, so a `github:` install without a ref will not load ([ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)).
+- The Chinese wordings 「密码：…」 and 「密钥是 …」, and a password in a URL, are recorded as `{{PASSWORD_p7gqwtns}}`, apart from `SECRET`.
+- `EMAIL`, `PHONE`, `ID_CARD` and `BANK_CARD` are off until 「脱敏个人信息」 is on.
+- A word in 「自定义敏感词」 is replaced where it appears and recorded as `TERM`; a value in 「永不脱敏的值」 or `allow` goes out as it is.
+- A private key goes whole: `-----BEGIN` to `-----END`, or a truncated one with only the opening lines and base64.
+- A documentation domain (`example.com`, `.example`) is no email; a phone number needs 11 digits, an ID card its check digit, a bank card its Luhn sum.
+- One value seen again gets the same placeholder.
 
-In the default web profile a first install takes effect immediately, with no restart. The plugin has a host half, so after upgrading an installed version, restart dsh to load the new code.
+## Screens
+
+The screenshots show the Chinese interface.
+
+| Plugin configuration | The 「隐私保护」 (Privacy) tab |
+| :---: | :---: |
+| ![Plugin configuration: the master switch, secrets and credentials, personal data, shape, the tool-call guard, and the words, records, tab and provider groups](docs/assets/screenshots/1-plugin-config.png) | ![The 「隐私保护」 tab: the per-session switch, today / 7 days / 30 days statistics, the kind, finder and host breakdowns, and the recent records](docs/assets/screenshots/2-privacy-panel.png) |
 
 ## Configuration
 
@@ -59,7 +91,7 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `keepMegabytes` | `100` | Megabytes of records kept; past it, the oldest days are deleted |
 | `keepRecords` | `500` | Latest records kept in memory |
 | `vendorView` | `false` | Keep in memory the body each recorded request went out with, for the side-by-side view in the statistics card; at most 100 bodies and 64 MiB in all, never on disk ([ADR-0016](docs/adr/0016-vendor-view.md)) |
-| `showPanel` | `false` | Offer a Privacy tab at the top of the session (after Chat / Trajectory / Git) with this session's records and counts ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
+| `showPanel` | `false` | Offer a 「隐私保护」 (Privacy) tab at the top of the session (after Chat / Trajectory / Git) with this session's records and counts ([ADR-0017](docs/adr/0017-sidebar-panel.md)) |
 
 ## The `/privacy` command
 
@@ -80,9 +112,9 @@ The head keeps a few characters to recognize it by: a key with a prefix keeps th
 
 Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
 
-The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. The card's Clear data button, once its confirmation box is checked, deletes the records, counts and record files of every session; this cannot be undone ([ADR-0022](docs/adr/0022-reset.md)). With `showPanel` on, the same view is a Privacy tab at the top of the session, counting only that session. The tab's Mask this session switch turns masking off for that one session after a confirmation; other sessions are still masked, and the choice holds across restarts ([ADR-0023](docs/adr/0023-session-switch.md)).
+The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. The card's 「清空数据」 (Clear data) button, once its confirmation box is checked, deletes the records, counts and record files of every session; this cannot be undone ([ADR-0022](docs/adr/0022-reset.md)). With `showPanel` on, the same view is a 「隐私保护」 (Privacy) tab at the top of the session, counting only that session. The tab's 「本会话脱敏」 (Mask this session) switch turns masking off for that one session after a confirmation; other sessions are still masked, and the choice holds across restarts ([ADR-0023](docs/adr/0023-session-switch.md)).
 
-With `vendorView` on (“Keep what was sent, to compare” on the Configure page), a record's details have a “What was sent” button, to check what the model service actually got and whether anything slipped through: on the right the body as the model service got it, on the left the same body with each replaced place shown as a "kind · head · length" marker; by default only the lines with replacements are listed. Neither side has a value in it; a value a warn action sent as written is a placeholder in the copy too.
+With `vendorView` on (「保留发出内容，供对照查看」, Keep what was sent to compare, on the Configure page), a record's details have a 「查看发出内容」 (What was sent) button, to check what the model service actually got and whether anything slipped through: on the right the body as the model service got it, on the left the same body with each replaced place shown as a "kind · head · length" marker; by default only the lines with replacements are listed. Neither side has a value in it; a value a warn action sent as written is a placeholder in the copy too.
 
 ## Notes
 

@@ -30,6 +30,7 @@
     "lib",
     "locale",
     "docs/details",
+    "docs/assets",
     "assets",
     "README.en.md"
   ],
