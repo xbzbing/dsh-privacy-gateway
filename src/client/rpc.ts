@@ -90,6 +90,27 @@ export async function resetData(ctx: ClientCtx): Promise<ResetResult> {
   }
 }
 
+export type SessionMaskingResult = { ok: true; on: boolean } | { ok: false; message: string }
+
+/** Turns masking on or off for one session (docs/adr/0023); never throws. */
+export async function setSessionMasking(ctx: ClientCtx, session: string, on: boolean): Promise<SessionMaskingResult> {
+  let rpc: ConnectionFace['rpc']
+  try {
+    rpc = (ctx.get('connection') as ConnectionFace | undefined)?.rpc
+  } catch {
+    rpc = undefined
+  }
+  if (!rpc || typeof rpc.call !== 'function') return { ok: false, message: 'no connection' }
+  try {
+    const r = (await rpc.call('/api', 'privacyGateway/sessionMasking', { args: { request: { session, on } } })) as { ok?: boolean; value?: unknown; error?: { message?: string } } | null
+    const now = (r?.value as { on?: unknown } | null)?.on
+    if (r?.ok !== true || typeof now !== 'boolean') return { ok: false, message: r?.error?.message ?? 'malformed reply' }
+    return { ok: true, on: now }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export type ProvidersResult = { ok: true; providers: ProviderEntry[] } | { ok: false; message: string }
 
 /** The providers with an adapter, from this plugin's own host half; never throws. */

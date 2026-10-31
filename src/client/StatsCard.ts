@@ -3,14 +3,14 @@
  * to one session, the Privacy view tab (docs/adr/0017). Drawn with the Web
  * shell's own controls; the pieces are in StatsParts.ts.
  */
-import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular, SegmentedControl, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular, IconWarningOutlineRegular, SegmentedControl, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createElement as h, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { Overview } from '../remote.ts'
 import type { Key, T } from './locales.ts'
 import { fetchOverview, type ClientCtx } from './rpc.ts'
-import { Dist, Kpis, Notices, RecordHead, RecordRow, ResetButton } from './StatsParts.ts'
+import { Dist, Kpis, Notices, RecordHead, RecordRow, ResetButton, SessionSwitch } from './StatsParts.ts'
 import { pageOf, warnings, type Range } from './view.ts'
 
 const REFRESH_MS = 15_000
@@ -67,9 +67,23 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
       'div',
       { className: 'pgw-head__main' },
       props.panel ? null : h('h3', { className: 'pgw-title' }, t('card.title')),
-      ready ? h(Tag, { tone: ready.active ? 'success' : 'warning' }, t(ready.active ? 'card.on' : 'card.off')) : null,
-      props.sessionId ? h(Tag, { tone: 'outline' }, t('panel.session')) : null,
-      ready ? h('span', { className: 'pgw-meta' }, t('card.values', { n: ready.values })) : null,
+      // the session tab: this session's own switch; the global state only when it is off
+      props.sessionId && ready && typeof ready.sessionMasking === 'boolean'
+        ? h(SessionSwitch, {
+            ctx: props.ctx,
+            t,
+            session: props.sessionId,
+            on: ready.sessionMasking,
+            onDone: (message) => {
+              setNotice(message === null ? null : { text: message, ok: false })
+              reload()
+            },
+          })
+        : null,
+      ready && (!props.sessionId || !ready.active) ? h(Tag, { tone: ready.active ? 'success' : 'warning' }, t(ready.active ? 'card.on' : 'card.off')) : null,
+      props.sessionId && ready && ready.sessionMasking === undefined ? h(Tag, { tone: 'outline' }, t('panel.session')) : null,
+      // the value table is shared by every session, so it is told on the plugin's own card only
+      ready && !props.sessionId ? h('span', { className: 'pgw-meta', title: t('card.valuesHint') }, t('card.values', { n: ready.values })) : null,
       ready && !ready.record ? h('span', { className: 'pgw-meta' }, t('card.memoryOnly')) : null,
     ),
     h(
@@ -100,11 +114,15 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
     ),
   )
   const flash = notice ? h('div', { className: `pgw-flash${notice.ok ? '' : ' pgw-flash--error'}`, role: 'status' }, notice.text) : null
+  const sessionOff =
+    props.sessionId && ready?.sessionMasking === false
+      ? h('div', { className: 'pgw-notice', role: 'status' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), h('span', null, t('session.offNotice')))
+      : null
   if (!ready) {
     return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, t(state.status === 'loading' ? 'card.loading' : 'card.unavailable')))
   }
   if (props.sessionId && ready.recent.length === 0) {
-    return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, t('panel.empty')))
+    return h('section', { className: cardClass }, head, flash, sessionOff, h('div', { className: 'pgw-empty pgw-empty--block' }, t('panel.empty')))
   }
   const o = ready
   const totals = o.stats[range]
@@ -119,6 +137,7 @@ export function StatsCard(props: { ctx: ClientCtx; t: T; panel?: boolean; sessio
     { className: cardClass },
     head,
     flash,
+    sessionOff,
     h(Notices, { t, items: warnings(o, totals) }),
     h(Kpis, { totals, t }),
     h(

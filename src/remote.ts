@@ -38,6 +38,14 @@ export interface Overview {
   showPanel?: boolean
   /** Providers whose requests go on unmasked (config excludeProviders). */
   excludeProviders?: string[]
+  /** With `session`: whether masking is on for that session (docs/adr/0023). */
+  sessionMasking?: boolean
+}
+
+export interface SessionMaskingRequest {
+  session: string
+  /** Masking on (the default) or off for this session. */
+  on: boolean
 }
 
 export interface VendorViewRequest {
@@ -74,6 +82,8 @@ export interface OverviewSource {
   vendorView?(key: number): VendorView | null
   /** Clears the records, the sums and the kept bodies, on disk too (docs/adr/0022). */
   reset?(): Promise<ResetResult>
+  /** Turns masking on or off for one session (docs/adr/0023); the state after. */
+  setSessionMasking?(session: string, on: boolean): boolean
 }
 
 export const NAMESPACE = 'privacyGateway'
@@ -106,6 +116,14 @@ export class PrivacyGatewayService extends TypertRemoteService {
   async reset(): Promise<ResetResult> {
     if (!this.source.reset) throw new Error('reset is not offered')
     return this.source.reset()
+  }
+
+  /** Turns masking on or off for one session; answers whether it is on now. */
+  async sessionMasking(request: SessionMaskingRequest): Promise<{ on: boolean }> {
+    const session = request?.session
+    if (typeof session !== 'string' || session === '' || typeof request?.on !== 'boolean') throw new Error('a session id and on: true|false are needed')
+    if (!this.source.setSessionMasking) throw new Error('per-session masking is not offered')
+    return { on: this.source.setSessionMasking(session, request.on) }
   }
 
   /** One recorded request as the vendor got it, or null. */
@@ -142,3 +160,4 @@ markRemote(PrivacyGatewayService, 'overview')
 markRemote(PrivacyGatewayService, 'vendorView')
 markRemote(PrivacyGatewayService, 'providers')
 markRemote(PrivacyGatewayService, 'reset')
+markRemote(PrivacyGatewayService, 'sessionMasking')

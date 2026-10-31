@@ -1,11 +1,11 @@
 /** The pieces of the statistics card (StatsCard.ts), drawn with the Web shell's own controls. */
-import { Button, IconChevronRightOutlineRegular, IconTrashOutlineRegular, IconWarningOutlineRegular, RiskConfirmation, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import { createElement as h, Fragment, useState } from 'react'
+import { Button, IconChevronRightOutlineRegular, IconTrashOutlineRegular, IconWarningOutlineRegular, RiskConfirmation, Switch, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { createElement as h, Fragment, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
-import { resetData, type ClientCtx } from './rpc.ts'
+import { resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
 import { bars, hintOf, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
@@ -190,6 +190,58 @@ export function ResetButton(props: { ctx: ClientCtx; t: T; onDone(message: strin
       onAcknowledgedChange: setAck,
       onCancel: close,
       onConfirm: run,
+    }),
+  )
+}
+
+/**
+ * The session tab's masking switch (docs/adr/0023). Turning it off asks
+ * first, since this session's requests then go out as they are; turning it
+ * back on takes effect at once.
+ */
+export function SessionSwitch(props: { ctx: ClientCtx; t: T; session: string; on: boolean; onDone(message: string | null): void }): ReactNode {
+  const { t } = props
+  const [on, setOn] = useState(props.on)
+  const [asking, setAsking] = useState(false)
+  const [ack, setAck] = useState(false)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => setOn(props.on), [props.on])
+  const close = (): void => {
+    setAsking(false)
+    setAck(false)
+  }
+  const apply = (next: boolean): void => {
+    setBusy(true)
+    void setSessionMasking(props.ctx, props.session, next).then((r) => {
+      setBusy(false)
+      close()
+      if (r.ok) setOn(r.on)
+      props.onDone(r.ok ? null : t('session.failed', { message: r.message }))
+    })
+  }
+  const label = t('session.mask')
+  return h(
+    Fragment,
+    null,
+    h(
+      'span',
+      { className: 'pgw-session' },
+      h(Switch, { checked: on, label, disabled: busy, onChange: (next) => (next ? apply(true) : setAsking(true)) }),
+      h('span', { className: 'pgw-session__label', 'aria-hidden': true }, label),
+    ),
+    h(RiskConfirmation, {
+      open: asking,
+      title: t('session.offTitle'),
+      description: t('session.offBody'),
+      acknowledgeLabel: t('session.offAck'),
+      cancelLabel: t('card.cancel'),
+      closeLabel: t('card.close'),
+      confirmLabel: t('session.offConfirm'),
+      acknowledged: ack,
+      disabled: busy,
+      onAcknowledgedChange: setAck,
+      onCancel: close,
+      onConfirm: () => apply(false),
     }),
   )
 }

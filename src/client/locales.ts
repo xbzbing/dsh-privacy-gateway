@@ -9,7 +9,7 @@ export const zh = {
   'card.loading': '正在读取…',
   'card.unavailable': '读不到统计：插件的 host 端没有运行，或需要重启 dsh。',
   'card.memoryOnly': '记录只在内存（record 已关闭）',
-  'card.values': '值表 {n} 个值',
+  'card.values': '内存里可还原的值 {n} 个',
   'card.range': '统计范围',
   'card.reset': '清空数据',
   'card.resetTitle': '清空隐私保护的历史数据？',
@@ -157,7 +157,15 @@ export const zh = {
   'cfg.s.panelOff': '不显示标签页',
   'cfg.s.providersAll': '全部 provider 脱敏',
   'cfg.s.providersSome': '{n} 个 provider 不脱敏',
-  'cfg.s.problem': '有提示，展开查看'
+  'cfg.s.problem': '有提示，展开查看',
+  'card.valuesHint': '被换下来的原值只存在内存里，用来把模型回复里的占位符换回原值。所有会话共用，重启 dsh 后清空。',
+  'session.mask': '本会话脱敏',
+  'session.offTitle': '关闭本会话的脱敏？',
+  'session.offBody': '关闭后，本会话之后的模型请求原样发给模型服务：密钥、凭据、个人信息和自定义敏感词都不再替换，回复不再还原，也不留记录。其他会话不受影响，随时可以在这里重新打开。',
+  'session.offAck': '我知道本会话的内容会原样发给模型服务',
+  'session.offConfirm': '关闭脱敏',
+  'session.offNotice': '本会话已关闭脱敏：请求原样发给模型服务，不留记录。',
+  'session.failed': '没能切换：{message}'
 } as const
 
 export type Key = keyof typeof zh
@@ -170,7 +178,7 @@ export const en: Record<Key, string> = {
   'card.loading': 'Loading…',
   'card.unavailable': 'No statistics: the plugin’s host half is not running, or dsh needs a restart.',
   'card.memoryOnly': 'Records in memory only (record is off)',
-  'card.values': '{n} values in the table',
+  'card.values': '{n} values kept for restoring',
   'card.range': 'Range',
   'card.reset': 'Clear data',
   'card.resetTitle': 'Clear the Privacy history?',
@@ -319,6 +327,14 @@ export const en: Record<Key, string> = {
   'cfg.s.providersAll': 'Every provider masked',
   'cfg.s.providersSome': '{n} providers not masked',
   'cfg.s.problem': 'Needs a look; expand',
+  'card.valuesHint': 'The values swapped out are kept in memory only, to put back in place of the placeholders in replies. Shared by every session; cleared when dsh restarts.',
+  'session.mask': 'Mask this session',
+  'session.offTitle': 'Turn masking off for this session?',
+  'session.offBody': 'From then on this session’s model requests go to the model service as they are: secrets, credentials, personal data and your own words are no longer replaced, replies are not restored, and nothing is recorded. Other sessions are not affected; you can turn it back on here at any time.',
+  'session.offAck': 'I understand this session’s content goes out as it is',
+  'session.offConfirm': 'Turn off',
+  'session.offNotice': 'Masking is off for this session: requests go out as they are and nothing is recorded.',
+  'session.failed': 'Could not switch: {message}',
 }
 
 export const DICTIONARIES: Record<string, Record<Key, string>> = { zh, en }

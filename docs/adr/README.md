@@ -35,3 +35,4 @@
 | [ADR-0020](0020-record-attribution.md) | 记录带上工作区与会话名称 | Accepted | 架构 |
 | [ADR-0021](0021-live-settings.md) | 配置页编辑日常配置项，改了即时生效 | Accepted | 界面 |
 | [ADR-0022](0022-reset.md) | 统计卡重新排版；「清空数据」二次确认后清空历史 | Accepted | 界面 |
+| [ADR-0023](0023-session-switch.md) | 会话的「隐私保护」标签页可以关闭本会话的脱敏 | Accepted | 界面 |

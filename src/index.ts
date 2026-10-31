@@ -5,9 +5,10 @@ import { liveBool, liveMark, liveStrings, resolveConfig, type PrivacyGatewayConf
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
-import { bypassedProvider, routeStream } from './providers.ts'
+import { bypassedProvider, currentSession, routeStream } from './providers.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
+import { SessionSwitches } from './sessions.ts'
 import { ViewStore } from './views.ts'
 import { loadKey } from './redact/key.ts'
 
@@ -87,6 +88,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   })
   // the vendor view keeps the bodies as they went, in memory only, while vendorView is on
   const views = new ViewStore()
+  // sessions the user turned masking off for, from the session's Privacy tab (docs/adr/0023)
+  const sessions = new SessionSwitches({ file: join(stateDir(), 'sessions.json'), logger: ctx.logger })
   const optional = (name: string): unknown => {
     try {
       return ctx.get?.(name)
@@ -186,7 +189,12 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         // read now: the detail page's switch changes it without remounting the plugin
         showPanel: liveBool(config.showPanel, cfg.showPanel),
         excludeProviders: excludedProviders(),
+        ...(session ? { sessionMasking: !sessions.isOff(session) } : {}),
       }),
+      setSessionMasking: (session, on) => {
+        if (sessions.set(session, on)) ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} for session ${session} from its Privacy tab`)
+        return !sessions.isOff(session)
+      },
       providers: () => {
         const llm = optional('llm') as { listProviders?(): readonly { id?: unknown; name?: unknown }[] } | undefined
         try {
@@ -224,7 +232,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   }
   ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next, options?.sessionId))
   ctx.effect(() => {
-    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => !current().enabled || bypassedProvider() !== undefined, logger: ctx.logger })
+    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip: () => !current().enabled || bypassedProvider() !== undefined || sessions.isOff(currentSession()), logger: ctx.logger })
     ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
     return () => {
       gateway.dispose()

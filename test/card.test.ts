@@ -33,7 +33,7 @@ test('the service answers privacyGateway/overview with the latest records capped
   assert.ok(svc)
   assert.deepEqual(
     remoteMethods(svc).map((m) => m.method).sort(),
-    ['overview', 'providers', 'reset', 'vendorView'],
+    ['overview', 'providers', 'reset', 'sessionMasking', 'vendorView'],
   )
   assert.deepEqual(await svc.vendorView({ key: 7 }), { key: 7, body: '{}' })
   assert.equal(await svc.vendorView({ key: 8 }), null)
@@ -42,6 +42,8 @@ test('the service answers privacyGateway/overview with the latest records capped
   assert.deepEqual(await svc.providers(), [])
   // a source without reset refuses it rather than pretending to have cleared anything
   await assert.rejects(() => svc.reset(), /not offered/)
+  await assert.rejects(() => svc.sessionMasking({ session: 's', on: false }), /not offered/)
+  await assert.rejects(() => svc.sessionMasking({ session: '', on: false }), /session id/)
   assert.equal((svc as unknown as { typertRemote: { namespace: string } }).typertRemote.namespace, 'privacyGateway')
   assert.ok(isOverview(await svc.overview({ limit: 1000 })))
   await svc.overview({})

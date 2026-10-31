@@ -1,0 +1,35 @@
+# ADR-0023：会话的「隐私保护」标签页可以关闭本会话的脱敏
+
+- 状态：Accepted（2026-10-31）
+- 相关：`src/sessions.ts`、`src/index.ts`、`src/remote.ts`、`src/client/StatsCard.ts`、`src/client/StatsParts.ts`、`src/client/styles.ts`、ADR-0017、ADR-0020、ADR-0021
+
+## Context
+
+用户希望在某个会话里主动关掉脱敏，其他会话照常脱敏。已有的开关都是全局的：配置项 `enabled`、`/privacy off`、`excludeProviders`。同一次反馈里还提到两点：标签页内容铺满整个宽度，比对话栏宽；头部的「值表 N 个值」看不懂。
+
+## Decision
+
+### 本会话脱敏开关
+
+- 标签页头部最左边是官方 `Switch`，文字为「本会话脱敏」，默认开启。
+- 关闭前先弹出官方 `RiskConfirmation`，勾选「我知道本会话的内容会原样发给模型服务」后才能确认。重新打开不需要确认，立即生效。
+- 关闭后，标签页显示一条警示提示：「本会话已关闭脱敏：请求原样发给模型服务，不留记录。」
+- host 端 `SessionSwitches` 记下关闭了脱敏的会话 id，存在 `~/.dsh/privacy-gateway/sessions.json`（文件权限 0600），重启后仍然有效。最多记 1000 个会话，超出时先丢最早关闭的，被丢的会话恢复为脱敏。文件读不出或不是合法 JSON 时，所有会话都脱敏，并打一条 warn。
+- dispatcher 的 `skip` 加一个条件：`currentSession()`（`llm/stream` 带进来的会话 id，ADR-0020）在关闭名单里就放行。放行和排除 provider 一样：不读 body、不还原、不记录。没有会话 id 的请求不受这个开关影响。
+- 远程方法 `privacyGateway/sessionMasking({session, on})` 设置开关并返回当前状态。带 `session` 的 `overview` 多返回 `sessionMasking`。host 端版本旧、没返回这个字段时，标签页不显示开关。
+- 全局已关闭（`enabled` 关掉或 `/privacy off`）时，标签页另外显示「脱敏已关闭」标签；全局开启时只显示本会话开关。
+
+### 标签页宽度
+
+- 标签页内容的宽度与对话栏一致：`width: min(calc(100% - 32px), var(--dsh-chat-content-width, 920px))`，水平居中。`--dsh-chat-content-width` 是对话栏自己用的变量；取不到时按 920px 处理。
+
+### 值表
+
+- 「值表 N 个值」改为「内存里可还原的值 N 个」，悬停时说明：被换下来的原值只存在内存里，用来把回复里的占位符换回原值，所有会话共用，重启 dsh 后清空。
+- 这个数是全局的，放在会话标签页里容易被当成本会话的数，所以只在插件详情页的统计卡上显示。
+
+## Consequences
+
+- 关闭只影响带这个会话 id 的模型调用。子代理如果用自己的会话 id 调模型，要在它自己的会话里关。
+- 关闭期间没有记录，统计里也看不出这段时间发出过什么。
+- 在关闭前已经发出、回复还在路上的请求，回复照样还原；关闭后发出的请求，回复里不会有占位符，不需要还原。

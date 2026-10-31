@@ -1,7 +1,8 @@
 /** The card's CSS, injected once; colours through the theme's --dsw-alias-* tokens only. */
 const CSS = `
 .pgw-card{display:flex;flex-direction:column;gap:16px;padding:16px 20px 20px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary);font-size:13px}
-.pgw-card--panel{border:none;border-radius:0;background:transparent;padding:12px 20px 20px}
+.pgw-card--panel{box-sizing:border-box;width:min(calc(100% - 32px),var(--dsh-chat-content-width,920px));margin:0 auto;border:none;border-radius:0;background:transparent;padding:12px 0 20px}
+.pgw-session{display:inline-flex;align-items:center;gap:8px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
 .pgw-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .pgw-head__main{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .pgw-head__actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-left:auto}
