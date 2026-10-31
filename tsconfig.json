@@ -15,12 +15,15 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true
   },
   "include": [
     "src/**/*.ts",
     "test/**/*.ts",
-    "tsdown.config.ts"
+    "tsdown.config.ts",
+    "scripts/**/*.mjs"
   ],
   "exclude": [
     "src/client/**"
