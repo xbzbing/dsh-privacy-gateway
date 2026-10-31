@@ -38,13 +38,10 @@ pnpm build    # tsdown 构建 lib/index.js，esbuild 构建 lib/client.js
 
 改完的固定流程：`pnpm verify` → `pnpm build`。`lib/` 不入库（ADR-0006）。
 
-## 本机实例
+## 本地调试
 
-- 实例 profile 是 `~/.dsh/profiles/web`，本插件在其 `package.json` 里必须是 `"link:/Users/ankh/workspace/private/dsh-privacy-gateway"`，`node_modules/dsh-privacy-gateway` 是指向仓库的符号链接。这样 `pnpm build` 后实例直接读到新产物。
-- 用 dsh 自带的安装、更新从本地路径装插件，会把依赖改成 `file:`（复制安装）。发现 `file:` 时改回 `link:`，在 profile 目录跑 `pnpm install`，改之前先备份 `package.json`。
-- 只改了 client（`src/client/`）：构建后刷新页面即可。改了 host：需要用户重启 dsh。dsh 在 DSH Hub 下运行，**不要杀进程、不要自己启动新实例**，由用户重启。
-- 实例页面要登录，自动化浏览器进不去。看界面效果时可以用 esbuild 把组件和替代控件打成单独的预览页截图，但要向用户说明那不是实例页面。
-- 插件的 info 日志只进 Cordis 内存缓冲，终端看不到；要核对时解压会话日志 `session.v4.jsonl.zstd`（`zstd -dc`）。
+- 开发时用 `link:` 方式把插件装进 dsh profile，`pnpm build` 后实例直接读到新产物。
+- 只改了 client（`src/client/`）：构建后刷新页面即可。改了 host：需要重启 dsh。不要替用户杀进程或另起实例。
 
 ## 约定
 
