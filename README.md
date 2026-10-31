@@ -2,7 +2,18 @@
 
 DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider（含 oc2dsh 这类插件 adapter）。
 
-状态：P0 开发中，尚未发布。
+状态：P0（拦截点验证）已实现，尚未发布。目前只认三种密钥：`sk-…`、GitHub / GitLab 令牌（`ghp_…`、`github_pat_…`、`glpat-…`）、AWS `AKIA…` / `ASIA…`。
+
+## 配置
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 总开关；关掉后网关不安装 |
+| `secrets` | `true` | 遮蔽密钥 |
+| `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出（oc2dsh gate 需要，[ADR-0004](docs/adr/0004-oc2dsh-protected-regions.md)） |
+| `protectTools` | `true` | 请求的 `tools` 数组原样发出 |
+| `excludeHosts` | `[]` | 不改写的 `host` 或 `host:port` |
+| `maxValues` | `5000` | 内存值表上限，满了淘汰最老的一半 |
 
 ## 安装
 

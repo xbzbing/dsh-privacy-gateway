@@ -1,11 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { Config, resolveConfig } from '../src/config.ts'
+import { getGlobalDispatcher } from 'undici'
+
+import { Config, defaults, resolveConfig } from '../src/config.ts'
+import { MaskingDispatcher } from '../src/dispatcher.ts'
 import { apply, name } from '../src/index.ts'
 import { stateDir } from '../src/paths.ts'
 
@@ -51,18 +54,39 @@ test('manifest declares no install-time lifecycle scripts', () => {
   }
 })
 
-test('Config defaults to enabled and round-trips through toJSON', () => {
-  assert.deepEqual(Config({}), { enabled: true })
-  assert.deepEqual(resolveConfig({ enabled: false }), { enabled: false })
+test('Config defaults and round-trips through toJSON', () => {
+  assert.deepEqual(Config({}), defaults)
+  assert.equal(resolveConfig({ enabled: false }).enabled, false)
   assert.doesNotThrow(() => JSON.stringify(Config.toJSON()))
 })
 
-test('apply logs and returns without throwing', () => {
-  const lines: unknown[][] = []
-  const logger = { info: (...a: unknown[]) => lines.push(a), warn: () => {}, error: () => {} }
-  apply({ logger }, {})
-  apply({ logger }, { enabled: false })
-  assert.equal(lines.length, 2)
+test('resolveConfig clamps what the schema cannot', () => {
+  assert.equal(resolveConfig({ maxValues: 3 }).maxValues, defaults.maxValues)
+  assert.equal(resolveConfig({ maxValues: 1234.9 }).maxValues, 1234)
+  assert.deepEqual(resolveConfig({ excludeHosts: [' API.Example.com:443 ', ''] }).excludeHosts, ['api.example.com:443'])
+})
+
+test('apply installs the gateway and its disposal puts the previous dispatcher back', () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-apply-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const before = getGlobalDispatcher()
+  const disposers: Array<() => void> = []
+  const logger = { info: () => {}, warn: () => {}, error: () => {} }
+  try {
+    apply({ logger, effect: (fn) => disposers.push(fn()) }, {})
+    assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher)
+    assert.equal(statSync(join(home, 'redact.key')).mode & 0o777, 0o600)
+    for (const d of disposers) d()
+    assert.equal(getGlobalDispatcher(), before)
+
+    apply({ logger, effect: (fn) => disposers.push(fn()) }, { enabled: false })
+    assert.equal(getGlobalDispatcher(), before)
+  } finally {
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('stateDir honours DSH_PRIVACY_GATEWAY_HOME', () => {

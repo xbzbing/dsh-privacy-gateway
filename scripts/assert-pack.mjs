@@ -59,7 +59,7 @@ const targets = [manifest.main, manifest.icon, manifest.dsh?.bundle?.patch]
 for (const value of Object.values(manifest.exports ?? {})) {
   if (typeof value === 'string' && !value.includes('*')) targets.push(value)
 }
-for (const target of targets) {
+for (const target of new Set(targets)) {
   if (typeof target === 'string' && !existsSync(join(root, target))) {
     problems.push(`manifest points at a file the package does not ship: ${target}`)
   }
