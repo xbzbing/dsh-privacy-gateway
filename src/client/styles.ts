@@ -49,7 +49,7 @@ const CSS = `
 .pgw-recs{display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
 .pgw-recs__list{display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
 .pgw-recs__item{display:flex;flex-direction:column}
-.pgw-rec{box-sizing:border-box;display:grid;grid-template-columns:16px 76px minmax(0,1.4fr) minmax(0,1fr) 64px 64px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
+.pgw-rec{box-sizing:border-box;display:grid;grid-template-columns:16px 76px minmax(0,200px) minmax(0,1fr) 64px 64px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
 .pgw-rec--head{min-height:30px;border-top:none;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-weight:500;cursor:default}
 @media (hover:hover){.pgw-rec:not(.pgw-rec--head):hover{background:var(--dsw-alias-interactive-bg-hover)}}
 .pgw-rec--open{background:var(--dsw-alias-bg-layer-2)}
