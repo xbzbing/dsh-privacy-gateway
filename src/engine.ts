@@ -94,6 +94,7 @@ export class PrivacyEngine implements RedactionEngine {
       allow: config.allow,
       cookies: { names: config.cookieNames, keep: config.cookieKeep },
       actions: notMasked(config.actions),
+      shape: config.shape,
     })
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#logger = options.logger

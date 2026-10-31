@@ -202,7 +202,9 @@ export class Restorer {
    * as left (toolGuard block).
    */
   restoreText(s: string, escaped = false, tally?: Tally, tool = false, leave = false): string {
-    if (this.#table.size === 0 || !s.includes('_')) return s
+    if (this.#table.size === 0) return s
+    const shapes = this.#table.shapes > 0
+    if (!shapes && !s.includes('_')) return s
     if (leave) {
       const scratch = newTally()
       this.restoreText(s, escaped, scratch, tool)
@@ -212,6 +214,32 @@ export class Restorer {
       }
       return s
     }
+    const out = s.includes('_') ? this.#placeholders(s, escaped, tally, tool) : s
+    return shapes ? this.#shapes(out, tally, tool) : out
+  }
+
+  /** Puts back the made-up keys in s (docs/adr/0015): a key and its value need no escaping. */
+  #shapes(s: string, tally: Tally | undefined, tool: boolean): string {
+    const spans = this.#table.shapeSpans(s)
+    if (spans.length === 0) return s
+    const out: string[] = []
+    let last = 0
+    for (const sp of spans) {
+      const v = this.#table.get(sp.shape)
+      if (v === undefined) continue
+      out.push(s.slice(last, sp.start), v)
+      last = sp.end
+      if (tally) {
+        tally.restored.set(sp.shape, (tally.restored.get(sp.shape) ?? 0) + 1)
+        if (tool) tally.inTools++
+      }
+    }
+    if (last === 0) return s
+    out.push(s.slice(last))
+    return out.join('')
+  }
+
+  #placeholders(s: string, escaped: boolean, tally: Tally | undefined, tool: boolean): string {
     if (tally && s.includes('{{')) {
       for (const m of s.matchAll(STRICT)) if (this.#table.get(m[0]) === undefined) tally.unmapped++
     }
@@ -240,7 +268,7 @@ export class Restorer {
 
   /** Restores the strings of a JSON body; text that is not JSON is restored as text. */
   restoreJSON(text: string, tally?: Tally): string {
-    if (this.#table.size === 0 || !text.includes('_')) return text
+    if (this.#table.size === 0 || (this.#table.shapes === 0 && !text.includes('_'))) return text
     const type = typeOf(text)
     const leave = this.#guard !== 'off' && this.#judge(toolText(text, type) ?? '', tally) && this.#guard === 'block'
     const out = walkJSON(text, (path, key, s) => {
@@ -277,7 +305,7 @@ export class Restorer {
    */
   #partialTail(s: string): number {
     const n = braceTail(s)
-    return n > 0 ? n : this.#wordTail(s)
+    return Math.max(n > 0 ? n : this.#wordTail(s), this.#table.shapeTail(s))
   }
 
   #wordTail(s: string): number {

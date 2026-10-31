@@ -4,6 +4,7 @@ import { noIDs, noNumbers, PERSONAL_KINDS, type Finder, type Found } from './ids
 import { tagOf } from './key.ts'
 import type { KnownSpan, ValueTable } from './known.ts'
 import { rules } from './rules.ts'
+import { shapeOf, splitName } from './shape.ts'
 import { asJSON, KEPT, walkJSON } from './json.ts'
 import { envBlockRanges, TOOL_ROOTS, under, type Range } from '../protect.ts'
 
@@ -21,6 +22,8 @@ export interface MaskOptions {
   cookies?: CookieOptions
   /** Kinds whose values are not masked: warn sends them as written, block stops the request. Each is recorded. */
   actions?: Readonly<Record<string, 'warn' | 'block'>>
+  /** A secret goes as a made-up key of its own form, not a placeholder, where it can (docs/adr/0015). */
+  shape?: boolean
 }
 
 /** One value masked, as the record keeps it: never the value itself. */
@@ -174,6 +177,21 @@ export class Masker {
     return p
   }
 
+  /**
+   * What `value` of `kind` goes as: a made-up key of its form where shape is
+   * on and it can be one (its name, as in API_KEY=…, stays), else its
+   * placeholder. `id` is the placeholder or made-up key, as the record keeps it.
+   */
+  #standIn(kind: string, value: string, preview: boolean): { text: string; id: string } {
+    if (this.#options.shape) {
+      const [name, k] = splitName(value)
+      const f = shapeOf(this.#key, kind, k)
+      if (f !== undefined && (preview || this.#table.putShape(f, kind, k))) return { text: name + f, id: f }
+    }
+    const p = preview ? tagOf(this.#key, kind, value) : this.placeholder(kind, value)
+    return { text: p, id: p }
+  }
+
   #covers = (kind: string): boolean => {
     if (kind === 'TERM') return true
     return PERSONAL_KINDS.has(kind) ? this.#options.personal === true : this.#options.secrets
@@ -231,6 +249,8 @@ export class Masker {
     if (raw.includes('{{')) {
       for (const m of raw.matchAll(PLACEHOLDER_RE)) fixed.push({ start: m.index, end: m.index + m[0].length })
     }
+    // nor inside a made-up key already there: one that came back unrestored is not a key of its own
+    if (this.#table.shapes > 0) fixed.push(...this.#table.shapeSpans(raw))
     if (fixed.length > 0) found = found.filter((f) => !fixed.some((r) => overlaps(f, r)))
     // the first to start, and of those the longest, wins where they overlap;
     // of two the same, the one found first (a key in API_KEY=… is an API_KEY)
@@ -252,9 +272,9 @@ export class Masker {
         // a preview never shows a value: it has the placeholder there still
         if (!pass.preview) continue
       }
-      const p = pass.preview ? tagOf(this.#key, f.kind, v) : this.placeholder(f.kind, v)
-      out.push(raw.slice(last, f.start), f.bare ? `"${p}"` : p)
-      if (action === undefined) pass.hits.push({ placeholder: p, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len })
+      const p = action === undefined ? this.#standIn(f.kind, v, pass.preview) : { text: tagOf(this.#key, f.kind, v), id: '' }
+      out.push(raw.slice(last, f.start), f.bare ? `"${p.text}"` : p.text)
+      if (action === undefined) pass.hits.push({ placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, len: h.len })
       last = f.end
       n++
     }

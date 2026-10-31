@@ -11,6 +11,7 @@
  * that text comes back in the history where no rule matches it.
  */
 import { ALNUM } from './checks.ts'
+import { shapeChar } from './shape.ts'
 
 /** The shortest value matched as known: shorter ones would turn up all over ordinary text. */
 export const MIN_KNOWN = 8
@@ -25,6 +26,13 @@ export interface KnownSpan {
   start: number
   end: number
   kind: string
+}
+
+/** A made-up key in a text (docs/adr/0015), and the one it is. */
+export interface ShapeSpan {
+  start: number
+  end: number
+  shape: string
 }
 
 const BITS = 1 << 20
@@ -67,6 +75,13 @@ export class ValueTable {
   #kinds = new Set<string>()
   #known = new Map<string, KnownValue[]>()
   #bits = new Uint32Array(BITS / 32)
+  /** made-up key → its kind (docs/adr/0015); their values are in #values with the placeholders'. */
+  #shapes = new Map<string, string>()
+  /** The made-up keys by their first MIN_KNOWN characters, and the gram filter over them. */
+  #shapeHeads = new Map<string, string[]>()
+  #shapeBits = new Uint32Array(BITS / 32)
+  /** The made-up keys in order, for the stream's tail; undefined until asked for after a change. */
+  #shapeSorted: string[] | undefined
   /** Changes whenever the known index does: a remembered known match is good only at the generation it was made at. */
   generation = 0
 
@@ -88,7 +103,88 @@ export class ValueTable {
     this.#makeRoom()
     this.#values.set(placeholder, value)
     this.#kinds.add(kind)
-    this.#addKnown(placeholder, value)
+    this.#addKnown(placeholder, kind, value)
+  }
+
+  /**
+   * Remembers `value` behind the made-up key `shape`, or marks it used now.
+   * False where `shape` stands for another value already, which no made-up
+   * key does by chance: the value goes as its placeholder then.
+   */
+  putShape(shape: string, kind: string, value: string): boolean {
+    const have = this.#values.get(shape)
+    if (have !== undefined) {
+      if (have !== value || !this.#shapes.has(shape)) return false
+      this.#values.delete(shape)
+      this.#values.set(shape, value)
+      return true
+    }
+    this.#makeRoom()
+    this.#values.set(shape, value)
+    this.#kinds.add(kind)
+    this.#addShape(shape, kind)
+    this.#addKnown(shape, kind, value)
+    return true
+  }
+
+  /** How many made-up keys the table has. */
+  get shapes(): number {
+    return this.#shapes.size
+  }
+
+  /** Where s has a made-up key, left to right, none overlapping. */
+  shapeSpans(s: string): ShapeSpan[] {
+    if (this.#shapes.size === 0 || s.length < MIN_KNOWN) return []
+    const out: ShapeSpan[] = []
+    for (let i = 0; i + MIN_KNOWN <= s.length; i++) {
+      const g = gram(s, i)
+      if ((((this.#shapeBits[g >>> 5] as number) >>> (g & 31)) & 1) === 0) continue
+      const bucket = this.#shapeHeads.get(s.slice(i, i + MIN_KNOWN))
+      if (!bucket) continue
+      let best: string | undefined
+      for (const f of bucket) if ((!best || f.length > best.length) && s.startsWith(f, i)) best = f
+      if (best) {
+        out.push({ start: i, end: i + best.length, shape: best })
+        i += best.length - 1
+      }
+    }
+    return out
+  }
+
+  /**
+   * How much of the end of s may be the start of a made-up key the next piece
+   * of a stream goes on with: the characters a key may have at the end of s,
+   * where some key starts with them and is longer.
+   */
+  shapeTail(s: string): number {
+    if (this.#shapes.size === 0) return 0
+    let i = s.length
+    while (i > 0 && shapeChar(s[i - 1])) i--
+    const w = s.slice(i)
+    if (w === '') return 0
+    const sorted = (this.#shapeSorted ??= [...this.#shapes.keys()].sort())
+    let lo = 0
+    let hi = sorted.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if ((sorted[mid] as string) < w) lo = mid + 1
+      else hi = mid
+    }
+    for (let j = lo; j < sorted.length && (sorted[j] as string).startsWith(w); j++) {
+      if ((sorted[j] as string).length > w.length) return w.length
+    }
+    return 0
+  }
+
+  #addShape(shape: string, kind: string): void {
+    this.#shapes.set(shape, kind)
+    this.#shapeSorted = undefined
+    const head = shape.slice(0, MIN_KNOWN)
+    const bucket = this.#shapeHeads.get(head)
+    if (bucket) bucket.push(shape)
+    else this.#shapeHeads.set(head, [shape])
+    const g = gram(shape, 0)
+    this.#shapeBits[g >>> 5] = ((this.#shapeBits[g >>> 5] as number) | (1 << (g & 31))) >>> 0
   }
 
   get(placeholder: string): string | undefined {
@@ -123,8 +219,7 @@ export class ValueTable {
     return out
   }
 
-  #addKnown(p: string, v: string): void {
-    const kind = kindOf(p)
+  #addKnown(p: string, kind: string, v: string): void {
     // the user's own words match anywhere already
     if (kind === 'TERM' || v.length < MIN_KNOWN) return
     const head = v.slice(0, MIN_KNOWN)
@@ -157,7 +252,16 @@ export class ValueTable {
     }
     this.#known = new Map()
     this.#bits.fill(0)
+    const shapes = this.#shapes
+    this.#shapes = new Map()
+    this.#shapeHeads = new Map()
+    this.#shapeBits.fill(0)
+    this.#shapeSorted = undefined
     this.generation++
-    for (const [p, v] of this.#values) this.#addKnown(p, v)
+    for (const [p, v] of this.#values) {
+      const shapeKind = shapes.get(p)
+      if (shapeKind !== undefined) this.#addShape(p, shapeKind)
+      this.#addKnown(p, shapeKind ?? kindOf(p), v)
+    }
   }
 }

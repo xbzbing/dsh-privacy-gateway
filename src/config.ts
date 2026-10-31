@@ -39,6 +39,8 @@ export interface PrivacyGatewayConfig {
    * leaves the placeholders in those arguments (docs/adr/0014).
    */
   toolGuard?: ToolGuard
+  /** A secret goes as a made-up key of its own form (same prefix, length, kinds of character) instead of a placeholder, where it can (docs/adr/0015). */
+  shape?: boolean
   /** Cookie names masked wherever NAME=value is written, beside the built-in list (BDUSS, JSESSIONID, …). */
   cookieNames?: string[]
   /** Cookie names never masked. */
@@ -69,6 +71,7 @@ export const Config: Schema<PrivacyGatewayConfig> = Schema.object({
   allow: Schema.array(Schema.string()).default([]),
   actions: Schema.dict(Schema.union(['mask', 'warn', 'block'] as const)).default({}),
   toolGuard: Schema.union(['off', 'warn', 'block'] as const).default('off'),
+  shape: Schema.boolean().default(false),
   cookieNames: Schema.array(Schema.string()).default([]),
   cookieKeep: Schema.array(Schema.string()).default(['lang', 'locale', 'theme', 'tz']),
   protectEnvBlock: Schema.boolean().default(true),
@@ -91,6 +94,7 @@ export const defaults: ResolvedConfig = {
   allow: [],
   actions: {},
   toolGuard: 'off',
+  shape: false,
   cookieNames: [],
   cookieKeep: ['lang', 'locale', 'theme', 'tz'],
   protectEnvBlock: true,
@@ -138,6 +142,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     allow: strings(c.allow),
     actions: actions(c.actions),
     toolGuard: c.toolGuard === 'warn' || c.toolGuard === 'block' ? c.toolGuard : 'off',
+    shape: bool(c.shape, defaults.shape),
     cookieNames: strings(c.cookieNames),
     cookieKeep: strings(c.cookieKeep, defaults.cookieKeep),
     protectEnvBlock: bool(c.protectEnvBlock, defaults.protectEnvBlock),
