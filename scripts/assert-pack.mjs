@@ -31,6 +31,7 @@ const REQUIRED = [
   'assets/icon.svg',
   'LICENSE',
   'README.md',
+  'README.en.md',
 ]
 
 const arg = process.argv[2]

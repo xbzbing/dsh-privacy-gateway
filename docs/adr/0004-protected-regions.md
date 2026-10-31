@@ -1,4 +1,4 @@
-# ADR-0004：oc2dsh 免费车道的受保护区域
+# ADR-0004：受保护区域：`<env>` 块、工具定义与 keepIn 字段
 
 - 状态：Accepted（2026-10-31）
 - 相关：`src/protect.ts`、`src/redact/mask.ts`、配置 `protectEnvBlock` / `protectTools`

@@ -28,7 +28,8 @@
     "cordis.patch.yml",
     "lib",
     "locale",
-    "assets"
+    "assets",
+    "README.en.md"
   ],
   "dsh": {
     "bundle": {

@@ -1,6 +1,6 @@
 # ADR-0005：遮蔽失败时不发请求（fail-closed）
 
-- 状态：Proposed（2026-10-31，待拍板；P0 先按本 ADR 实现）
+- 状态：Accepted（2026-10-31）
 - 相关：`src/dispatcher.ts`
 
 ## Context
@@ -18,4 +18,4 @@
 
 - 密钥不会因为插件 bug 静默外泄。
 - 插件 bug 会表现为所有模型请求失败；止血路径必须在遮蔽失败时仍然可用。
-- 待拍板：是否坚持 fail-closed，或改为 fail-open + 大声告警。
+- 备选「fail-open + 大声告警」已否决：它让插件 bug 直接变成密钥外泄。
