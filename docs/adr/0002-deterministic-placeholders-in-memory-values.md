@@ -12,7 +12,7 @@
 ## Decision
 
 - 占位符是值的确定性函数：`{{KIND_xxxxxxxx}}`，`xxxxxxxx` 是 HMAC-SHA256(key, kind + NUL + value) 的前 8 个 base32 字符（小写）。语义照 magpie `internal/redact`。
-- key 是 32 字节随机数，存在 `~/.dsh/privacy-gateway/redact.key`（文件 0600、目录 0700，`DSH_PRIVACY_GATEWAY_HOME` 可改）。存不下时用内存 key，并告警。
+- key 是 32 字节随机数，存在状态目录的 `redact.key`（文件 0600、目录 0700，`DSH_PRIVACY_GATEWAY_HOME` 可改；2026-11-01 起状态目录按实例隔离，见 ADR-0027）。存不下时用内存 key，并告警。
 - 值表 `placeholder → value` 只在内存里，上限 `maxValues`（默认 5000），满了淘汰最老的一半。
 - 已是占位符的位置不再脱敏：重复脱敏幂等。
 

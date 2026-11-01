@@ -54,6 +54,7 @@ someone@gmail.com                                                    → EMAIL
 - 「自定义敏感词」里的词按词替换，记为 `TERM`；「永不脱敏的值」和 `allow` 里的原样发出。
 - 私钥整段一起换：`-----BEGIN` 到 `-----END`，或只有开头一段 base64 的截断私钥。
 - 文档域名（`example.com`、`.example`）不算邮箱；手机号要 11 位、身份证要过校验位、银行卡要过 Luhn，否则不换。
+- 字段的值是一个文件名时不是密钥：只由文件名的字符组成、且扩展名是已知的文件类型（模型权重 `safetensors`/`gguf`/`ckpt` 等、压缩包、图片音视频、文档数据），原样发出（[ADR-0026](docs/adr/0026-file-name-values.md)）。
 - 同一个值重复出现，占位符相同。
 
 ## 界面
@@ -108,7 +109,7 @@ someone@gmail.com                                                    → EMAIL
 
 「开头」保留的是辨识用的几个字符：有前缀的密钥留下前缀和它后面的 4 个，没有前缀的留前 4 个，长值再加末尾 2 个（`sk-proj-g6sx…3QaZ`），短值更少；个人信息和自定义词仍只留 1 个（[ADR-0019](docs/adr/0019-hint.md)）。
 
-记录按天写在 `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`，目录 0700、文件 0600。写盘失败只告警，不影响请求。
+记录按天写在一个按天命名的 `masking/YYYY-MM-DD.jsonl`，目录 0700、文件 0600。状态放在当前实例自己的目录里（`~/.dsh/profiles/<profile>/plugin-data/dsh-privacy-gateway/`），几个实例不会写到一起（[ADR-0027](docs/adr/0027-per-instance-state.md)）。写盘失败只告警，不影响请求。
 
 插件详情页下方有一张统计卡：今日 / 7 天 / 30 天切换，计数、按 kind / finder / host 的分布、最近 200 条记录（每页 10 条，每条带着工作区 · 会话标题），点开一条看每个值的明细。卡片右上角的「清空数据」勾选确认后，删除所有会话的记录、统计和磁盘上的记录文件，无法恢复（[ADR-0022](docs/adr/0022-reset.md)）。打开 `showPanel` 后，同样的内容也出现在会话顶部的「隐私保护」标签页里，只统计当前会话。标签页头部的「本会话脱敏」开关可以只关掉这一个会话的脱敏，确认后生效，其他会话照常脱敏，重启后仍然保持（[ADR-0023](docs/adr/0023-session-switch.md)）。
 
@@ -142,7 +143,7 @@ CI 与发布见 [ADR-0007](docs/adr/0007-release-process.md) 和 [.github/RELEAS
 ## 约定
 
 - 包名、cordis 行名、loader id、设置命名空间都是 `dsh-privacy-gateway`（行名必须等于包名）。
-- 状态目录 `~/.dsh/privacy-gateway/`，可用环境变量 `DSH_PRIVACY_GATEWAY_HOME` 改。
+- 状态目录是当前实例自己的目录（`ctx.profileContext.dir` 下 `plugin-data/dsh-privacy-gateway/`），没有 profile 时退回 `~/.dsh/privacy-gateway/`；环境变量 `DSH_PRIVACY_GATEWAY_HOME` 优先于两者（[ADR-0027](docs/adr/0027-per-instance-state.md)）。
 - 配置 schema 里不放 `.transform()` 或任何带回调的节点。
 - `scripts` 里不挂安装期生命周期脚本。
 - 其它 dispatcher 插件挂到网关下游时，按 [ADR-0012](docs/adr/0012-dispatcher-composition.md) 的合成契约（`chainTo`、`below`、`release`、`downstreams`）。

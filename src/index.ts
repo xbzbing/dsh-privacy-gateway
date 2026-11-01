@@ -34,6 +34,8 @@ export interface PluginContext {
   plugin?(plugin: unknown, config?: unknown): unknown
   /** cordis: listen to an event; `llm/stream` is a waterfall around each model call. */
   on?(name: 'llm/stream', listener: (options: { provider?: unknown; sessionId?: unknown }, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>): unknown
+  /** dsh: the profile this instance runs from; absent in a run with no profile (state then goes to ~/.dsh). */
+  profileContext?: { dir?: string }
 }
 
 /** The slice of dsh-commands the plugin uses. */
@@ -82,12 +84,16 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   let cfg = resolveConfig(config)
   // enabled is volatile (docs/adr/0021): off, the gateway stays installed and lets every request by
   if (!cfg.enabled) ctx.logger.info('dsh-privacy-gateway: disabled by config')
-  const keyPath = join(stateDir(), 'redact.key')
+  // this instance's own directory: two instances on one machine keep their own key, records and
+  // session switches instead of writing each other's (docs/adr/0027)
+  const home = stateDir(ctx.profileContext)
+  ctx.logger.info(`dsh-privacy-gateway: state in ${home}`)
+  const keyPath = join(home, 'redact.key')
   const { key, persisted } = loadKey(keyPath)
   if (!persisted) {
     ctx.logger.warn(`dsh-privacy-gateway: could not keep the placeholder key at ${keyPath}; placeholders change on restart`)
   }
-  const recordDir = join(stateDir(), 'masking')
+  const recordDir = join(home, 'masking')
   const records = new RecordStore({
     // record: false keeps the statistics in memory only
     ...(cfg.record ? { dir: recordDir } : {}),
@@ -99,7 +105,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   // the vendor view keeps the bodies as they went, in memory only, while vendorView is on
   const views = new ViewStore()
   // sessions the user turned masking off for, from the session's Privacy tab (docs/adr/0023)
-  const sessions = new SessionSwitches({ file: join(stateDir(), 'sessions.json'), logger: ctx.logger })
+  const sessions = new SessionSwitches({ file: join(home, 'sessions.json'), logger: ctx.logger })
   const optional = (name: string): unknown => {
     try {
       return ctx.get?.(name)

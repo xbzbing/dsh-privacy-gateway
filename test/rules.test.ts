@@ -74,6 +74,22 @@ test('a field named for a secret masks its value; code, paths and versions are l
   }
 })
 
+// A model's file name, as ComfyUI's PowerShell dump of a workflow has it (issue #1). Built from
+// pieces, so no literal in the repository reads as a file name's.
+const MODEL_FILE = ['sample', 'upscaler', 'x4', 'conv', '1', 'bf16'].join('_') + '.safetensors'
+const KEY_WITH_A_DOT = ['bwerotp', 'q0', 'nwgujt', 'vexvrouy', 'c9'].join('_') + '.kqdfamuqzy'
+
+test("a field called key holding a file's name is no secret (issue #1)", () => {
+  // PowerShell's dump of a workflow: $key='<model file>' for a node the run loads
+  const dump = `'18'=@{class_type='LatentUpscaleModelLoader';inputs=[ordered]@{$key='${MODEL_FILE}'}}`
+  for (const s of [dump, `{"key": "${MODEL_FILE}"}`, `{"token": "${MODEL_FILE}"}`, `db_password=${MODEL_FILE}`]) {
+    assert.deepEqual(masked(s), [], s)
+  }
+  // a value of its own with a dot in it, whose extension no file has, is still a key
+  assert.deepEqual(masked(`{"key": "${KEY_WITH_A_DOT}"}`), [KEY_WITH_A_DOT])
+  assert.deepEqual(masked(dump.replace(MODEL_FILE, KEY_WITH_A_DOT)), [KEY_WITH_A_DOT])
+})
+
 test('CJK names for a password or a key mask what follows them', () => {
   const cases: Array<[string, string]> = [
     ['密码：786kih', '786kih'],

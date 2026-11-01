@@ -184,6 +184,32 @@ export function pathValue(v: string): boolean {
   return PATH_ROOTS.has(v.slice(1, cut))
 }
 
+const FILE_EXT = new Set(
+  (
+    // the model weights and data a run loads
+    'safetensors ckpt pt pth bin gguf ggml onnx sft h5 pb tflite mlmodel npz npy pkl msgpack engine plan trt ' +
+    // archives
+    'zip tar gz tgz bz2 xz zst 7z rar lz4 whl ' +
+    // pictures, sound and video
+    'png jpg jpeg webp gif bmp svg ico tif tiff avif heic mp4 mov mkv webm avi m4v wav mp3 flac ogg m4a ' +
+    // documents and data
+    'txt md pdf doc docx xls xlsx ppt pptx csv tsv json jsonl yaml yml xml html toml ini cfg conf log sqlite db parquet'
+  ).split(' '),
+)
+
+/**
+ * A file's name, not a value: a field called key or password holding a model's
+ * file name (ComfyUI's PowerShell dump of a workflow has one after $key for
+ * every node it loads, issue #1) names a model a run loads, and no secret is
+ * kept in a file of one of these kinds. A file's name has only its name's
+ * characters, so a key of its own that merely contains a dot stays masked.
+ */
+export function fileNameValue(v: string): boolean {
+  if (!/^[A-Za-z0-9._-]+$/.test(v)) return false
+  const dot = v.lastIndexOf('.')
+  return dot > 0 && dot < v.length - 1 && FILE_EXT.has(v.slice(dot + 1).toLowerCase())
+}
+
 const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'secrets', 'password', 'passwords', 'passwd', 'pwd', 'key', 'keys', 'apikey', 'credential', 'credentials'])
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/
 
@@ -219,12 +245,14 @@ function namesASecret(v: string): boolean {
   return words >= 2 && named
 }
 
-/** Where a value the SECRET rules found can be a secret: not code, a place in a file, a path, a name in code or a version. */
+/** Where a value the SECRET rules found can be a secret: not code, a place in a file, a path, a file's name, a name in code or a version. */
 export function fieldAt(s: string, a: number, b: number): boolean {
   if (!notCode(s, a, b)) return false
   const v = s.slice(a, b)
   if (v[0] === '=') return false // Go's := with no space after it
-  return !fileField(s, a) && !LINE_REF.test(v) && !pathValue(v) && !namesASecret(v) && !skillName(s, a, b) && !versionValue(v)
+  return (
+    !fileField(s, a) && !LINE_REF.test(v) && !pathValue(v) && !fileNameValue(v) && !namesASecret(v) && !skillName(s, a, b) && !versionValue(v)
+  )
 }
 
 export { trimEnd, trimStart }

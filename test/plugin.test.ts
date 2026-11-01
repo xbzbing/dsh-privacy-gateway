@@ -98,6 +98,26 @@ test('apply installs the gateway and its disposal puts the previous dispatcher b
   }
 })
 
+test("apply keeps the state in the instance's directory, not in the shared one (docs/adr/0027)", () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const profile = mkdtempSync(join(tmpdir(), 'dpg-profile-'))
+  delete process.env.DSH_PRIVACY_GATEWAY_HOME
+  const disposers: Array<() => void> = []
+  const logger = { info: () => {}, warn: () => {}, error: () => {} }
+  try {
+    apply({ logger, effect: (fn) => disposers.push(fn()), profileContext: { dir: profile } }, {})
+    const dir = join(profile, 'plugin-data', 'dsh-privacy-gateway')
+    assert.equal(statSync(join(dir, 'redact.key')).mode & 0o777, 0o600)
+    for (const d of disposers) d()
+    assert.equal(readFileSync(join(dir, 'redact.key')).length, 32)
+  } finally {
+    for (const d of disposers.splice(0)) d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(profile, { recursive: true, force: true })
+  }
+})
+
 test('stateDir honours DSH_PRIVACY_GATEWAY_HOME', () => {
   const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
   try {
@@ -105,6 +125,26 @@ test('stateDir honours DSH_PRIVACY_GATEWAY_HOME', () => {
     assert.equal(stateDir(), join(homedir(), '.dsh', 'privacy-gateway'))
     process.env.DSH_PRIVACY_GATEWAY_HOME = '/tmp/pg-home'
     assert.equal(stateDir(), '/tmp/pg-home')
+  } finally {
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+  }
+})
+
+test("stateDir is the instance's own directory, so two instances keep their own data (docs/adr/0027)", () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const web = join(tmpdir(), 'dpg-instance-web')
+  const desktop = join(tmpdir(), 'dpg-instance-desktop')
+  try {
+    delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    assert.equal(stateDir({ dir: web }), join(web, 'plugin-data', 'dsh-privacy-gateway'))
+    assert.notEqual(stateDir({ dir: web }), stateDir({ dir: desktop }))
+    // no profile facts (a run of the SDK or the tests): the home directory still takes it
+    assert.equal(stateDir({}), join(homedir(), '.dsh', 'privacy-gateway'))
+    assert.equal(stateDir({ dir: '  ' }), join(homedir(), '.dsh', 'privacy-gateway'))
+    // the env wins over the instance, as it is how a test or a user moves the state away
+    process.env.DSH_PRIVACY_GATEWAY_HOME = '/tmp/pg-home'
+    assert.equal(stateDir({ dir: web }), '/tmp/pg-home')
   } finally {
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
     else process.env.DSH_PRIVACY_GATEWAY_HOME = saved

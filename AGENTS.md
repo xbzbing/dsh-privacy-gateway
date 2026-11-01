@@ -13,13 +13,13 @@ src/
   dispatcher.ts   MaskingDispatcher：改写请求 body、流式还原回复；脱敏失败则不发（fail closed）
   engine.ts       PrivacyEngine：Masker/Restorer/值表/记录的组合；reconfigure 热替换规则
   providers.ts    AsyncLocalStorage 上下文：把 llm/stream 的 provider 与会话 id 带到 dispatcher
-  sessions.ts     关闭了脱敏的会话名单（~/.dsh/privacy-gateway/sessions.json）
-  records.ts      脱敏记录：内存环 + 按天 JSONL（~/.dsh/privacy-gateway/masking/）与统计
+  sessions.ts     关闭了脱敏的会话名单（状态目录的 sessions.json）
+  records.ts      脱敏记录：内存环 + 按天 JSONL（状态目录的 masking/）与统计
   views.ts        「保留发出内容」的内存副本（vendorView）
   remote.ts       typert Remote 服务 privacyGateway/*（overview、providers、reset、sessionMasking、vendorView）
   command.ts      /privacy 命令
   protect.ts      必须原样发出的区域（<env> 块、工具定义）
-  paths.ts        状态目录（DSH_PRIVACY_GATEWAY_HOME 可改）
+  paths.ts        状态目录：当前实例自己的目录，DSH_PRIVACY_GATEWAY_HOME 可改（ADR-0027）
   redact/         查找、脱敏、还原：rules/checks/personal/cookie/find/mask/restore/known/shape/guard/json/key
   client/         Web 端：配置页（ConfigSection、configControls、fields）、统计卡（StatsCard、StatsParts）、
                   会话「隐私保护」标签页（sidebar）、发出内容对照（VendorView）、locales、styles、rpc

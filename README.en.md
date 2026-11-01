@@ -54,6 +54,7 @@ someone@gmail.com                                                    → EMAIL
 - A word in 「自定义敏感词」 is replaced where it appears and recorded as `TERM`; a value in 「永不脱敏的值」 or `allow` goes out as it is.
 - A private key goes whole: `-----BEGIN` to `-----END`, or a truncated one with only the opening lines and base64.
 - A documentation domain (`example.com`, `.example`) is no email; a phone number needs 11 digits, an ID card its check digit, a bank card its Luhn sum.
+- A field's value is no secret when it is a file's name: only a file name's characters, and an extension of a known kind (model weights such as `safetensors`, `gguf`, `ckpt`, archives, pictures, sound and video, documents and data); it goes out as it is ([ADR-0026](docs/adr/0026-file-name-values.md)).
 - One value seen again gets the same placeholder.
 
 ## Screens
@@ -110,7 +111,7 @@ Only a model request that had something masked or restored makes a record, one e
 
 The head keeps a few characters to recognize it by: a key with a prefix keeps the prefix and the 4 characters after it, one without keeps its first 4, and a long value also keeps its last 2 (`sk-proj-g6sx…3QaZ`); shorter values keep fewer. Personal data and the user's words still keep one character ([ADR-0019](docs/adr/0019-hint.md)).
 
-Records go to `~/.dsh/privacy-gateway/masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. A failed write is logged as a warning and the request goes on.
+Records go to a `masking/YYYY-MM-DD.jsonl`, one file a day; the directory is 0700 and the files 0600. State lives in the current instance's own directory (`~/.dsh/profiles/<profile>/plugin-data/dsh-privacy-gateway/`), so two instances never write into each other ([ADR-0027](docs/adr/0027-per-instance-state.md)). A failed write is logged as a warning and the request goes on.
 
 The plugin's detail page has a statistics card at the bottom: today / 7 days / 30 days, the counts, the distributions by kind / finder / host, and the latest 200 records, 10 a page, each with its workspace · session title; open one to see each of its values. The card's 「清空数据」 (Clear data) button, once its confirmation box is checked, deletes the records, counts and record files of every session; this cannot be undone ([ADR-0022](docs/adr/0022-reset.md)). With `showPanel` on, the same view is a 「隐私保护」 (Privacy) tab at the top of the session, counting only that session. The tab's 「本会话脱敏」 (Mask this session) switch turns masking off for that one session after a confirmation; other sessions are still masked, and the choice holds across restarts ([ADR-0023](docs/adr/0023-session-switch.md)).
 
@@ -144,7 +145,7 @@ For CI and releases see [ADR-0007](docs/adr/0007-release-process.md) and [.githu
 ## Conventions
 
 - The package name, cordis row name, loader id and settings namespace are all `dsh-privacy-gateway` (the row name must equal the package name).
-- State lives in `~/.dsh/privacy-gateway/`; the `DSH_PRIVACY_GATEWAY_HOME` environment variable moves it.
+- State lives in the current instance's own directory (`plugin-data/dsh-privacy-gateway/` under `ctx.profileContext.dir`), falling back to `~/.dsh/privacy-gateway/` when there is no profile; the `DSH_PRIVACY_GATEWAY_HOME` environment variable wins over both ([ADR-0027](docs/adr/0027-per-instance-state.md)).
 - The config schema holds no `.transform()` or other callback-bearing node.
 - `scripts` declares no install-time lifecycle script.
 - Other dispatcher plugins join under the gateway through the composition contract of [ADR-0012](docs/adr/0012-dispatcher-composition.md) (`chainTo`, `below`, `release`, `downstreams`).
