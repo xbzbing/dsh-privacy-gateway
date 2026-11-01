@@ -1,6 +1,6 @@
 {
   "name": "dsh-privacy-gateway",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Process-wide HTTP redaction gateway for DSH: masks secrets in outgoing model requests and restores placeholders in the replies, for every provider.",
   "icon": "./assets/icon.svg",
