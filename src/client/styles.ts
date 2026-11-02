@@ -70,8 +70,12 @@ const CSS = `
 .pgw-values td{padding:4px 12px 4px 0;white-space:nowrap;font-variant-numeric:tabular-nums}
 .pgw-values__ctx td{padding:0 12px 8px 0;white-space:normal}
 .pgw-values__ctx td>*{vertical-align:middle}
+.pgw-ctx{display:flex;flex-direction:column;gap:2px}
+.pgw-ctx__line{display:flex;flex-wrap:wrap;align-items:baseline}
 .pgw-ctx__place{margin-right:6px;font-size:11px}
-.pgw-ctx__text{font-size:12px;line-height:18px;letter-spacing:0;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.pgw-ctx__path{margin-left:4px;font-size:11px;opacity:.7}
+.pgw-ctx__more{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.pgw-ctx__text{flex:1 1 auto;min-width:0;font-size:12px;line-height:18px;letter-spacing:0;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .pgw-ctx__mark{margin:0 1px;padding:0 2px;font-size:11px;border-radius:3px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 16%,transparent);color:var(--dsw-alias-label-primary)}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:2px}
 .pgw-pager__at{min-width:56px;text-align:center;font-variant-numeric:tabular-nums}

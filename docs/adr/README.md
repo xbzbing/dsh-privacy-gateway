@@ -40,3 +40,4 @@
 | [ADR-0025](0025-compression-and-upgrades.md) | 压缩的请求与回复解压后处理；WebSocket 升级不放行 | Accepted | 架构 |
 | [ADR-0026](0026-file-name-values.md) | 字段值是一个文件名时不算密钥 | Accepted | 脱敏 |
 | [ADR-0027](0027-per-instance-state.md) | 状态目录按实例隔离 | Accepted | 架构 |
+| [ADR-0028](0028-record-every-place.md) | 记录一个值出现过的每一处，界面按消息序号标出 | Accepted | 界面 |

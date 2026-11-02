@@ -3,7 +3,8 @@
  * unit tests run it as it is.
  */
 import type { Overview } from '../remote.ts'
-import type { MaskRecord, Totals } from '../records.ts'
+import type { MaskRecord, Place, Totals, ValueRecord } from '../records.ts'
+import type { T } from './locales.ts'
 import type { Failure, Result } from './rpc.ts'
 
 export type Range = 'today' | 'week' | 'month'
@@ -93,6 +94,72 @@ function isRecord(v: unknown): v is MaskRecord {
   return isObject(v) && typeof v.key === 'number' && typeof v.time === 'string' && Array.isArray(v.values) && v.values.every(isObject)
 }
 
+/** A place the card can name, when it has the path it names it by. */
+function readPlace(v: unknown): Place | undefined {
+  if (!isObject(v) || typeof v.path !== 'string' || v.path === '') return undefined
+  return { path: v.path, ...(typeof v.role === 'string' ? { role: v.role } : {}), ...(typeof v.type === 'string' ? { type: v.type } : {}) }
+}
+
+/** The places in `v`: each one a place with a path, each path once, in the order given (docs/adr/0028). */
+function readPlaces(v: unknown): Place[] {
+  if (!Array.isArray(v)) return []
+  const out: Place[] = []
+  const seen = new Set<string>()
+  for (const raw of v) {
+    const p = readPlace(raw)
+    if (p === undefined || seen.has(p.path)) continue
+    seen.add(p.path)
+    out.push(p)
+  }
+  return out
+}
+
+/**
+ * The most other places the card names for one value; a record of another
+ * version may keep more, and those go into its count instead, so the line
+ * cannot grow without bound. The host keeps at most MAX_RECORD_PLACES - 1.
+ */
+const PLACES_SHOWN = 7
+
+/** The finders the table knows by name; a record of another version may say one it does not. */
+const FINDERS = ['rule', 'word', 'known', 'cookie'] as const satisfies readonly ValueRecord['finder'][]
+
+/** A count the card shows: a whole one, never below zero, an odd one as zero. */
+const whole = (v: unknown): number => Math.max(0, Math.floor(count(v)))
+
+/**
+ * A record's value with its own fields checked and its places kept as places,
+ * so a record written by another version cannot break the table: an object
+ * where a name or a count belongs would be drawn as one, and React refuses
+ * that. A value without a placeholder is one the table cannot name at all.
+ */
+function readValue(v: MaskRecord['values'][number]): ValueRecord | undefined {
+  if (typeof v.placeholder !== 'string' || v.placeholder === '') return undefined
+  const text = (x: unknown): string | undefined => (typeof x === 'string' ? x : undefined)
+  const tail = text(v.tail)
+  const before = text(v.before)
+  const after = text(v.after)
+  const at = readPlace(v.at)
+  const places = readPlaces(v.elsewhere)
+  const elsewhere = places.slice(0, PLACES_SHOWN)
+  const dropped = whole(v.elsewhereOmitted) + places.length - elsewhere.length
+  return {
+    placeholder: v.placeholder,
+    kind: text(v.kind) ?? '',
+    finder: FINDERS.find((f) => f === v.finder) ?? 'rule',
+    head: text(v.head) ?? '',
+    ...(tail !== undefined ? { tail } : {}),
+    len: whole(v.len),
+    n: whole(v.n),
+    ...(v.action === 'warn' || v.action === 'block' ? { action: v.action } : {}),
+    ...(before !== undefined ? { before } : {}),
+    ...(after !== undefined ? { after } : {}),
+    ...(at ? { at } : {}),
+    ...(elsewhere.length > 0 ? { elsewhere } : {}),
+    ...(dropped > 0 ? { elsewhereOmitted: dropped } : {}),
+  }
+}
+
 /**
  * The overview the host half answered, with each range's sums filled in and
  * the records the list cannot draw left out, so a host of another version
@@ -110,7 +177,7 @@ export function readOverview(o: unknown): Overview | undefined {
     stats: { today, week, month, failStreak: count(o.stats.failStreak) },
     recent: o.recent.filter(isRecord).map(({ valuesOmitted, ...r }) => {
       const omitted = count(valuesOmitted)
-      return { ...r, n: count(r.n), restored: count(r.restored), unmapped: count(r.unmapped), ...(omitted > 0 ? { valuesOmitted: omitted } : {}) }
+      return { ...r, n: count(r.n), restored: count(r.restored), unmapped: count(r.unmapped), values: r.values.map(readValue).filter((v): v is ValueRecord => v !== undefined), ...(omitted > 0 ? { valuesOmitted: omitted } : {}) }
     }),
     ...(Array.isArray(o.views) ? { views: o.views.filter((k): k is number => typeof k === 'number') } : {}),
   }
@@ -204,6 +271,33 @@ export function placeKey(at: { path: string; role?: string; type?: string }): Pl
   if (role === 'user') return 'place.user'
   if (role === 'assistant' || role === 'model') return 'place.assistant'
   return 'place.other'
+}
+
+/**
+ * A place as the card names it short: the path's first key and, when the
+ * index comes right after it, that index, so `messages.3.content.0.text`
+ * reads `messages.3` and a value is found by the message it went in rather
+ * than by the whole path (docs/adr/0028). A path whose first key is not a
+ * list reads whole, as its key: `systemInstruction.parts.0.text` has no
+ * message index, and naming it `systemInstruction.0` would invent one.
+ */
+export function placeLabel(path: string): string {
+  const segs = path.split('.')
+  const head = segs[0] ?? ''
+  const index = segs[1] ?? ''
+  return head !== '' && /^\d+$/.test(index) ? `${head}.${index}` : head
+}
+
+/**
+ * The line naming the other places a value went, `at` aside, each message
+ * once; empty when it went nowhere else. The places past `elsewhereOmitted`
+ * are only counted (docs/adr/0028).
+ */
+export function elsewhereText(v: { elsewhere?: Place[]; elsewhereOmitted?: number }, t: T): string {
+  const paths = [...new Set((v.elsewhere ?? []).map((p) => placeLabel(p.path)))].filter((p) => p !== '').join(t('recent.placeSep'))
+  const n = v.elsewhereOmitted ?? 0
+  if (paths === '') return n > 0 ? t('recent.elsewhereOmitted', { n }) : ''
+  return n > 0 ? t('recent.elsewhereMore', { paths, n }) : t('recent.elsewhere', { paths })
 }
 
 /** A value's hint as the records keep it: its head, then its tail where the record spared one (docs/adr/0019). */

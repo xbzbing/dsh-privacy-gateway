@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
 import { failureText, resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
-import { bars, hintOf, placeKey, timeLabel, took, type WarningKey } from './view.ts'
+import { bars, elsewhereText, hintOf, placeKey, placeLabel, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 /** The signals worth a line of their own, one tinted line each with a warning icon. */
@@ -153,31 +153,49 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                 h(
                   'tbody',
                   null,
-                  r.values.flatMap((v) => [
-                    h(
-                      'tr',
-                      { key: v.placeholder, className: v.before !== undefined || v.after !== undefined ? 'pgw-values__has' : undefined },
-                      h('td', { className: 'pgw-mono' }, v.placeholder),
-                      h('td', null, v.kind),
-                      h('td', null, v.finder),
-                      h('td', { className: 'pgw-mono' }, hintOf(v)),
-                      h('td', null, v.len),
-                      h('td', null, v.n),
-                      h('td', null, v.action ? t(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
-                    ),
-                    v.before !== undefined || v.after !== undefined
-                      ? h(
-                          'tr',
-                          { key: `${v.placeholder}:ctx`, className: 'pgw-values__ctx' },
-                          h(
-                            'td',
-                            { colSpan: 7 },
-                            v.at ? h(Tag, { tone: 'neutral', className: 'pgw-ctx__place', title: v.at.path }, t(placeKey(v.at))) : null,
-                            h('span', { className: 'pgw-ctx__text', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark pgw-mono' }, v.placeholder), v.after ?? ''),
-                          ),
-                        )
-                      : null,
-                  ]),
+                  r.values.flatMap((v) => {
+                    const elsewhere = elsewhereText(v, t)
+                    // the row shows where the value went and what was around it: either alone is worth a line
+                    const placed = v.at !== undefined || v.before !== undefined || v.after !== undefined || elsewhere !== ''
+                    return [
+                      h(
+                        'tr',
+                        { key: v.placeholder, className: v.before !== undefined || v.after !== undefined ? 'pgw-values__has' : undefined },
+                        h('td', { className: 'pgw-mono' }, v.placeholder),
+                        h('td', null, v.kind),
+                        h('td', null, v.finder),
+                        h('td', { className: 'pgw-mono' }, hintOf(v)),
+                        h('td', null, v.len),
+                        h('td', null, v.n),
+                        h('td', null, v.action ? t(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
+                      ),
+                      placed
+                        ? h(
+                            'tr',
+                            { key: `${v.placeholder}:ctx`, className: 'pgw-values__ctx' },
+                            h(
+                              'td',
+                              { colSpan: 7 },
+                              h(
+                                'div',
+                                { className: 'pgw-ctx' },
+                                h(
+                                  'div',
+                                  { className: 'pgw-ctx__line' },
+                                  v.at
+                                    ? h(Tag, { tone: 'neutral', className: 'pgw-ctx__place', title: v.at.path }, t(placeKey(v.at)), h('span', { className: 'pgw-ctx__path pgw-mono' }, `· ${placeLabel(v.at.path)}`))
+                                    : null,
+                                  v.before !== undefined || v.after !== undefined
+                                    ? h('span', { className: 'pgw-ctx__text', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark pgw-mono' }, v.placeholder), v.after ?? '')
+                                    : null,
+                                ),
+                                elsewhere !== '' ? h('div', { className: 'pgw-ctx__more' }, elsewhere) : null,
+                              ),
+                            ),
+                          )
+                        : null,
+                    ]
+                  }),
                 ),
               ),
           r.valuesOmitted ? h('div', { className: 'pgw-meta' }, t('recent.omitted', { n: r.valuesOmitted.toLocaleString() })) : null,

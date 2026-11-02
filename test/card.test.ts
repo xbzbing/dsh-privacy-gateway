@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 
-import { afterRefresh, bars, bodyLines, placeKey, readOverview, timeLabel, took, valuesKey, warnings } from '../src/client/view.ts'
+import { afterRefresh, bars, bodyLines, elsewhereText, placeKey, placeLabel, readOverview, timeLabel, took, valuesKey, warnings } from '../src/client/view.ts'
 import { PACKAGE } from '../src/client/ids.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { DESCRIPTION_MARK, panelDecision, watchShowPanel, type ConfigForms } from '../src/client/panelConfig.ts'
@@ -184,6 +184,46 @@ test('a value’s place reads as the part of the conversation it was in', () => 
   assert.equal(placeKey({ path: 'prompt' }), 'place.other')
 })
 
+test('a place also reads as the message it went in, short enough for the row', () => {
+  assert.equal(placeLabel('messages.3.content.0.text'), 'messages.3')
+  assert.equal(placeLabel('messages.0.content'), 'messages.0')
+  assert.equal(placeLabel('messages.2.tool_calls.0.function.arguments'), 'messages.2')
+  assert.equal(placeLabel('system.0.text'), 'system.0')
+  assert.equal(placeLabel('contents.1.parts.0.text'), 'contents.1')
+  assert.equal(placeLabel('prompt'), 'prompt')
+  assert.equal(placeLabel('input.0.content'), 'input.0')
+  // an index deeper in is not the message's: naming it would invent one (docs/adr/0028)
+  assert.equal(placeLabel('systemInstruction.parts.0.text'), 'systemInstruction')
+  assert.equal(placeLabel('prompt.x.0'), 'prompt')
+  assert.equal(placeLabel('messages.abc.3'), 'messages')
+  assert.equal(placeLabel('messages.'), 'messages')
+  assert.equal(placeLabel(''), '')
+  assert.equal(placeLabel('.3'), '')
+})
+
+/** A dictionary that keeps each key and its params apart, so the words tested are the ones the card picks. */
+function fakeT(k: string, p?: Record<string, string | number>): string {
+  if (k === 'recent.placeSep') return '、'
+  return p ? `${k}(${Object.entries(p).map(([a, b]) => `${a}=${b}`).join(',')})` : k
+}
+
+test('the other places a value went read as one line, each message once, the rest only counted', () => {
+  const none = elsewhereText({}, fakeT as never)
+  assert.equal(none, '')
+  const one = elsewhereText({ elsewhere: [{ path: 'messages.1.content' }] }, fakeT as never)
+  assert.equal(one, 'recent.elsewhere(paths=messages.1)')
+  // two places in the same message are one message to go back to
+  const same = elsewhereText({ elsewhere: [{ path: 'messages.1.content' }, { path: 'messages.1.tool_calls.0.function.arguments' }] }, fakeT as never)
+  assert.equal(same, 'recent.elsewhere(paths=messages.1)')
+  const two = elsewhereText({ elsewhere: [{ path: 'messages.1.content' }, { path: 'messages.2.content' }] }, fakeT as never)
+  assert.equal(two, 'recent.elsewhere(paths=messages.1、messages.2)')
+  const more = elsewhereText({ elsewhere: [{ path: 'messages.1.content' }], elsewhereOmitted: 4 }, fakeT as never)
+  assert.equal(more, 'recent.elsewhereMore(paths=messages.1,n=4)')
+  // the count alone still says something when no place could be named
+  assert.equal(elsewhereText({ elsewhereOmitted: 3 }, fakeT as never), 'recent.elsewhereOmitted(n=3)')
+  assert.equal(elsewhereText({ elsewhere: [], elsewhereOmitted: 0 }, fakeT as never), '')
+})
+
 test('the tab follows the host alone when there is no settings mirror, and the mirror speeds up only "on"', () => {
   assert.equal(panelDecision(undefined, undefined), undefined)
   assert.equal(panelDecision(true, undefined), true)
@@ -274,6 +314,40 @@ test('an overview from another host version is filled in, not trusted as it is',
   const capped = readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [], valuesOmitted: 12 }, { key: 2, time: 't', values: [], valuesOmitted: 'x' }] })
   assert.equal(capped?.recent[0]?.valuesOmitted, 12)
   assert.equal(capped?.recent[1]?.valuesOmitted, undefined)
+  // the places of a value are checked the same way: a path is what the card names them by (docs/adr/0028)
+  const places = readOverview({
+    active: true,
+    stats: { today: {}, week: {}, month: {} },
+    recent: [
+      {
+        key: 1,
+        time: 't',
+        values: [
+          { placeholder: '{{A}}', at: { path: 'messages.3.content', role: 'user' }, elsewhere: [{ path: 'messages.7.content', role: 'user' }, { role: 'user' }, 'x'], elsewhereOmitted: 2 },
+          { placeholder: '{{B}}', at: { role: 'user' }, elsewhere: 'x', elsewhereOmitted: 'y' },
+          { placeholder: '{{C}}', at: 'x', elsewhere: [], elsewhereOmitted: 0 },
+        ],
+      },
+    ],
+  })
+  // a value is drawn field by field, so one of another version cannot reach the table as an object
+  const val = (placeholder: string, extra: Record<string, unknown> = {}) => ({ placeholder, kind: '', finder: 'rule', head: '', len: 0, n: 0, ...extra })
+  assert.deepEqual(places?.recent[0]?.values[0], val('{{A}}', { at: { path: 'messages.3.content', role: 'user' }, elsewhere: [{ path: 'messages.7.content', role: 'user' }], elsewhereOmitted: 2 }))
+  assert.deepEqual(places?.recent[0]?.values[1], val('{{B}}'))
+  assert.deepEqual(places?.recent[0]?.values[2], val('{{C}}'))
+  // a value the table cannot name at all is left out
+  assert.equal(readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [{ kind: 'API_KEY' }, {}, { placeholder: 7 }] }] })?.recent[0]?.values.length, 0)
+  // more places than the card names are counted, and a path it was given twice is one place
+  const many = readOverview({
+    active: true,
+    stats: { today: {}, week: {}, month: {} },
+    recent: [{ key: 1, time: 't', values: [{ placeholder: '{{D}}', elsewhere: [...Array.from({ length: 40 }, (_, i) => ({ path: `messages.${i}.content` })), { path: 'messages.0.content' }], elsewhereOmitted: 2 }] }],
+  })
+  const d = many?.recent[0]?.values[0]
+  assert.equal(d?.elsewhere?.length, 7)
+  // 40 distinct paths were given, 7 shown, and the 2 the host had already counted
+  assert.equal(d?.elsewhereOmitted, 35)
+  assert.equal(new Set(d?.elsewhere?.map((x) => x.path)).size, 7)
 })
 
 test('a call fails with a code the page words itself, or the host’s own message', async () => {

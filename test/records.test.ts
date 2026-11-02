@@ -13,7 +13,7 @@ import { defaults } from '../src/config.ts'
 import { installGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine } from '../src/engine.ts'
 import { CONTEXT_CHARS } from '../src/redact/mask.ts'
-import { dayOf, MAX_RECORD_VALUES, RecordStore, whatOf, type MaskRecord, type ValueRecord } from '../src/records.ts'
+import { dayOf, MAX_RECORD_PLACES, MAX_RECORD_VALUES, RecordStore, whatOf, type MaskRecord, type ValueRecord } from '../src/records.ts'
 
 const SENTINEL = 'sk-' + 'proj-SENTINELsentinel0123456789abcd'
 const chat = (content: string) => JSON.stringify({ model: 'gpt-x', stream: false, messages: [{ role: 'user', content }] })
@@ -316,12 +316,87 @@ test('the context around a value is short, flat, and never holds a value, a warn
 
 test('recordContext off keeps no context', () => {
   const engine = new PrivacyEngine(randomBytes(32), { ...defaults, recordContext: false })
-  const ex = engine.maskRequest(chat(`key ${SENTINEL}`), info)
+  const messages = [
+    { role: 'user', content: `key ${SENTINEL}` },
+    { role: 'assistant', content: `saw ${SENTINEL}` },
+  ]
+  const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages }), info)
   assert.ok(ex)
   ex.finish()
   const v = (engine.records.recent()[0] as MaskRecord).values[0]
   assert.equal(v?.before, undefined)
   assert.equal(v?.at, undefined)
+  // the places hang off the same switch: nothing of them is kept either (docs/adr/0028)
+  assert.equal(v?.elsewhere, undefined)
+  assert.equal(v?.elsewhereOmitted, undefined)
+})
+
+test('a value in more than one message keeps every place, the first still the one its context came from', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const messages = [
+    { role: 'system', content: 'rules' },
+    { role: 'user', content: `key ${SENTINEL}` },
+    { role: 'assistant', content: `saw ${SENTINEL}` },
+  ]
+  const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages }), info)
+  assert.ok(ex)
+  ex.finish()
+  const v = (engine.records.recent()[0] as MaskRecord).values[0] as ValueRecord
+  assert.equal(v.n, 2)
+  assert.deepEqual(v.at, { path: 'messages.1.content', role: 'user' })
+  assert.deepEqual(v.elsewhere, [{ path: 'messages.2.content', role: 'assistant' }])
+  assert.equal(v.elsewhereOmitted, undefined)
+  // a value met in one place only is recorded as it was before the field existed (docs/adr/0028)
+  const single = new PrivacyEngine(randomBytes(32), defaults)
+  const one = single.maskRequest(chat(`key ${SENTINEL}`), info)
+  assert.ok(one)
+  one.finish()
+  assert.equal('elsewhere' in ((single.records.recent()[0] as MaskRecord).values[0] as ValueRecord), false)
+  assert.ok(!JSON.stringify(v).includes(SENTINEL))
+})
+
+test('the places one value keeps are capped, the ones past it counted once each', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const messages = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: `key ${SENTINEL}` }))
+  const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages }), info)
+  assert.ok(ex)
+  ex.finish()
+  const r = engine.records.recent()[0] as MaskRecord
+  const v = r.values[0] as ValueRecord
+  assert.equal(v.n, 12)
+  assert.equal((v.elsewhere ?? []).length, MAX_RECORD_PLACES - 1)
+  assert.equal(v.elsewhereOmitted, 12 - MAX_RECORD_PLACES)
+  assert.equal(v.elsewhere?.[0]?.path, 'messages.1.content')
+  assert.ok(!JSON.stringify(r).includes(SENTINEL))
+})
+
+test('a place left out is counted once, however often the value is met there', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  // the last message is past the cap and holds the value three times: one place, not three
+  const messages = Array.from({ length: MAX_RECORD_PLACES }, (_, i) => ({ role: 'user', content: `key ${SENTINEL}` }))
+  messages.push({ role: 'user', content: `key ${SENTINEL} and ${SENTINEL} and ${SENTINEL}` })
+  const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages }), info)
+  assert.ok(ex)
+  ex.finish()
+  const v = (engine.records.recent()[0] as MaskRecord).values[0] as ValueRecord
+  assert.equal(v.n, MAX_RECORD_PLACES + 3)
+  assert.equal((v.elsewhere ?? []).length, MAX_RECORD_PLACES - 1)
+  assert.equal(v.elsewhereOmitted, 1)
+})
+
+test('the same place met twice is kept once and is no place left out', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const messages = [
+    { role: 'user', content: `key ${SENTINEL}` },
+    { role: 'assistant', content: `again ${SENTINEL} and ${SENTINEL}` },
+  ]
+  const ex = engine.maskRequest(JSON.stringify({ model: 'm', messages }), info)
+  assert.ok(ex)
+  ex.finish()
+  const v = (engine.records.recent()[0] as MaskRecord).values[0] as ValueRecord
+  assert.equal(v.n, 3)
+  assert.deepEqual(v.elsewhere, [{ path: 'messages.1.content', role: 'assistant' }])
+  assert.equal(v.elsewhereOmitted, undefined)
 })
 
 /** The records in a day file, in the order written. */

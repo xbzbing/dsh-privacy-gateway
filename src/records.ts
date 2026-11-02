@@ -6,6 +6,8 @@ import { createInterface } from 'node:readline'
 import type { Finder } from './redact/ids.ts'
 import type { Hit, Place } from './redact/mask.ts'
 
+export type { Place }
+
 /**
  * The record of what masking swapped for placeholders (design §7, magpie
  * internal/maskrec): one record a request, never the value itself. A day is
@@ -24,7 +26,7 @@ export interface ValueRecord {
   /** Its last characters, where it is long enough to spare them. */
   tail?: string
   len: number
-  /** The places the request had it. */
+  /** How many times the request had it: the same place met twice counts twice (docs/adr/0028). */
   n: number
   /** Not masked, by the kind's action: sent as written (warn) or the request stopped (block). */
   action?: 'warn' | 'block'
@@ -33,6 +35,10 @@ export interface ValueRecord {
   after?: string
   /** Where in the request body that first place was. */
   at?: Place
+  /** Where else the request had it, past that first place, in the order met; `at` and these are at most MAX_RECORD_PLACES places (docs/adr/0028). */
+  elsewhere?: Place[]
+  /** Distinct places past MAX_RECORD_PLACES, left out of `elsewhere`, the count of them. */
+  elsewhereOmitted?: number
 }
 
 /** chat, embeddings, count or search, by the request's path. */
@@ -88,13 +94,47 @@ export interface MaskRecord {
  */
 export const MAX_RECORD_VALUES = 200
 
+/**
+ * The most places one value's record keeps, `at` counted. Each turn sends the
+ * whole history again, so a value a long conversation keeps echoing sits in
+ * one message after another; the record keeps each place once, up to this
+ * many, so one long session cannot swell every record after it
+ * (docs/adr/0028).
+ */
+export const MAX_RECORD_PLACES = 8
+
+/**
+ * Adds `at` to `v`'s places unless it is one already met, as long as the value
+ * has places to spare under MAX_RECORD_PLACES; the places past that only grow
+ * `elsewhereOmitted`, one a place, so neither a value sent over and over nor
+ * one echoed at the same place cannot lengthen the record without bound.
+ * `seen` holds every path met so far, the left-out ones too, so a repeat
+ * there is not counted twice (docs/adr/0028).
+ */
+function addPlace(v: ValueRecord, at: Place, seen: Map<string, Set<string>>): void {
+  const paths = seen.get(v.placeholder) ?? new Set<string>()
+  seen.set(v.placeholder, paths)
+  if (paths.has(at.path)) return
+  paths.add(at.path)
+  const elsewhere = v.elsewhere ?? (v.elsewhere = [])
+  // `at` is a place of its own when there is one, so this would be the (kept + 1)th
+  if ((v.at ? 1 : 0) + elsewhere.length + 1 > MAX_RECORD_PLACES) {
+    v.elsewhereOmitted = (v.elsewhereOmitted ?? 0) + 1
+    return
+  }
+  elsewhere.push(at)
+}
+
 /** The values of a request's hits, one per placeholder, in the order first found. */
 export function valuesOf(hits: readonly Hit[]): ValueRecord[] {
   const by = new Map<string, ValueRecord>()
+  const seen = new Map<string, Set<string>>()
   for (const h of hits) {
     const v = by.get(h.placeholder)
-    if (v) v.n++
-    else
+    if (v) {
+      v.n++
+      if (h.at) addPlace(v, h.at, seen)
+    } else {
       by.set(h.placeholder, {
         placeholder: h.placeholder,
         kind: h.kind,
@@ -108,6 +148,8 @@ export function valuesOf(hits: readonly Hit[]): ValueRecord[] {
         ...(h.after !== undefined ? { after: h.after } : {}),
         ...(h.at ? { at: h.at } : {}),
       })
+      if (h.at) seen.set(h.placeholder, new Set([h.at.path]))
+    }
   }
   return [...by.values()]
 }
