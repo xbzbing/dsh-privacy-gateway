@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
 import { failureText, resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
-import { bars, elsewhereText, hintOf, placeKey, placeLabel, timeLabel, took, type WarningKey } from './view.ts'
+import { bars, elsewhereText, hintOf, placeKey, placeLabel, stepLabel, stepOf, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 /** The signals worth a line of their own, one tinted line each with a warning icon. */
@@ -88,6 +88,7 @@ export function RecordHead(props: { t: T }): ReactNode {
     { className: 'pgw-rec pgw-rec--head', 'aria-hidden': true },
     h('span', null),
     h('span', null, t('recent.col.time')),
+    h('span', { title: t('recent.stepHint') }, t('recent.col.step')),
     h('span', null, t('recent.col.where')),
     h('span', null, t('recent.col.from')),
     h('span', { className: 'pgw-rec__num', title: t('recent.placesHint') }, t('recent.col.places')),
@@ -100,6 +101,9 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
   const { r, t } = props
   const [viewing, setViewing] = useState(false)
   const detailId = useId()
+  // where the request sat in its session: the turn and step the trajectory names it by (docs/adr/0030)
+  const at = stepOf(r)
+  const stepWords = at ? t('recent.stepAt', at) : ''
   // who it came from: the workspace and the session, by name where the host could tell them (docs/adr/0020)
   const from = [r.workspace, r.title ?? r.session].filter((x): x is string => typeof x === 'string' && x !== '').join(' · ')
   const places = r.failed
@@ -111,6 +115,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
   // the row's name reads each column with its head, as the visual heads above it say them
   const name = [
     [t('recent.col.time'), timeLabel(r.time)],
+    [t('recent.col.step'), stepWords],
     [t('recent.col.where'), [r.model ?? r.what, r.host].filter(Boolean).join(' · ')],
     [t('recent.col.from'), from],
     [t('recent.col.places'), placesWords],
@@ -134,6 +139,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
       },
       h(IconChevronRightOutlineRegular, { size: 12, className: 'pgw-rec__chevron' }),
       h('span', { className: 'pgw-rec__time' }, timeLabel(r.time)),
+      h('span', { className: 'pgw-rec__step', title: stepWords || undefined }, at ? stepLabel(at) : ''),
       h('span', { className: 'pgw-rec__where', title: [r.model, r.host].filter(Boolean).join(' · ') }, h('span', { className: 'pgw-rec__model' }, r.model ?? r.what), h('span', { className: 'pgw-rec__host' }, r.host)),
       h('span', { className: 'pgw-rec__from', title: from }, from),
       h('span', { className: 'pgw-rec__num' }, places),
@@ -144,6 +150,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
           'div',
           { className: 'pgw-detail', id: detailId },
           r.exfil ? h('div', { className: 'pgw-notice pgw-notice--error' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), t('recent.exfil', { hosts: (r.exfilHosts ?? []).join(', ') })) : null,
+          at ? h('div', { className: 'pgw-meta' }, stepWords) : null,
           r.values.length === 0
             ? h('div', { className: 'pgw-empty' }, t('recent.noValues'))
             : h(

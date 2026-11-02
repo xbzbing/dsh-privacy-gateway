@@ -574,3 +574,37 @@ test('pruning to fewer days drops them from the sums and the latest records, as 
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('a record keeps its turn and step, and one read back keeps only a pair the trajectory could name', async () => {
+  const dir = tmp()
+  try {
+    const day = dayOf(NOON)
+    const write = (line: Record<string, unknown>): string => JSON.stringify({ ...record(NOON), ...line })
+    writeFileSync(
+      join(dir, `${day}.jsonl`),
+      [
+        write({ turn: 4, step: 2 }),
+        write({ turn: 4 }),
+        write({ step: 2 }),
+        write({ turn: 0, step: 2 }),
+        write({ turn: 4.5, step: 2 }),
+        write({ turn: '4', step: '2' }),
+        write({ turn: 4, step: 2 ** 53 }),
+      ].join('\n') + '\n',
+    )
+    const s = store(dir)
+    await s.loaded
+    const kept = s.recent().map((r) => [r.turn, r.step])
+    assert.deepEqual(kept, [
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [4, 2],
+    ])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

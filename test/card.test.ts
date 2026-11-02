@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 
-import { afterRefresh, bars, bodyLines, elsewhereText, placeKey, placeLabel, readOverview, timeLabel, took, valuesKey, warnings } from '../src/client/view.ts'
+import { afterRefresh, bars, bodyLines, elsewhereText, placeKey, placeLabel, readOverview, stepLabel, stepOf, timeLabel, took, valuesKey, warnings } from '../src/client/view.ts'
 import { PACKAGE } from '../src/client/ids.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { DESCRIPTION_MARK, panelDecision, watchShowPanel, type ConfigForms } from '../src/client/panelConfig.ts'
@@ -201,6 +201,15 @@ test('a place also reads as the message it went in, short enough for the row', (
   assert.equal(placeLabel('.3'), '')
 })
 
+test('a record’s turn and step read as the trajectory numbers them, and not at all when it names none', () => {
+  assert.deepEqual(stepOf({ turn: 4, step: 2 }), { turn: 4, step: 2 })
+  assert.equal(stepLabel({ turn: 4, step: 2 }), '4·2')
+  assert.equal(stepLabel({ turn: 12, step: 30 }), '12·30')
+  for (const r of [{}, { turn: 4 }, { step: 2 }, { turn: 0, step: 2 }, { turn: 4, step: 0 }, { turn: 4.5, step: 2 }, { turn: '4', step: '2' }, { turn: 4, step: {} }, { turn: Number.NaN, step: 1 }, { turn: 4, step: Number.POSITIVE_INFINITY }]) {
+    assert.equal(stepOf(r), undefined, JSON.stringify(r))
+  }
+})
+
 /** A dictionary that keeps each key and its params apart, so the words tested are the ones the card picks. */
 function fakeT(k: string, p?: Record<string, string | number>): string {
   if (k === 'recent.placeSep') return '、'
@@ -348,6 +357,19 @@ test('an overview from another host version is filled in, not trusted as it is',
   // 40 distinct paths were given, 7 shown, and the 2 the host had already counted
   assert.equal(d?.elsewhereOmitted, 35)
   assert.equal(new Set(d?.elsewhere?.map((x) => x.path)).size, 7)
+  // the turn and step are drawn only when both are steps the trajectory counts (docs/adr/0030)
+  const stepped = (turn: unknown, step: unknown) =>
+    readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [], turn, step }] })?.recent[0]
+  const ok = stepped(4, 2)
+  assert.equal(ok?.turn, 4)
+  assert.equal(ok?.step, 2)
+  for (const [turn, step] of [[undefined, 2], [4, undefined], [0, 2], [4, 0], [4.5, 2], ['4', '2'], [4, {}], [{}, 2], [Number.NaN, 1], [4, Number.POSITIVE_INFINITY]] as const) {
+    const r = stepped(turn, step)
+    assert.equal(r?.turn, undefined, JSON.stringify([turn, step]))
+    // the two go together: neither is left behind as an object the row would draw
+    assert.equal(Object.hasOwn(r ?? {}, 'turn'), false, JSON.stringify([turn, step]))
+    assert.equal(Object.hasOwn(r ?? {}, 'step'), false, JSON.stringify([turn, step]))
+  }
 })
 
 test('a call fails with a code the page words itself, or the host’s own message', async () => {

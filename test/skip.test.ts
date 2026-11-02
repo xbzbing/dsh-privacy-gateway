@@ -13,7 +13,7 @@ import { makeSkip, routeStream } from '../src/providers.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
 
-type Listener = Parameters<NonNullable<PluginContext['on']>>[1]
+type Listener = (options: { provider?: unknown; sessionId?: unknown }, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>
 
 test('requests through the plugin’s own llm/stream listener are masked unless their provider is excluded', async () => {
   const bodies: string[] = []
@@ -37,8 +37,9 @@ test('requests through the plugin’s own llm/stream listener are masked unless 
   const ctx: PluginContext = {
     logger: { info() {}, warn() {}, error() {} },
     effect: (fn) => disposers.push(fn()),
-    on: (_name, l) => {
-      listener = l
+    // the plugin listens to session/event too, which this test does not feed
+    on: (name: string, l: unknown) => {
+      if (name === 'llm/stream') listener = l as Listener
     },
   }
   try {

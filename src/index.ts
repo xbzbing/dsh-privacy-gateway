@@ -9,6 +9,7 @@ import { makeSkip, routeStream } from './providers.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
 import { SessionSwitches } from './sessions.ts'
+import { StepBook } from './steps.ts'
 import { ViewStore } from './views.ts'
 import { loadKey } from './redact/key.ts'
 
@@ -19,6 +20,34 @@ import { loadKey } from './redact/key.ts'
  * back as the values. Disposal (plugin reload, unload, shutdown) puts the
  * previous dispatcher back.
  */
+
+/** The subject of a `session/event`: the plugin reads the session's id and nothing else. */
+export interface SessionLike {
+  id?: unknown
+}
+
+/** One committed entry of a session's log, as far as the plugin reads it (docs/adr/0030). */
+export interface SessionEventLike {
+  type?: unknown
+  data?: { turn?: unknown; step?: unknown }
+}
+
+/** What the host tells the `llm/stream` waterfall about a call. */
+export interface StreamCall {
+  provider?: unknown
+  sessionId?: unknown
+}
+
+/** The listener `llm/stream` runs around a model call. */
+export type StreamListener = (call: StreamCall, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>
+
+/** The host events the plugin listens to. */
+export interface PluginEvents {
+  /** A waterfall around each model call. */
+  (name: 'llm/stream', listener: StreamListener): unknown
+  /** Each entry a session appends, `step/start` among them. */
+  (name: 'session/event', listener: (session: SessionLike, event: SessionEventLike) => void): unknown
+}
 
 // Minimal structural typing against the host ctx; keeps the plugin independent
 // of the exact @deepseek-ai/cordis version DSH ships.
@@ -32,8 +61,8 @@ export interface PluginContext {
   get?(name: string): unknown
   /** cordis: load a plugin (here the card's Remote service) under this one. */
   plugin?(plugin: unknown, config?: unknown): unknown
-  /** cordis: listen to an event; `llm/stream` is a waterfall around each model call. */
-  on?(name: 'llm/stream', listener: (options: { provider?: unknown; sessionId?: unknown }, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>): unknown
+  /** cordis: listen to a host event. */
+  on?: PluginEvents
   /** dsh: the profile this instance runs from; absent in a run with no profile (state then goes to ~/.dsh). */
   profileContext?: { dir?: string }
 }
@@ -104,6 +133,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   })
   // the vendor view keeps the bodies as they went, in memory only, while vendorView is on
   const views = new ViewStore()
+  // the turn and step each session is at, read from the host's own log (docs/adr/0030)
+  const stepBook = new StepBook()
   // sessions the user turned masking off for, from the session's Privacy tab (docs/adr/0023)
   const sessions = new SessionSwitches({ file: join(home, 'sessions.json'), logger: ctx.logger })
   const optional = (name: string): unknown => {
@@ -152,7 +183,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     return out
   }
   const excludedProviders = (): string[] => liveStrings(config.excludeProviders)
-  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, views, names })
+  const engine = new PrivacyEngine(key, cfg, { records, logger: ctx.logger, views, names, steps: (session) => stepBook.at(session) })
   // the config as it is now: a change the configuration page made is applied here, before the
   // request that first sees it (docs/adr/0021); reading it is cheap, rebuilding happens on a change only
   let mark = liveMark(cfg)
@@ -270,7 +301,11 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       (err: unknown) => ctx.logger.warn('dsh-privacy-gateway: the settings card has no data (typert is not there)', err),
     )
   }
-  ctx.on?.('llm/stream', (options, next) => routeStream(options?.provider, excludedProviders(), next, options?.sessionId))
+  // Where each session is in its turns: the host appends `step/start` to the session's log before it makes the
+  // call, and this feed hands each entry over, so a record can name the turn and step it went in (docs/adr/0030).
+  // An unscoped listener is admitted for every scope, so a subagent's sessions are read too.
+  ctx.on?.('session/event', (session, event) => stepBook.observe(session, event))
+  ctx.on?.('llm/stream', (call, next) => routeStream(call?.provider, excludedProviders(), next, call?.sessionId))
   ctx.effect(() => {
     // `/privacy off` is a bypass too: a request then goes as it is, and a WebSocket may open (docs/adr/0025)
     const skip = makeSkip({ enabled: () => engine.active && current().enabled, sessionOff: (session) => sessions.isOff(session) })

@@ -49,7 +49,7 @@ const CSS = `
 .pgw-recs{display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
 .pgw-recs__list{display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
 .pgw-recs__item{display:flex;flex-direction:column}
-.pgw-rec{box-sizing:border-box;display:grid;grid-template-columns:16px 76px minmax(0,200px) minmax(0,1fr) 64px 64px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
+.pgw-rec{box-sizing:border-box;display:grid;grid-template-columns:16px 76px 56px minmax(0,200px) minmax(0,1fr) 64px 64px;gap:8px;align-items:center;width:100%;min-height:40px;padding:6px 12px;font:inherit;font-size:12px;text-align:left;background:none;border:none;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);cursor:pointer}
 .pgw-rec--head{min-height:30px;border-top:none;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-weight:500;cursor:default}
 @media (hover:hover){.pgw-rec:not(.pgw-rec--head):hover{background:var(--dsw-alias-interactive-bg-hover)}}
 .pgw-rec--open{background:var(--dsw-alias-bg-layer-2)}
@@ -57,6 +57,7 @@ const CSS = `
 .pgw-rec__chevron{color:var(--dsw-alias-label-tertiary);transition:transform .15s}
 .pgw-rec--open .pgw-rec__chevron{transform:rotate(90deg)}
 .pgw-rec__time{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.pgw-rec__step{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pgw-rec__where{display:flex;flex-direction:column;min-width:0;line-height:16px}
 .pgw-rec__model,.pgw-rec__host,.pgw-rec__from{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pgw-rec__host{font-size:11px;color:var(--dsw-alias-label-tertiary)}
@@ -79,7 +80,7 @@ const CSS = `
 .pgw-ctx__mark{margin:0 1px;padding:0 2px;font-size:11px;border-radius:3px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 16%,transparent);color:var(--dsw-alias-label-primary)}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:2px}
 .pgw-pager__at{min-width:56px;text-align:center;font-variant-numeric:tabular-nums}
-@media (max-width:640px){.pgw-rec{grid-template-columns:16px 64px minmax(0,1fr) 56px 56px}.pgw-rec__from{display:none}.pgw-rec--head>:nth-child(4){display:none}}
+@media (max-width:640px){.pgw-rec{grid-template-columns:16px 64px minmax(0,1fr) 56px 56px}.pgw-rec__from,.pgw-rec__step{display:none}.pgw-rec--head>:nth-child(3),.pgw-rec--head>:nth-child(5){display:none}}
 .pgw-cfg{display:flex;flex-direction:column;gap:12px;container-type:inline-size}
 .pgw-cfg__folds{display:flex;flex-direction:column;gap:8px}
 .pgw-fold{border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg)}

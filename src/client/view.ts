@@ -161,6 +161,44 @@ function readValue(v: MaskRecord['values'][number]): ValueRecord | undefined {
 }
 
 /**
+ * The turn and step a record names, when it names both: a record written
+ * before the gateway read them, and one from a call outside a step, name
+ * none. Both are counted from 1, as the trajectory counts them.
+ */
+export function stepOf(r: { turn?: unknown; step?: unknown }): { turn: number; step: number } | undefined {
+  const turn = r.turn
+  const step = r.step
+  if (typeof turn !== 'number' || typeof step !== 'number') return undefined
+  if (!Number.isSafeInteger(turn) || !Number.isSafeInteger(step) || turn < 1 || step < 1) return undefined
+  return { turn, step }
+}
+
+/** A record's step as the list shows it: turn and step, short, the words in its title (docs/adr/0030). */
+export function stepLabel(at: { turn: number; step: number }): string {
+  return `${at.turn}·${at.step}`
+}
+
+/**
+ * A record as the list draws it: its counts as counts, its places as places
+ * and its step, when it names one, as a step, so a record written by another
+ * version cannot break the card.
+ */
+function readRecord(r: MaskRecord): MaskRecord {
+  const { valuesOmitted, turn, step, ...rest } = r
+  const omitted = count(valuesOmitted)
+  const at = stepOf({ turn, step })
+  return {
+    ...rest,
+    n: count(r.n),
+    restored: count(r.restored),
+    unmapped: count(r.unmapped),
+    values: r.values.map(readValue).filter((v): v is ValueRecord => v !== undefined),
+    ...(omitted > 0 ? { valuesOmitted: omitted } : {}),
+    ...(at ?? {}),
+  }
+}
+
+/**
  * The overview the host half answered, with each range's sums filled in and
  * the records the list cannot draw left out, so a host of another version
  * cannot break the card; undefined when it is not an overview at all.
@@ -175,10 +213,7 @@ export function readOverview(o: unknown): Overview | undefined {
     ...(o as unknown as Overview),
     values: count(o.values),
     stats: { today, week, month, failStreak: count(o.stats.failStreak) },
-    recent: o.recent.filter(isRecord).map(({ valuesOmitted, ...r }) => {
-      const omitted = count(valuesOmitted)
-      return { ...r, n: count(r.n), restored: count(r.restored), unmapped: count(r.unmapped), values: r.values.map(readValue).filter((v): v is ValueRecord => v !== undefined), ...(omitted > 0 ? { valuesOmitted: omitted } : {}) }
-    }),
+    recent: o.recent.filter(isRecord).map(readRecord),
     ...(Array.isArray(o.views) ? { views: o.views.filter((k): k is number => typeof k === 'number') } : {}),
   }
 }

@@ -62,6 +62,10 @@ export interface MaskRecord {
   title?: string
   /** The workspace that session belongs to, by name. */
   workspace?: string
+  /** The turn the session was in, as its last `step/start` said (docs/adr/0030). */
+  turn?: number
+  /** The step of that turn; the two are always there together. */
+  step?: number
   /** Values swapped, each place counted. */
   n: number
   /** Places sent as written by a warn action. */
@@ -258,6 +262,16 @@ function parseRecord(line: string): MaskRecord | undefined {
     if (typeof r.exfil !== 'number') delete r.exfil
     if (typeof r.exfilBlocked !== 'number') delete r.exfilBlocked
     if (typeof r.valuesOmitted !== 'number') delete r.valuesOmitted
+    // a step is one the trajectory counts from 1; a record of another version may say none, or not a step at all
+    for (const k of ['turn', 'step'] as const) {
+      const n = r[k]
+      if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1) delete r[k]
+    }
+    // the two go together: one without the other names no place in the trajectory
+    if (r.turn === undefined || r.step === undefined) {
+      delete r.turn
+      delete r.step
+    }
     r.tookMs = typeof r.tookMs === 'number' ? r.tookMs : 0
     r.host = typeof r.host === 'string' ? r.host : ''
     return r

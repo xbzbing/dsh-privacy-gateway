@@ -67,6 +67,8 @@ export interface EngineOptions {
   views?: ViewStore
   /** The names a record keeps beside the session id: its title and its workspace (docs/adr/0020). */
   names?: (session: string) => { title?: string; workspace?: string }
+  /** The turn and step that session was at when the request went (docs/adr/0030). */
+  steps?: (session: string) => { turn: number; step: number } | undefined
 }
 
 function isLoopback(host: string): boolean {
@@ -91,6 +93,7 @@ export class PrivacyEngine implements RedactionEngine {
   readonly #logger: EngineLogger | undefined
   readonly views: ViewStore | undefined
   readonly #names: ((session: string) => { title?: string; workspace?: string }) | undefined
+  readonly #steps: ((session: string) => { turn: number; step: number } | undefined) | undefined
   /** `/privacy off` turns masking off until `/privacy on` or a restart; the config stays as it is. */
   active = true
 
@@ -102,6 +105,7 @@ export class PrivacyEngine implements RedactionEngine {
     this.#keepViews = config.vendorView
     this.#logger = options.logger
     this.#names = options.names
+    this.#steps = options.steps
     this.views = options.views
     this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
   }
@@ -156,7 +160,7 @@ export class PrivacyEngine implements RedactionEngine {
       what: whatOf(info.path),
       host: info.host,
       ...(isLoopback(info.host) ? { relay: true as const } : {}),
-      ...(info.session ? { session: info.session, ...this.#names?.(info.session) } : {}),
+      ...(info.session ? { session: info.session, ...this.#names?.(info.session), ...this.#steps?.(info.session) } : {}),
     })
     let r: MaskResult | null
     try {

@@ -22,6 +22,8 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 interface Harness {
   source: OverviewSource
   logs: string[]
+  /** Appends one entry to SESSION's log, as the host does before it makes a call. */
+  emit(session: string, type: string, data?: unknown): void
   /** Sends one chat request for SESSION through the gateway. */
   send(content: string): Promise<void>
   /** Disposes the plugin and waits for its records on disk. */
@@ -50,6 +52,7 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
     workspaceRegistry: { list: () => [{ title: names.workspace, sessionIds: [SESSION] }] },
   }
   let source: OverviewSource | undefined
+  let feed: ((session: { id?: unknown }, event: { type?: unknown; data?: unknown }) => void) | undefined
   const logger = { info: (...a: unknown[]) => logs.push(a.map(String).join(' ')), warn: (...a: unknown[]) => logs.push(a.map(String).join(' ')), error: () => {} }
   let closed = false
   const close = async (wait = true): Promise<string> => {
@@ -60,7 +63,18 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
     return existsSync(dir) ? readdirSync(dir).map((f) => readFileSync(join(dir, f), 'utf8')).join('') : ''
   }
   try {
-    apply({ logger, effect: (fn) => disposers.push(fn()), get: (name) => services[name], plugin: (_cls, s) => (source = s as OverviewSource) }, config)
+    apply(
+      {
+        logger,
+        effect: (fn) => disposers.push(fn()),
+        get: (name: string) => services[name],
+        plugin: (_cls: unknown, s: unknown) => (source = s as OverviewSource),
+        on: (name: string, l: unknown) => {
+          if (name === 'session/event') feed = l as typeof feed
+        },
+      },
+      config,
+    )
     for (let i = 0; i < 200 && !source; i++) await new Promise((r) => setTimeout(r, 5))
     assert.ok(source, 'the Remote source is handed to ctx.plugin')
     const send = async (content: string): Promise<void> => {
@@ -68,7 +82,10 @@ async function withPlugin(config: PrivacyGatewayConfig, names: { title: string; 
       assert.equal(res.status, 200)
       await res.text()
     }
-    await run({ source, logs, send, close: () => close() })
+    const emit = (session: string, type: string, data?: unknown): void => {
+      feed?.({ id: session }, { type, data })
+    }
+    await run({ source, logs, emit, send, close: () => close() })
   } finally {
     await close(false)
     await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -150,5 +167,43 @@ test('a session id from the browser is checked, and logged quoted', async () => 
     assert.ok(line?.includes('"odd\\nid"'), line)
     assert.ok(!line?.includes('\n'))
     h.source.setSessionMasking?.('odd\nid', true)
+  })
+})
+
+test('a record names the turn and step its request went in, and none for a request outside a step', async () => {
+  await withPlugin({}, { title: 't', workspace: 'w' }, async (h) => {
+    // nothing has named a step for this session yet
+    await h.send(`key ${SENTINEL}`)
+    assert.deepEqual(
+      [h.source.overview(50).recent[0]?.turn, h.source.overview(50).recent[0]?.step],
+      [undefined, undefined],
+      'no step before one starts',
+    )
+    h.emit(SESSION, 'step/start', { turn: 3, step: 2 })
+    await h.send(`key ${SENTINEL}`)
+    const rec = h.source.overview(50).recent[0]
+    assert.equal(rec?.turn, 3)
+    assert.equal(rec?.step, 2)
+    // another session's step is its own: this one stays where its last step left it
+    h.emit('sess-other', 'step/start', { turn: 9, step: 9 })
+    // an entry that is not a step/start leaves the book as it is
+    h.emit(SESSION, 'step/end', { turn: 4, step: 1 })
+    h.emit(SESSION, 'tool/call', { turn: 4, step: 1 })
+    await h.send(`key ${SENTINEL}`)
+    const last = h.source.overview(50).recent[0]
+    assert.equal(last?.turn, 3)
+    assert.equal(last?.step, 2)
+  })
+})
+
+test('a session/event that names no usable step is not read as one', async () => {
+  await withPlugin({}, { title: 't', workspace: 'w' }, async (h) => {
+    for (const data of [undefined, {}, { turn: 1 }, { step: 1 }, { turn: 0, step: 1 }, { turn: 1.5, step: 1 }, { turn: '1', step: '1' }, { turn: 1, step: -1 }]) {
+      h.emit(SESSION, 'step/start', data)
+    }
+    await h.send(`key ${SENTINEL}`)
+    const rec = h.source.overview(50).recent[0]
+    assert.equal(rec?.turn, undefined)
+    assert.equal(rec?.step, undefined)
   })
 })
