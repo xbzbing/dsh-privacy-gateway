@@ -26,6 +26,8 @@ export interface MaskOptions {
   shape?: boolean
   /** Each hit of a request body says where it was and the text around it, as sent (docs/adr/0024). */
   context?: boolean
+  /** A JSON key that reads as a value is masked too, the protocol's own keys aside (docs/adr/0029). */
+  maskKeys?: boolean
 }
 
 /** Where in a request body a value was: the string's dotted path, and the role and block type around it. */
@@ -172,6 +174,17 @@ function keepIn(path: string, key: string, s: string, args: string[], defs: stri
   return KEPT.has(key) || isID(key)
 }
 
+/**
+ * Whether a key goes as it is: the protocol's own keys (a masked `role` or
+ * `type` is a request the vendor cannot read), the keys the agent defines for
+ * the vendor to read as structure, and a tool call's argument names, which are
+ * the tool's own schema (docs/adr/0029).
+ */
+function keepKey(path: string, name: string, args: string[], defs: string[]): boolean {
+  if (KEPT.has(name) || isID(name)) return true
+  return under(path, args) || under(path, defs)
+}
+
 function overlaps(f: { start: number; end: number }, r: Range): boolean {
   return f.start < r.end && f.end > r.start
 }
@@ -261,6 +274,18 @@ export class Masker {
   /** maskText with nothing remembered: each value goes as the placeholder it would have (`/privacy test`). */
   preview(raw: string): MaskResult {
     const pass: Pass = { route: '', preview: true, hits: [] }
+    const { text, n } = this.#mask(raw, false, [], pass)
+    return { text, n, hits: pass.hits }
+  }
+
+  /**
+   * The key `raw` as it goes, masked like any other string: it has no text
+   * around it to keep and no place of its own, so the caller names where it
+   * was. A key that reads as no value comes back as it is, with no hits
+   * (docs/adr/0029).
+   */
+  maskKey(raw: string, route: string): MaskResult {
+    const pass: Pass = { route, preview: false, hits: [] }
     const { text, n } = this.#mask(raw, false, [], pass)
     return { text, n, hits: pass.hits }
   }
@@ -397,15 +422,41 @@ export class Masker {
     const { protectTools, protectEnvBlock } = this.#options
     const pass: Pass = { route, preview: false, hits: [], warned: [] }
     let n = 0
-    const out = walkJSON(body, (path, key, s) => {
-      if (protectTools && under(path, TOOL_ROOTS)) return s
-      if (keepIn(path, key, s, args, defs)) return s
-      if (this.#options.context) pass.at = placeOf(doc, path)
-      const r = this.#mask(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [], pass)
-      n += r.n
-      // spliced into the literal as written, so what is not masked keeps its escapes
-      return r.edits
-    })
+    /**
+     * A key that reads as a value is masked as one, and recorded as one; the
+     * ones the request's own structure needs go as they are, so masking a key
+     * never leaves the vendor a body it cannot read (docs/adr/0029).
+     */
+    const keyFn = (path: string, shown: string, name: string): string | undefined => {
+      if (!this.#options.maskKeys) return undefined
+      if (protectTools && under(path, TOOL_ROOTS)) return undefined
+      if (keepKey(path, name, args, defs)) return undefined
+      const r = this.maskKey(name, route)
+      if (r.hits.length > 0) {
+        // the key's own place is where its value is, named the way the body had
+        // it: a key sent as written (warn, block) goes by its placeholder there,
+        // so the record never names it (docs/adr/0024, 0029)
+        const shownKey = r.text === name ? (r.hits[0]?.placeholder ?? name) : r.text
+        const at: Place = { ...placeOf(doc, path), path: shown === '' ? shownKey : `${shown}.${shownKey}` }
+        for (const h of r.hits) pass.hits.push({ ...h, at })
+      }
+      // a key masked is a place masked, as the record counts them
+      if (r.text !== name) n += r.n
+      return r.text === name ? undefined : r.text
+    }
+    const out = walkJSON(
+      body,
+      (path, shown, key, s) => {
+        if (protectTools && under(path, TOOL_ROOTS)) return s
+        if (keepIn(path, key, s, args, defs)) return s
+        if (this.#options.context) pass.at = shown === path ? placeOf(doc, path) : { ...placeOf(doc, path), path: shown }
+        const r = this.#mask(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [], pass)
+        n += r.n
+        // spliced into the literal as written, so what is not masked keeps its escapes
+        return r.edits
+      },
+      keyFn,
+    )
     // JSON.parse took it, so the walker must too: anything else is our bug
     if (out === null) throw new Error('request body is JSON but could not be walked')
     const model = typeof doc.model === 'string' ? doc.model : undefined

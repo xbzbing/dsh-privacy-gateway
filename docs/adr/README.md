@@ -41,3 +41,4 @@
 | [ADR-0026](0026-file-name-values.md) | 字段值是一个文件名时不算密钥 | Accepted | 脱敏 |
 | [ADR-0027](0027-per-instance-state.md) | 状态目录按实例隔离 | Accepted | 架构 |
 | [ADR-0028](0028-record-every-place.md) | 记录一个值出现过的每一处，界面按消息序号标出 | Accepted | 界面 |
+| [ADR-0029](0029-mask-json-keys.md) | 脱敏也作用于 JSON 键 | Accepted | 脱敏 |

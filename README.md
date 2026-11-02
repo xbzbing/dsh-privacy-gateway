@@ -56,6 +56,7 @@ someone@gmail.com                                                    → EMAIL
 - 文档域名（`example.com`、`.example`）不算邮箱；手机号要 11 位、身份证要过校验位、银行卡要过 Luhn，否则不换。
 - 字段的值是一个文件名时不是密钥：只由文件名的字符组成、且扩展名是已知的文件类型（模型权重 `safetensors`/`gguf`/`ckpt` 等、压缩包、图片音视频、文档数据），原样发出（[ADR-0026](docs/adr/0026-file-name-values.md)）。
 - 同一个值重复出现，占位符相同。
+- 键名和值一样脱敏：`{"metadata": {"sk-…": …}}` 里的键名也换成占位符，回复里再换回来；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名不动（[ADR-0029](docs/adr/0029-mask-json-keys.md)）。
 
 ## 界面
 
@@ -65,7 +66,7 @@ someone@gmail.com                                                    → EMAIL
 
 ## 配置
 
-插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 profile 的 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里改，写在 `id: dsh-privacy-gateway` 那一行的 `config` 下；插件包自带的 `cordis.patch.yml` 升级时会被覆盖，不要改它。
+插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`maskKeys`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 profile 的 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里改，写在 `id: dsh-privacy-gateway` 那一行的 `config` 下；插件包自带的 `cordis.patch.yml` 升级时会被覆盖，不要改它。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -75,6 +76,7 @@ someone@gmail.com                                                    → EMAIL
 | `words` | `[]` | 自己的词（项目代号、客户名），按原样换成 `TERM` 占位符 |
 | `allow` | `[]` | 永不脱敏的值：整值匹配，不分大小写 |
 | `actions` | `{}` | 按 kind 选动作：`mask`（默认，换成占位符）、`warn`（照发并记一条）、`block`（整个请求不发）。例：`{ PRIVATE_KEY: block, EMAIL: warn }`（[ADR-0013](docs/adr/0013-actions.md)） |
+| `maskKeys` | `true` | 读起来像密钥或个人信息的 **JSON 键名**也换成占位符（`{"sk-…": …}`）；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名永不动，否则供应商读不懂请求。关闭后这类键名原样发出（[ADR-0029](docs/adr/0029-mask-json-keys.md)） |
 | `toolGuard` | `off` | 工具调用参数里还原出值、又指向本机以外的 host 时怎么办：`off` 只计数，`warn` 告警并记一条，`block` 这次调用的参数里不还原，工具拿到占位符（[ADR-0014](docs/adr/0014-tool-guard.md)） |
 | `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `{{…}}` 占位符；不足 8 个字符、或含字母数字与 `-` `_` `.` 以外字符的值仍用占位符；回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
 | `cookieNames` | `[]` | 追加要脱敏的 cookie 名 |

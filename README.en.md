@@ -56,6 +56,7 @@ someone@gmail.com                                                    → EMAIL
 - A documentation domain (`example.com`, `.example`) is no email; a phone number needs 11 digits, an ID card its check digit, a bank card its Luhn sum.
 - A field's value is no secret when it is a file's name: only a file name's characters, and an extension of a known kind (model weights such as `safetensors`, `gguf`, `ckpt`, archives, pictures, sound and video, documents and data); it goes out as it is ([ADR-0026](docs/adr/0026-file-name-values.md)).
 - One value seen again gets the same placeholder.
+- A key is masked the way a value is: the key in `{"metadata": {"sk-…": …}}` goes as a placeholder and comes back in the reply. The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched ([ADR-0029](docs/adr/0029-mask-json-keys.md)).
 
 ## Screens
 
@@ -67,7 +68,7 @@ The screenshots show the Chinese interface.
 
 ## Configuration
 
-The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in the profile's `~/.dsh/profiles/<profile>/cordis.patch.yml`, under `config` of the `id: dsh-privacy-gateway` row; the `cordis.patch.yml` shipped in the package is replaced on upgrade, so do not edit it.
+The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `maskKeys`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in the profile's `~/.dsh/profiles/<profile>/cordis.patch.yml`, under `config` of the `id: dsh-privacy-gateway` row; the `cordis.patch.yml` shipped in the package is replaced on upgrade, so do not edit it.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -77,6 +78,7 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `words` | `[]` | Your own words (a project's code name, a customer's name), masked as written as `TERM` |
 | `allow` | `[]` | Values never masked: whole values, in any case |
 | `actions` | `{}` | An action per kind: `mask` (the default, a placeholder), `warn` (sent as written and recorded) or `block` (the whole request is not sent). For example `{ PRIVATE_KEY: block, EMAIL: warn }` ([ADR-0013](docs/adr/0013-actions.md)) |
+| `maskKeys` | `true` | A **JSON key** that reads like a secret or personal data goes as a placeholder too (`{"sk-…": …}`). The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched, or the vendor could not read the request. When off, such keys go as they are ([ADR-0029](docs/adr/0029-mask-json-keys.md)) |
 | `toolGuard` | `off` | When a tool call's arguments would have a value restored and name a host off this machine: `off` only counts it, `warn` logs and records it, `block` leaves the placeholders in that call's arguments, so the tool gets the placeholder ([ADR-0014](docs/adr/0014-tool-guard.md)) |
 | `shape` | `false` | Send a key as a made-up key of its own form (same prefix, length and kinds of character) instead of a `{{…}}` placeholder; a value under 8 characters, or holding anything but letters, digits, `-`, `_` and `.`, keeps the placeholder; replies put it back the same way ([ADR-0015](docs/adr/0015-shape.md)) |
 | `cookieNames` | `[]` | More cookie names to mask |

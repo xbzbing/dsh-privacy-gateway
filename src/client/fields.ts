@@ -30,7 +30,7 @@ interface Base<K extends string> {
 }
 
 export type FieldSpec =
-  | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
+  | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'maskKeys' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
   | (Base<'toolGuard'> & { kind: 'choice'; choices: readonly string[]; default: string })
   | (Base<'words' | 'allow'> & { kind: 'list'; default: readonly string[]; anyCase: boolean; risky: 'add' | 'remove' })
   | (Base<'keepDays'> & { kind: 'count'; min: number; default: number })
@@ -44,6 +44,8 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'personal', group: 'mask', kind: 'switch', default: false, half: true, risk: 'send' },
   { key: 'shape', group: 'mask', kind: 'switch', default: false, half: true },
   { key: 'toolGuard', group: 'mask', kind: 'choice', choices: ['off', 'warn', 'block'], default: 'off', half: true },
+  // keys travel to the vendor too: off sends a secret used as a key as it is (docs/adr/0029)
+  { key: 'maskKeys', group: 'mask', kind: 'switch', default: true, risk: 'send' },
   // words are matched as written, allow in any case (README, config.ts)
   // a word taken out of words, like a value put into allow, goes as it is from then on
   { key: 'words', group: 'lists', kind: 'list', default: [], anyCase: false, half: true, risk: 'send', risky: 'remove' },

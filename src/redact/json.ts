@@ -1,12 +1,20 @@
 /**
  * A byte-preserving JSON string walker, after magpie's internal/redact/json.go
- * `walk`: `fn` is called with every string value (its dotted path, the key it
- * is under, and its decoded text), and only the strings whose text `fn`
- * changes are written again. Everything else, whitespace and escapes included,
- * comes back exactly as it was, so the parts of a request nobody masked stay
- * byte for byte what the agent sent.
+ * `walk`: `fn` is called with every string value (its dotted path, the same
+ * path as it goes once keys are rewritten, the key it is under, and its
+ * decoded text), and only the strings whose text `fn` changes are written
+ * again. Everything else, whitespace and escapes included, comes back exactly
+ * as it was, so the parts of a request nobody masked stay byte for byte what
+ * the agent sent.
  */
-export type StringFn = (path: string, key: string, value: string) => string | readonly Edit[]
+export type StringFn = (path: string, shown: string, key: string, value: string) => string | readonly Edit[]
+
+/**
+ * A key as it goes, or undefined to keep it: `path` is where the object
+ * holding it is, `shown` the same path as the keys rewritten so far read
+ * (docs/adr/0029).
+ */
+export type KeyFn = (path: string, shown: string, name: string) => string | undefined
 
 /**
  * A change to one string's decoded text: `text` in place of value[start:end].
@@ -31,7 +39,7 @@ function rawOffsets(text: string, i: number, end: number): Int32Array {
 }
 
 /** The walked text, or null when `text` is not one JSON value. */
-export function walkJSON(text: string, fn: StringFn): string | null {
+export function walkJSON(text: string, fn: StringFn, keyFn?: KeyFn): string | null {
   const out: string[] = []
   let last = 0
 
@@ -71,7 +79,7 @@ export function walkJSON(text: string, fn: StringFn): string | null {
 
   const join = (path: string, k: string): string => (path === '' ? k : `${path}.${k}`)
 
-  const value = (i: number, path: string, key: string): number => {
+  const value = (i: number, path: string, shown: string, key: string): number => {
     if (i >= text.length) return -1
     const c = text[i]
     if (c === '{') {
@@ -79,13 +87,23 @@ export function walkJSON(text: string, fn: StringFn): string | null {
       if (text[i] === '}') return i + 1
       for (;;) {
         if (text[i] !== '"') return -1
+        const at = i
         const k = str(i)
         if (k.end < 0) return -1
         const name = decode(i, k.end, k.escaped)
         if (name === undefined) return -1
+        // a key the caller rewrites goes again as it read, and its subtree's
+        // shown path follows, so a record names what was sent (docs/adr/0029)
+        const named = keyFn?.(path, shown, name)
+        const childPath = join(path, name)
+        const childShown = shown === path && (named === undefined || named === name) ? childPath : join(shown, named ?? name)
+        if (named !== undefined && named !== name) {
+          out.push(text.slice(last, at), JSON.stringify(named))
+          last = k.end
+        }
         i = ws(k.end)
         if (text[i] !== ':') return -1
-        i = value(ws(i + 1), join(path, name), name)
+        i = value(ws(i + 1), childPath, childShown, name)
         if (i < 0) return -1
         i = ws(i)
         if (text[i] === ',') {
@@ -100,8 +118,9 @@ export function walkJSON(text: string, fn: StringFn): string | null {
       i = ws(i + 1)
       if (text[i] === ']') return i + 1
       for (let n = 0; ; n++) {
+        const childPath = join(path, String(n))
         // an array's strings are under the key the array is
-        i = value(i, join(path, String(n)), key)
+        i = value(i, childPath, shown === path ? childPath : join(shown, String(n)), key)
         if (i < 0) return -1
         i = ws(i)
         if (text[i] === ',') {
@@ -117,7 +136,7 @@ export function walkJSON(text: string, fn: StringFn): string | null {
       if (s.end < 0) return -1
       const v = decode(i, s.end, s.escaped)
       if (v === undefined) return -1
-      const t = fn(path, key, v)
+      const t = fn(path, shown, key, v)
       if (typeof t !== 'string') {
         if (t.length === 0) return s.end
         // only the edits are written anew: the bytes between them are the literal's own
@@ -138,7 +157,7 @@ export function walkJSON(text: string, fn: StringFn): string | null {
     return j === i ? -1 : j
   }
 
-  const end = value(ws(0), '', '')
+  const end = value(ws(0), '', '', '')
   if (end < 0 || ws(end) !== text.length) return null
   if (last === 0) return text
   out.push(text.slice(last))

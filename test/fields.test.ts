@@ -126,7 +126,7 @@ const field = (k: FieldSpec['key']): FieldSpec => FIELDS.find((f) => f.key === k
 
 test('the changes that send content as it is or delete kept data are the ones confirmed', () => {
   const risky = FIELDS.filter((f) => f.risk).map((f) => `${f.key}:${f.risk}`)
-  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'keepDays:delete', 'personal:send', 'record:delete', 'secrets:send', 'vendorView:delete', 'words:send'])
+  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'secrets:send', 'vendorView:delete', 'words:send'])
   // a switch only when turned off, from its default too
   assert.deepEqual(riskOf(field('enabled'), undefined, false), { risk: 'send' })
   assert.equal(riskOf(field('enabled'), false, true), undefined)

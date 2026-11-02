@@ -184,7 +184,7 @@ function jsonData(text: string): boolean {
 /** What says which text an event goes on with: its type, its item and the indexes it has. */
 function eventCtx(data: string): string {
   let b = ''
-  walkJSON(data, (path, _k, s) => {
+  walkJSON(data, (path, _shown, _k, s) => {
     if (path === 'type' || path === 'item_id') b += `${path}=${s};`
     return s
   })
@@ -200,7 +200,7 @@ function eventCtx(data: string): string {
 
 function typeOf(data: string): string {
   let t = ''
-  walkJSON(data, (path, _k, s) => {
+  walkJSON(data, (path, _shown, _k, s) => {
     if (path === 'type') t = s
     return s
   })
@@ -304,7 +304,7 @@ export class Restorer {
     if (this.#table.size === 0 || (this.#table.shapes === 0 && !text.includes('_'))) return text
     const type = typeOf(text)
     const leave = this.#guard !== 'off' && this.#judge(toolText(text, type) ?? '', tally) && this.#guard === 'block'
-    const out = walkJSON(text, (path, key, s) => {
+    const out = walkJSON(text, (path, _shown, key, s) => {
       if (SIGNATURE_KEYS.has(key)) return s
       const tool = inToolCall(path, key, type)
       return this.restoreText(s, asJSON(key, type), tally, tool, leave && tool)
@@ -387,7 +387,7 @@ export class Restorer {
         const p = pending
         pending = undefined
         let present = 0
-        walkJSON(e.data, (path, _k, s) => {
+        walkJSON(e.data, (path, _shown, _k, s) => {
           if (p.tails.has(path)) present++
           return s
         })
@@ -399,7 +399,7 @@ export class Restorer {
       const type = typeOf(e.data) || e.name
       let tails: Map<string, string> | undefined
       let cuts: Map<string, string> | undefined
-      const restored = walkJSON(e.data, (path, key, s) => {
+      const restored = walkJSON(e.data, (path, _shown, key, s) => {
         const c = carry?.get(path)
         if (c !== undefined) s = c + s
         if (sealedText(key, s)) return s
@@ -422,7 +422,7 @@ export class Restorer {
       if (restored === null || full === undefined) return out + loose(ev, leave)
       if (!tails || !cuts) return out + full
       const cutMap = cuts
-      const cutData = walkJSON(restored, (path, _k, s) => cutMap.get(path) ?? s) ?? restored
+      const cutData = walkJSON(restored, (path, _shown, _k, s) => cutMap.get(path) ?? s) ?? restored
       const cut = e.render(cutData)
       if (cut === undefined) return out + full
       pending = { ctx, tails, full, cut }
@@ -494,7 +494,7 @@ export class Restorer {
  */
 function toolText(data: string, type: string, sep = '\n'): string | undefined {
   let t: string | undefined
-  walkJSON(data, (path, key, s) => {
+  walkJSON(data, (path, _shown, key, s) => {
     if (s !== '' && !SIGNATURE_KEYS.has(key) && inToolCall(path, key, type)) t = (t ?? '') + s + sep
     return s
   })

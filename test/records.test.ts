@@ -331,6 +331,27 @@ test('recordContext off keeps no context', () => {
   assert.equal(v?.elsewhereOmitted, undefined)
 })
 
+test('a secret used as a JSON key is masked in the body and never named in the record', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const messages = [{ role: 'user', content: `key ${SENTINEL}` }]
+  const body = JSON.stringify({ model: 'm', messages, metadata: { [SENTINEL]: { note: `again ${SENTINEL}` } } })
+  const ex = engine.maskRequest(body, info)
+  assert.ok(ex)
+  // the key went as a placeholder, and the value inside it names the placeholder in its path
+  assert.ok(!ex.text.includes(SENTINEL), ex.text)
+  ex.finish()
+  const r = engine.records.recent()[0] as MaskRecord
+  const json = JSON.stringify(r)
+  assert.ok(!json.includes(SENTINEL), json)
+  // the key was a place too: messages.0.content, metadata.<placeholder> and its note
+  assert.equal(r.n, 3)
+  const v = r.values[0] as ValueRecord
+  assert.equal(v.n, 3)
+  const places = [v.at, ...(v.elsewhere ?? [])].map((p) => p?.path ?? '')
+  assert.deepEqual(places.filter((p) => p.startsWith('metadata.')).length, 2)
+  assert.ok(!places.some((p) => p.includes('sk-')), places.join(' '))
+})
+
 test('a value in more than one message keeps every place, the first still the one its context came from', () => {
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   const messages = [

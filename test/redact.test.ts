@@ -299,3 +299,96 @@ test('in tool arguments a value written with JSON escapes is masked whole, and c
   const quoted = masker.maskText('{"cmd":"PASSWORD=\\"abc12345x\\" next"}', true)
   assert.match(quoted.text, /=\\"\{\{SECRET_[a-z2-7]{8}\}\}\\" next/)
 })
+
+test('a secret used as a JSON key goes as a placeholder, and comes back in the reply', () => {
+  const { masker, table, restorer } = setup({ ...all, maskKeys: true })
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], metadata: { [OPENAI]: 'the key above', note: 'plain' } })
+  const r = masker.maskJSON(body)
+  assert.ok(r)
+  assert.ok(!r.text.includes(OPENAI), r.text)
+  const p = r.text.match(PLACEHOLDER)?.[0] ?? ''
+  assert.ok(p !== '')
+  // the key and the value are the same value: one placeholder, and the table knows it
+  assert.equal(table.get(p), OPENAI)
+  assert.equal(r.hits.filter((h) => h.at?.path === `metadata.${p}`).length, 1)
+  // the vendor's reply names it, and the reply comes back as the agent wrote it
+  assert.equal(restorer.restoreText(JSON.stringify({ said: { [p]: 'x' } })), JSON.stringify({ said: { [OPENAI]: 'x' } }))
+})
+
+test('a key of the protocol itself, a tool definition’s or a tool call’s own names are never masked', () => {
+  const { masker } = setup({ ...all, maskKeys: true })
+  // the ids the vendor matches against each other, and the keys a message is read by
+  const ids = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'x', tool_call_id: `${OPENAI}_id` }], client_metadata: { [`${OPENAI}_id`]: 1 } })
+  const idsOut = masker.maskJSON(ids)
+  assert.ok(idsOut)
+  assert.ok(idsOut.text.includes(`"${OPENAI}_id"`), idsOut.text)
+  // a tool definition and a tool call's argument names are the tool's own schema
+  const tools = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools: [{ type: 'function', function: { name: 'f', parameters: { type: 'object', properties: { [OPENAI]: { type: 'string' } } } } }] })
+  const out = masker.maskJSON(tools)
+  assert.ok(out)
+  // byte for byte: a tool definition the vendor reads as structure is not rewritten
+  assert.equal(out.text, tools)
+  const call = JSON.stringify({ model: 'm', messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'f', input: { [OPENAI]: 'v' } }] }] })
+  const callOut = masker.maskJSON(call)
+  assert.ok(callOut)
+  assert.ok(callOut.text.includes(`"${OPENAI}"`), callOut.text)
+})
+
+test('maskKeys off sends the body exactly as it came', () => {
+  const { masker } = setup({ ...all, maskKeys: false })
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], metadata: { [OPENAI]: 'x' } })
+  const r = masker.maskJSON(body)
+  assert.ok(r)
+  assert.equal(r.text, body)
+  const on = setup({ ...all, maskKeys: true }).masker.maskJSON(body)
+  assert.ok(on)
+  assert.notEqual(on.text, body)
+})
+
+test('a body of nothing but protocol keys goes as it came, byte for byte', () => {
+  const { masker } = setup({ ...all, maskKeys: true })
+  const body = '{"model":"m",  "messages":[ {"role":"user",\n "content":"plain words" } ], "stream":false}'
+  const r = masker.maskJSON(body)
+  assert.ok(r)
+  assert.equal(r.text, body)
+})
+
+test('a key sent as written is recorded by its placeholder, never by its own text', () => {
+  const { masker } = setup({ ...all, maskKeys: true, context: true, actions: { API_KEY: 'warn' } })
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'x' }], [OPENAI]: 1 })
+  const r = masker.maskJSON(body)
+  assert.ok(r)
+  // the key went as it was, and the record names it by the placeholder it would have had
+  assert.ok(r.text.includes(`"${OPENAI}"`), r.text)
+  const hit = r.hits[0]
+  assert.ok(hit)
+  assert.equal(hit.action, 'warn')
+  assert.ok(hit.at?.path.startsWith('{{API_KEY_'), hit.at?.path)
+  assert.ok(!JSON.stringify(r.hits).includes(OPENAI), JSON.stringify(r.hits))
+})
+
+test('personal data used as a key is masked as a value is', () => {
+  const { masker, restorer } = setup({ ...all, personal: true, maskKeys: true })
+  const mail = 'zhang.wei@baidu.com'
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'x' }], [mail]: 'who' })
+  const r = masker.maskJSON(body)
+  assert.ok(r)
+  assert.ok(!r.text.includes(mail), r.text)
+  const p = r.text.match(/\{\{EMAIL_[a-z2-7]{8}\}\}/)?.[0] ?? ''
+  assert.ok(p !== '')
+  assert.equal(restorer.restoreText(r.text), body)
+})
+
+test('a body already masked goes through again unchanged, keys and all', () => {
+  const { masker } = setup({ ...all, maskKeys: true, context: true })
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `k ${OPENAI}` }], [OPENAI]: 'v' })
+  const once = masker.maskJSON(body)
+  assert.ok(once)
+  assert.notEqual(once.text, body)
+  // a placeholder is no key of its own: masking what was already sent changes nothing
+  const again = masker.maskJSON(once.text)
+  assert.ok(again)
+  assert.equal(again.text, once.text)
+  assert.equal(again.n, 0)
+  assert.equal(again.hits.length, 0)
+})

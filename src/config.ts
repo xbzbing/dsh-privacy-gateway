@@ -111,6 +111,8 @@ export interface PrivacyGatewayConfig {
   vendorView?: boolean
   /** Each value in a record keeps where it was and about 80 characters each side, as sent (docs/adr/0024). */
   recordContext?: boolean
+  /** A JSON key that reads as a value is masked too, the protocol's own keys aside (docs/adr/0029). */
+  maskKeys?: boolean
   /**
    * Offer a Privacy tab at the top of the session, in its view strip (docs/adr/0017).
    * Volatile: cordis hands it over as a live reference the detail page's
@@ -129,6 +131,7 @@ export const Config = Schema.object({
   actions: Schema.dict(Schema.union(['mask', 'warn', 'block'] as const)).default({}),
   toolGuard: Schema.union(['off', 'warn', 'block'] as const).default('off').volatile(),
   shape: Schema.boolean().default(false).volatile(),
+  maskKeys: Schema.boolean().default(true).volatile(),
   cookieNames: Schema.array(Schema.string()).default([]),
   cookieKeep: Schema.array(Schema.string()).default(['lang', 'locale', 'theme', 'tz']),
   protectEnvBlock: Schema.boolean().default(true),
@@ -149,7 +152,7 @@ export const Config = Schema.object({
 export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders'>> & { showPanel: boolean; excludeProviders: string[] }
 
 /** The volatile fields the gateway rebuilds its rules and stores from (showPanel and excludeProviders are read where they are used). */
-export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
+export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'maskKeys', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
 
 /** A string that changes when one of LIVE_FIELDS does. */
 export function liveMark(cfg: ResolvedConfig): string {
@@ -165,6 +168,7 @@ export const defaults: ResolvedConfig = {
   actions: {},
   toolGuard: 'off',
   shape: false,
+  maskKeys: true,
   cookieNames: [],
   cookieKeep: ['lang', 'locale', 'theme', 'tz'],
   protectEnvBlock: true,
@@ -219,6 +223,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     actions: actions(c.actions),
     toolGuard: c.toolGuard === 'warn' || c.toolGuard === 'block' ? c.toolGuard : 'off',
     shape: bool(c.shape, defaults.shape),
+    maskKeys: bool(c.maskKeys, defaults.maskKeys),
     cookieNames: strings(c.cookieNames),
     cookieKeep: strings(c.cookieKeep, defaults.cookieKeep),
     protectEnvBlock: bool(c.protectEnvBlock, defaults.protectEnvBlock),
