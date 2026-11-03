@@ -104,6 +104,8 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
   // where the request sat in its session: the turn and step the trajectory names it by (docs/adr/0030)
   const at = stepOf(r)
   const stepWords = at ? t('recent.stepAt', at) : ''
+  // the details say it in full: the step the request went out in, not the step a value came from
+  const stepLine = at ? t('recent.stepSent', at) : ''
   // who it came from: the workspace and the session, by name where the host could tell them (docs/adr/0020)
   const from = [r.workspace, r.title ?? r.session].filter((x): x is string => typeof x === 'string' && x !== '').join(' · ')
   const places = r.failed
@@ -150,7 +152,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
           'div',
           { className: 'pgw-detail', id: detailId },
           r.exfil ? h('div', { className: 'pgw-notice pgw-notice--error' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), t('recent.exfil', { hosts: (r.exfilHosts ?? []).join(', ') })) : null,
-          at ? h('div', { className: 'pgw-meta' }, stepWords) : null,
+          at ? h('div', { className: 'pgw-meta' }, stepLine) : null,
           r.values.length === 0
             ? h('div', { className: 'pgw-empty' }, t('recent.noValues'))
             : h(
