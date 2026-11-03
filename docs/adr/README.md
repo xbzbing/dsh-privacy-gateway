@@ -43,3 +43,4 @@
 | [ADR-0028](0028-record-every-place.md) | 记录一个值出现过的每一处，界面按消息序号标出 | Accepted | 界面 |
 | [ADR-0029](0029-mask-json-keys.md) | 脱敏也作用于 JSON 键 | Accepted | 脱敏 |
 | [ADR-0030](0030-record-turn-and-step.md) | 记录带上请求发出的轮次与步数 | Accepted | 界面 |
+| [ADR-0031](0031-no-short-or-template-values.md) | 短于 8 个字符的口令、明显是占位的写法，都不算值 | Accepted | 脱敏 |

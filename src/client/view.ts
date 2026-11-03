@@ -140,6 +140,7 @@ function readValue(v: MaskRecord['values'][number]): ValueRecord | undefined {
   const before = text(v.before)
   const after = text(v.after)
   const at = readPlace(v.at)
+  const first = stepOf(v.first ?? {})
   const places = readPlaces(v.elsewhere)
   const elsewhere = places.slice(0, PLACES_SHOWN)
   const dropped = whole(v.elsewhereOmitted) + places.length - elsewhere.length
@@ -155,6 +156,7 @@ function readValue(v: MaskRecord['values'][number]): ValueRecord | undefined {
     ...(before !== undefined ? { before } : {}),
     ...(after !== undefined ? { after } : {}),
     ...(at ? { at } : {}),
+    ...(first ? { first } : {}),
     ...(elsewhere.length > 0 ? { elsewhere } : {}),
     ...(dropped > 0 ? { elsewhereOmitted: dropped } : {}),
   }

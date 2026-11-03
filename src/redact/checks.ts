@@ -35,6 +35,34 @@ export function notASlug(v: string): boolean {
   return v.split(/[-_]/).some((w) => w.length >= 16)
 }
 
+/** A run of one character, which a real key of random characters does not have: 62^-6 is one in 5.7e10. */
+const TEMPLATE_RUN = /([a-z0-9])\1{7,}/
+
+/** The words a stand-in for a key is made of, and a random key is not (a vendor's real test key is a key, so test is no such word). */
+const TEMPLATE_WORDS = /(?:your[-_]?(?:api[-_]?key|key|token|secret)|example|placeholder|changeme|redacted|dummy|\*{3,})/
+
+/**
+ * How much of a long value is read for either: a stand-in shows itself at its
+ * start (AKIA0000…, sk-proj-xxxx…, YOUR_API_KEY…) or at its end, and reading
+ * a whole long value would spend the masking time a request has on text no
+ * template is made of.
+ */
+const TEMPLATE_WINDOW = 128
+
+/**
+ * False for a value typed to stand for a key rather than a key: a long run of
+ * one character (sk-proj-xxxxxxxx…, AKIA0000…0000), or a word that says what
+ * it is (your-api-key, changeme, example). Masking one of these hides nothing
+ * a reader would not write anyway, and counting it inflates what the gateway
+ * appears to have protected (docs/adr/0031).
+ */
+export function notATemplate(v: string): boolean {
+  // the two ends, with a character no template holds between them, so no run spans the join
+  const low = (v.length <= TEMPLATE_WINDOW * 2 ? v : `${v.slice(0, TEMPLATE_WINDOW)}\u0000${v.slice(-TEMPLATE_WINDOW)}`).toLowerCase()
+  if (TEMPLATE_WORDS.test(low)) return false
+  return !TEMPLATE_RUN.test(low)
+}
+
 /** Turns away what stands in for a value: ${PASS}, <password>, ****. */
 export function notAVariable(v: string): boolean {
   if (v === '' || '$%{<[*'.includes(v[0] as string)) return false

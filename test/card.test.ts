@@ -340,6 +340,29 @@ test('an overview from another host version is filled in, not trusted as it is',
     ],
   })
   // a value is drawn field by field, so one of another version cannot reach the table as an object
+  // the place a value was first sent reads as a step, or as none (docs/adr/0030)
+  const sentFirst = readOverview({
+    active: true,
+    stats: { today: {}, week: {}, month: {} },
+    recent: [
+      {
+        key: 1,
+        time: 't',
+        turn: 3,
+        step: 2,
+        values: [
+          { placeholder: '{{A}}', first: { turn: 3, step: 1 } },
+          { placeholder: '{{B}}', first: { turn: 3 } },
+          { placeholder: '{{C}}', first: { turn: 0, step: 1 } },
+          { placeholder: '{{D}}', first: { turn: '3', step: '1' } },
+          { placeholder: '{{E}}', first: 'x' },
+        ],
+      },
+    ],
+  })
+  const firstOf = (i: number): unknown => sentFirst?.recent[0]?.values[i]?.first
+  assert.deepEqual(firstOf(0), { turn: 3, step: 1 })
+  for (const i of [1, 2, 3, 4]) assert.equal(firstOf(i), undefined, `value ${i}`)
   const val = (placeholder: string, extra: Record<string, unknown> = {}) => ({ placeholder, kind: '', finder: 'rule', head: '', len: 0, n: 0, ...extra })
   assert.deepEqual(places?.recent[0]?.values[0], val('{{A}}', { at: { path: 'messages.3.content', role: 'user' }, elsewhere: [{ path: 'messages.7.content', role: 'user' }], elsewhereOmitted: 2 }))
   assert.deepEqual(places?.recent[0]?.values[1], val('{{B}}'))

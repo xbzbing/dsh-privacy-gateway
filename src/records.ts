@@ -5,8 +5,9 @@ import { createInterface } from 'node:readline'
 
 import type { Finder } from './redact/ids.ts'
 import type { Hit, Place } from './redact/mask.ts'
+import type { StepAt } from './steps.ts'
 
-export type { Place }
+export type { Place, StepAt }
 
 /**
  * The record of what masking swapped for placeholders (design §7, magpie
@@ -39,6 +40,8 @@ export interface ValueRecord {
   elsewhere?: Place[]
   /** Distinct places past MAX_RECORD_PLACES, left out of `elsewhere`, the count of them. */
   elsewhereOmitted?: number
+  /** The turn and step this value was first sent in, when that is not this request (docs/adr/0030). */
+  first?: StepAt
 }
 
 /** chat, embeddings, count or search, by the request's path. */
@@ -262,6 +265,10 @@ function parseRecord(line: string): MaskRecord | undefined {
     if (typeof r.exfil !== 'number') delete r.exfil
     if (typeof r.exfilBlocked !== 'number') delete r.exfilBlocked
     if (typeof r.valuesOmitted !== 'number') delete r.valuesOmitted
+    for (const v of r.values) if (typeof v === 'object' && v !== null) {
+      const f = v.first as StepAt | undefined
+      if (!f || !Number.isSafeInteger(f.turn) || !Number.isSafeInteger(f.step) || f.turn < 1 || f.step < 1) delete v.first
+    }
     // a step is one the trajectory counts from 1; a record of another version may say none, or not a step at all
     for (const k of ['turn', 'step'] as const) {
       const n = r[k]

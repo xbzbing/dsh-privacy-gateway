@@ -164,8 +164,10 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                   null,
                   r.values.flatMap((v) => {
                     const elsewhere = elsewhereText(v, t)
+                    // a value this run sent before says where it first went (docs/adr/0030)
+                    const firstText = v.first ? t('recent.valueFirst', { turn: v.first.turn, step: v.first.step }) : at ? t('recent.valueFirstHere') : ''
                     // the row shows where the value went and what was around it: either alone is worth a line
-                    const placed = v.at !== undefined || v.before !== undefined || v.after !== undefined || elsewhere !== ''
+                    const placed = v.at !== undefined || v.before !== undefined || v.after !== undefined || elsewhere !== '' || firstText !== ''
                     return [
                       h(
                         'tr',
@@ -199,6 +201,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
                                     : null,
                                 ),
                                 elsewhere !== '' ? h('div', { className: 'pgw-ctx__more' }, elsewhere) : null,
+                                firstText !== '' ? h('div', { className: 'pgw-ctx__more' }, firstText) : null,
                               ),
                             ),
                           )

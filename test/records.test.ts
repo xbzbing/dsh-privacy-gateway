@@ -63,6 +63,38 @@ test('one request makes one record: its values, the places restored and the plac
   assert.ok(!JSON.stringify(engine.records.stats()).includes(SENTINEL))
 })
 
+test('a value says where it was first sent, once a later step sends it again', () => {
+  let at = { turn: 3, step: 1 }
+  const engine = new PrivacyEngine(randomBytes(32), defaults, { steps: () => at })
+  const body = chat(`key ${SENTINEL}`)
+  const send = (session: string): void => {
+    const ex = engine.maskRequest(body, { ...info, session })
+    assert.ok(ex)
+    ex.finish()
+  }
+  send('s1')
+  at = { turn: 3, step: 2 }
+  send('s1')
+  const [second, first] = engine.records.recent()
+  assert.equal(first?.turn, 3)
+  assert.equal(first?.step, 1)
+  // the request that sends it first needs no line of its own
+  assert.equal(first?.values[0]?.first, undefined)
+  assert.equal(second?.step, 2)
+  assert.deepEqual(second?.values[0]?.first, { turn: 3, step: 1 })
+  // every session has its own first sending
+  at = { turn: 9, step: 4 }
+  send('s2')
+  assert.equal(engine.records.recent()[0]?.values[0]?.first, undefined)
+  // a request outside a step names none at all
+  const bare = engine.maskRequest(body, info)
+  assert.ok(bare)
+  bare.finish()
+  const last = engine.records.recent()[0]
+  assert.equal(last?.turn, undefined)
+  assert.equal(last?.values[0]?.first, undefined)
+})
+
 test('a request that is no model request, or goes while masking is off, makes no record', () => {
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   assert.equal(engine.maskRequest('{"hello":1}', info), null)

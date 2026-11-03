@@ -4,6 +4,7 @@ import { ValueTable } from './redact/known.ts'
 import { Masker, type Hit, type MaskResult } from './redact/mask.ts'
 import { jsonEscape } from './redact/json.ts'
 import { newTally, Restorer, type StreamRestorer, type Tally } from './redact/restore.ts'
+import { FirstSending } from './first.ts'
 import { hideWarned, type ViewStore } from './views.ts'
 
 /** Where a request goes, as the record keeps it. */
@@ -94,6 +95,8 @@ export class PrivacyEngine implements RedactionEngine {
   readonly views: ViewStore | undefined
   readonly #names: ((session: string) => { title?: string; workspace?: string }) | undefined
   readonly #steps: ((session: string) => { turn: number; step: number } | undefined) | undefined
+  /** Where each value was first sent, for the record's line about it (docs/adr/0030). */
+  readonly #first = new FirstSending()
   /** `/privacy off` turns masking off until `/privacy on` or a restart; the config stays as it is. */
   active = true
 
@@ -154,13 +157,15 @@ export class PrivacyEngine implements RedactionEngine {
     if (!this.active) return null
     const started = performance.now()
     const time = new Date().toISOString()
+    // where the session was when the request went: read once, so the record and the values it carries agree
+    const step = info.session ? this.#steps?.(info.session) : undefined
     // read where a record is written: the names are looked up only then, and only for a session there is
     const base = () => ({
       time,
       what: whatOf(info.path),
       host: info.host,
       ...(isLoopback(info.host) ? { relay: true as const } : {}),
-      ...(info.session ? { session: info.session, ...this.#names?.(info.session), ...this.#steps?.(info.session) } : {}),
+      ...(info.session ? { session: info.session, ...this.#names?.(info.session), ...step } : {}),
     })
     let r: MaskResult | null
     try {
@@ -179,7 +184,16 @@ export class PrivacyEngine implements RedactionEngine {
       if (h.action === 'warn') warned++
       else if (h.action === 'block') blocks.push(h)
     }
-    const record: Omit<MaskRecord, 'key'> = { ...base(), ...(model ? { model } : {}), tookMs, n: r.n, ...(warned > 0 ? { warned } : {}), values: valuesOf(r.hits), restored: 0, unmapped: 0 }
+    const values = valuesOf(r.hits)
+    // each value says which request sent it the first time, one step behind what produced it (docs/adr/0030)
+    if (info.session !== undefined && step !== undefined) {
+      for (const v of values) {
+        const first = this.#first.note(info.session, v.placeholder, step)
+        // only when it went out before: a value this request sends first needs no line of its own
+        if (first.turn !== step.turn || first.step !== step.step) v.first = first
+      }
+    }
+    const record: Omit<MaskRecord, 'key'> = { ...base(), ...(model ? { model } : {}), tookMs, n: r.n, ...(warned > 0 ? { warned } : {}), values, restored: 0, unmapped: 0 }
     if (blocks.length > 0) {
       this.records.add({ ...record, blocked: true })
       throw new RequestBlocked(blocks)

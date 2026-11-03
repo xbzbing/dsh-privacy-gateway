@@ -2,13 +2,24 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 
-import { ValueTable } from '../src/redact/known.ts'
+import { MIN_SECRET_CHARS } from '../src/redact/find.ts'
+import { MIN_KNOWN, ValueTable } from '../src/redact/known.ts'
 import { Masker, type MaskOptions } from '../src/redact/mask.ts'
 import { Restorer } from '../src/redact/restore.ts'
 
 // Built from pieces so no literal in the repository reads as a live credential.
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
 const JWT = 'eyJ' + 'hbGciOiJIUzI1NiJ9.eyJ' + 'zdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'
+
+// The password-shaped values the rule tests use, built from pieces: a literal
+// one reads as a live credential to every tool that scans this file.
+const PW_A = '786' + 'kih' + '24'
+const PW_B = 'hunt' + 'er2' + '!'
+const PW_C = 'pa5' + '5wor' + 'd'
+const PW_D = 'qwer' + '1234'
+const PW_E = 'a8f3' + 'k2m9' + 'q1'
+const PW_F = 'a1b2' + 'c3d4' + 'e5f6'
+const PW_G = 'xk2f' + '9d8s' + '7a6q5w'
 
 const all: MaskOptions = { secrets: true, personal: true, protectEnvBlock: true, protectTools: true }
 
@@ -92,18 +103,48 @@ test("a field called key holding a file's name is no secret (issue #1)", () => {
 
 test('CJK names for a password or a key mask what follows them', () => {
   const cases: Array<[string, string]> = [
-    ['密码：786kih', '786kih'],
-    ['服务器密码是 hunter2，记得改', 'hunter2'],
-    ['パスワードは pa55word です', 'pa55word'],
-    ['비밀번호: qwer1234', 'qwer1234'],
-    ['密钥为 a8f3k2m9q1', 'a8f3k2m9q1'],
-    ['token 是 a1b2c3d4e5f6，别外传', 'a1b2c3d4e5f6'],
-    ['API Key：xk2f9d8s7a6q5w', 'xk2f9d8s7a6q5w'],
+    [`密码：${PW_A}`, PW_A],
+    [`服务器密码是 ${PW_B}，记得改`, PW_B],
+    [`パスワードは ${PW_C} です`, PW_C],
+    [`비밀번호: ${PW_D}`, PW_D],
+    [`密钥为 ${PW_E}`, PW_E],
+    [`token 是 ${PW_F}，别外传`, PW_F],
+    [`API Key：${PW_G}`, PW_G],
     ['密钥为12231241', '12231241'],
   ]
   for (const [text, v] of cases) assert.deepEqual(masked(text), [v], text)
   assert.deepEqual(masked('密钥为 2048 位'), [])
   assert.deepEqual(masked('token 是 expired'), [])
+})
+
+test('a secret shorter than 8 characters is no value: it is guessed in no time, and masking it promises what is not there', () => {
+  // the short ones go as written, whichever name they follow (docs/adr/0031)
+  const short = ['abc' + '123', 'hunt' + 'er' + '2', '786' + 'kih', '12' + '34' + '56', '000' + '000']
+  for (const v of short) assert.deepEqual(masked('密码：' + v), [], `${v.length} characters`)
+  assert.deepEqual(masked('token 是 ' + 'a1b2c3d'), [])
+  assert.deepEqual(masked('postgres://app:' + 'fa2b6e' + '@db.internal/x'), [])
+  assert.deepEqual(masked('api_key=' + 'abc123'), [])
+  // eight characters on: a value, whichever rule found it
+  assert.deepEqual(masked('密码：' + PW_A), [PW_A])
+  assert.deepEqual(masked('postgres://app:' + PW_A + '@db.internal/x'), [PW_A])
+  assert.deepEqual(masked('token 是 ' + PW_F), [PW_F])
+  // the value table never matches one this short as known either: the two floors are one rule
+  assert.equal(MIN_SECRET_CHARS, MIN_KNOWN)
+})
+
+test('a value typed to stand for a key is no key: a run of one character, or a word that says so', () => {
+  // what a person writes where a key goes: one character over and over (docs/adr/0031)
+  for (const text of ['sk-proj-' + 'x'.repeat(20), 'sk-ant-api03-' + 'x'.repeat(24), 'AKIA' + '0'.repeat(16), 'ghp_' + 'x'.repeat(36), 'sk-proj-' + 'x'.repeat(300)]) {
+    assert.deepEqual(masked(text), [], text)
+  }
+  // a stand-in that names itself
+  for (const text of ['sk-proj-' + 'YOUR_API_KEY'.repeat(2), 'AKIA' + 'IOSFODNN7EXAMPLE', 'api_key=' + 'changeme' + 'changeme']) {
+    assert.deepEqual(masked(text), [], text)
+  }
+  // a real key of the same shapes still goes, and so does one whose end is too short to say
+  const real = [OPENAI, 'sk-ant-api03-' + 'Q7fK2mZx9RtL4wVb8Nc1Ys6Hd3', 'AKIA' + 'Q7FK2MZX9RTL4WVB', 'ghp_' + 'aQ7fK2mZx9RtL4wVb8Nc1Ys6Hd3Tj5Ug0Pl9']
+  for (const text of real) assert.deepEqual(masked(text), [text], text)
+  assert.deepEqual(masked('sk-proj-' + 'N2eE8yGp2CoF8pZr8My6Pu5Bu5_nm'), ['sk-proj-' + 'N2eE8yGp2CoF8pZr8My6Pu5Bu5_nm'])
 })
 
 test('personal data is off unless asked for, and checks its form', () => {
