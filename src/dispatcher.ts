@@ -4,7 +4,7 @@ import zlib from 'node:zlib'
 import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
-import { currentSession } from './providers.ts'
+import { currentSession, inModelCall } from './providers.ts'
 
 type Options = Dispatcher.DispatchOptions
 type Handler = Dispatcher.DispatchHandler
@@ -640,8 +640,11 @@ const RANK: Record<LayerRole, number> = { route: 0, proxy: 1 }
  * The gateway: an undici dispatcher chained in front of whatever dispatcher
  * was global before it (docs/adr/0001). A POST whose body is a JSON model
  * request goes on masked, its reply restored; everything else goes on
- * untouched. Masking that throws fails the request instead of sending it
- * (docs/adr/0005). The layers under it are ordered by role (docs/adr/0012).
+ * untouched. An upgrade a model call opens (the Codex WebSocket) is refused
+ * (docs/adr/0025); one a plugin opens outside a call — dsh-im-infoflow's
+ * inbound, say — is let through unmasked, with one warn per host
+ * (docs/adr/0032). Masking that throws fails the request instead of sending
+ * it (docs/adr/0005). The layers under it are ordered by role (docs/adr/0012).
  */
 export class MaskingDispatcher extends Dispatcher {
   readonly #engine: RedactionEngine
@@ -651,6 +654,8 @@ export class MaskingDispatcher extends Dispatcher {
   #layers: Layer[]
   #seq = 0
   #order: Layer[] | undefined
+  /** Hosts a tunnel was let through to: each warned about once, however often it reconnects. */
+  readonly #warnedTunnels = new Set<string>()
   /** Set once the gateway is disposed: every request that still reaches it (through a layer that holds it) passes through. */
   bypass = false
   readonly [kGateway] = true
@@ -756,12 +761,26 @@ export class MaskingDispatcher extends Dispatcher {
       return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
     }
     if (!this.bypass) this.heal?.()
+    // An explicit bypass comes first, then the call: a tunnel is refused only where masking would
+    // apply and a model call opened it. This order is the rule, not an optimisation — /privacy off
+    // or a session with masking off must let a model call's tunnel by too (docs/adr/0032).
     if (!this.bypass && isTunnel(opts) && !this.#passes(opts)) {
-      // a WebSocket (or any upgraded or tunnelled connection) carries its messages past the
-      // dispatcher, where they cannot be masked: it is not opened (docs/adr/0025); Codex falls back to SSE
-      this.#logger?.warn(`dsh-privacy-gateway: a ${tunnelName(opts)} connection to ${targetHost(opts)?.host ?? 'an unknown host'} was refused: its messages cannot be masked`)
-      failRequest(wrapHandler(handler), new PrivacyGatewayError('a WebSocket or other upgraded connection cannot be masked, it was not opened', undefined, 'DSH_PRIVACY_GATEWAY_UPGRADE_REFUSED'))
-      return true
+      const host = targetHost(opts)?.host ?? 'an unknown host'
+      if (inModelCall()) {
+        // a model call's WebSocket (or any upgraded or tunnelled connection) carries its messages past
+        // the dispatcher, where they cannot be masked: it is not opened (docs/adr/0025); Codex falls back to SSE
+        this.#logger?.warn(`dsh-privacy-gateway: a ${tunnelName(opts)} connection to ${host} was refused: its messages cannot be masked`)
+        failRequest(wrapHandler(handler), new PrivacyGatewayError('a WebSocket or other upgraded connection cannot be masked, it was not opened', undefined, 'DSH_PRIVACY_GATEWAY_UPGRADE_REFUSED'))
+        return true
+      }
+      // an upgrade outside any model call is some plugin's own connection (dsh-im-infoflow's
+      // inbound, for one): no model request is in it, so it was let through, unmasked (docs/adr/0032).
+      // An inbound that reconnects would say so every second; one warn per host is enough.
+      if (!this.#warnedTunnels.has(host)) {
+        if (this.#warnedTunnels.size >= 32) this.#warnedTunnels.clear()
+        this.#warnedTunnels.add(host)
+        this.#logger?.warn(`dsh-privacy-gateway: a ${tunnelName(opts)} connection to ${host} was let through: its messages are not masked, and neither are those of further connections to it`)
+      }
     }
     const next = this.downstream()
     if (this.bypass || !this.#candidate(opts)) return next.dispatch({ ...opts, [kHop]: next } as Options, handler)

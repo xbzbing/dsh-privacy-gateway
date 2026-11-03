@@ -9,7 +9,7 @@ import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { defaults, liveStrings, resolveConfig } from '../src/config.ts'
 import { installGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine } from '../src/engine.ts'
-import { bypassedProvider, bypassing, currentSession, isExcluded, makeSkip, routeStream } from '../src/providers.ts'
+import { bypassedProvider, bypassing, currentSession, inModelCall, isExcluded, makeSkip, routeStream } from '../src/providers.ts'
 import { excludeChoices, toggleExcluded } from '../src/client/providerChoice.ts'
 import { Config } from '../src/index.ts'
 
@@ -145,6 +145,49 @@ test('the stream carries the session the host named, so a record can say which o
   assert.deepEqual(await collect(routeStream('deepseek', ['deepseek'], bypassProbe, 'sess-1')), ['deepseek'])
   // outside any stream there is none
   assert.equal(currentSession(), undefined)
+})
+
+test('a call is marked even where the host named no session; an excluded provider’s stream is not', async () => {
+  assert.equal(inModelCall(), false)
+  async function* probe(): AsyncGenerator<unknown> {
+    yield inModelCall()
+  }
+  const collect = async (s: AsyncIterable<unknown>) => {
+    const out: unknown[] = []
+    for await (const v of s) out.push(v)
+    return out
+  }
+  // no session: the gateway must still see a call, so it refuses the call's upgrades (docs/adr/0032)
+  assert.deepEqual(await collect(routeStream('openai', [], probe)), [true])
+  assert.deepEqual(await collect(routeStream('openai', [], probe, 'sess-1')), [true])
+  // an excluded provider's stream is let by: no marker
+  assert.deepEqual(await collect(routeStream('deepseek', ['deepseek'], probe)), [false])
+})
+
+test('a masked call nested in an excluded stream is a call again, and the bypass is gone', async () => {
+  const collect = async (s: AsyncIterable<unknown>) => {
+    const out: unknown[] = []
+    for await (const v of s) out.push(v)
+    return out
+  }
+  // the excluded provider's stream is a bypass; a model call started inside it is masked,
+  // and the exception must not stick to the nested call (docs/adr/0018, docs/adr/0032)
+  async function* inner(): AsyncGenerator<unknown> {
+    yield [inModelCall(), bypassedProvider()]
+  }
+  async function* outer(): AsyncGenerator<unknown> {
+    yield* await collect(routeStream('openai', [], inner, 'sess-2'))
+  }
+  assert.deepEqual(await collect(routeStream('deepseek', ['deepseek'], outer, 'sess-1')), [[true, undefined]])
+  // and outside again it is the excluded stream, not a call
+  async function* after(): AsyncGenerator<unknown> {
+    yield [inModelCall(), bypassedProvider()]
+  }
+  async function* both(): AsyncGenerator<unknown> {
+    yield* await collect(routeStream('openai', [], after))
+    yield [inModelCall(), bypassedProvider()]
+  }
+  assert.deepEqual(await collect(routeStream('deepseek', ['deepseek'], both)), [[true, undefined], [false, 'deepseek']])
 })
 
 test('a record says which workspace and session a call came from, by name', async () => {

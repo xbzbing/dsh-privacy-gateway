@@ -11,7 +11,7 @@ import { Agent, Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, request, se
 import { defaults } from '../src/config.ts'
 import { installGateway, MaskingDispatcher, withContentLength, type InstalledGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine, type Exchange, type RedactionEngine, type RequestInfo } from '../src/engine.ts'
-import { routeStream } from '../src/providers.ts'
+import { routeStream, makeSkip } from '../src/providers.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
 const PLACEHOLDER = /\{\{API_KEY_[a-z2-7]{8}\}\}/
@@ -355,7 +355,7 @@ function openSocket(url: string): Promise<'open' | 'error'> {
   })
 }
 
-test('a WebSocket is not opened unless the request is let by', async () => {
+test('a WebSocket is refused only inside a model call; an explicit bypass still wins there', async () => {
   let upgrades = 0
   const server = createServer()
   server.on('upgrade', (req, socket) => {
@@ -369,26 +369,59 @@ test('a WebSocket is not opened unless the request is let by', async () => {
   const { port } = server.address() as AddressInfo
   const url = `ws://127.0.0.1:${port}/v1/responses`
   const before = getGlobalDispatcher()
+  const openInCall = async (provider: unknown, excluded: string[], session?: string): Promise<'open' | 'error'> => {
+    async function* adapter(): AsyncGenerator<'open' | 'error'> { yield await openSocket(url) }
+    let out: 'open' | 'error' | undefined
+    for await (const r of routeStream(provider, excluded, adapter, session)) out = r
+    return out as 'open' | 'error'
+  }
   try {
-    // masked: refused before any byte goes out
-    let warnings: unknown[] = []
-    let gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn: (...a: unknown[]) => warnings.push(a) } })
-    assert.equal(await openSocket(url), 'error')
-    assert.equal(upgrades, 0)
-    assert.equal(warnings.length, 1)
-    gateway.dispose()
-    setGlobalDispatcher(before)
-    // an explicit bypass (skip: enabled off, an excluded provider, a session with masking off) opens it
-    warnings = []
-    gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, skip: () => true })
+    // the production shape: masking on, one session with masking off
+    const warnings: unknown[][] = []
+    let gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), {
+      checkIntervalMs: 0,
+      skip: makeSkip({ enabled: () => true, sessionOff: (s) => s === 'sess-off' }),
+      logger: { warn: (...a: unknown[]) => warnings.push(a) },
+    })
+    // a WebSocket a plugin opens outside any model call (dsh-im-infoflow's inbound): let through, warned about once
     assert.equal(await openSocket(url), 'open')
     assert.equal(upgrades, 1)
+    assert.equal(warnings.length, 1, 'one warn that the connection is not masked')
+    assert.match(String(warnings[0]?.[0]), /was let through: its messages are not masked/)
+    assert.match(String(warnings[0]?.[0]), new RegExp(`127\\.0\\.0\\.1:${port}`), 'the warn names the host')
+    // a second connection to the same host is not reported again
+    assert.equal(await openSocket(url), 'open')
+    assert.equal(warnings.length, 1, 'one warn per host, however often it reconnects')
+    // inside a model call, even one the host named no session for: the transport is refused before any byte goes out
+    assert.equal(await openInCall('openai', []), 'error')
+    assert.equal(upgrades, 2)
+    assert.equal(warnings.length, 2)
+    assert.match(String(warnings[1]?.[0]), /was refused: its messages cannot be masked/)
+    // a call the host named a session for is refused the same way
+    assert.equal(await openInCall('openai', [], 'sess-1'), 'error')
+    assert.equal(upgrades, 2)
+    // an excluded provider's stream is let by: its WebSocket opens
+    assert.equal(await openInCall('openai', ['openai']), 'open')
+    assert.equal(upgrades, 3)
+    // an explicit bypass wins inside a call too: this order is the rule (docs/adr/0032)
+    assert.equal(await openInCall('openai', [], 'sess-off'), 'open')
+    assert.equal(upgrades, 4)
+    assert.ok(!JSON.stringify(warnings).includes('sk-'), 'no value in a warn')
+    gateway.dispose()
+    setGlobalDispatcher(before)
+    // masking off altogether opens it, in a call or not: the real skip, composed the host's way
+    gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), {
+      checkIntervalMs: 0,
+      skip: makeSkip({ enabled: () => false, sessionOff: () => false }),
+    })
+    assert.equal(await openInCall('openai', []), 'open')
+    assert.equal(upgrades, 5)
     gateway.dispose()
     setGlobalDispatcher(before)
     // so does excludeHosts
     gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, excludeHosts: [`127.0.0.1:${port}`] })
     assert.equal(await openSocket(url), 'open')
-    assert.equal(upgrades, 2)
+    assert.equal(upgrades, 6)
     gateway.dispose()
   } finally {
     setGlobalDispatcher(before)
@@ -396,6 +429,45 @@ test('a WebSocket is not opened unless the request is let by', async () => {
   }
 })
 
+/**
+ * The code a refused tunnel fails with, read off the dispatcher: a WebSocket's
+ * error event hides it (undici reports an empty TypeError), so the handler is
+ * driven directly, inside the call the tunnel is opened in.
+ */
+function refuseCode(g: InstalledGateway): Promise<string | undefined> {
+  async function* adapter(): AsyncGenerator<string | undefined> {
+    yield await new Promise<string | undefined>((resolve) => {
+      const handler = {
+        onRequestStart() {},
+        onResponseError(_controller: unknown, err: Error & { code?: string }) {
+          resolve(err.code)
+        },
+      }
+      g.dispatcher.dispatch({ path: '/v1/responses', method: 'GET', origin: 'http://127.0.0.1:1', upgrade: 'websocket' } as never, handler as never)
+    })
+  }
+  return (async () => {
+    for await (const code of routeStream('openai', [], adapter)) return code
+    return undefined
+  })()
+}
+
+test('a tunnel a model call opens fails with the code the gateway promises', async () => {
+  const before = getGlobalDispatcher()
+  const gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), {
+    checkIntervalMs: 0,
+    skip: makeSkip({ enabled: () => true, sessionOff: () => false }),
+    logger: { warn: () => {} },
+  })
+  try {
+    assert.equal(await refuseCode(gateway), 'DSH_PRIVACY_GATEWAY_UPGRADE_REFUSED')
+  } finally {
+    gateway.dispose()
+    setGlobalDispatcher(before)
+  }
+})
+
+/** A dispatcher that only counts what reaches it, for the chaining tests. */
 class CountingAgent extends Agent {
   count = 0
   override dispatch(opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {

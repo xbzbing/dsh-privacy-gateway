@@ -35,6 +35,10 @@
 ## Consequences
 
 - Codex 在本插件开启时总是走 SSE：第一次 WebSocket 失败后回落，之后同一会话直接用 SSE。SSE 请求以明文发出，比压缩的多一些字节。
-- 别的插件经全局 dispatcher 打开的 WebSocket 也会被拒；需要的话把它的 host 加进 `excludeHosts`。
+- 别的插件经全局 dispatcher 打开的 WebSocket 也会被拒；需要的话把它的 host 加进 `excludeHosts`。（已被 [ADR-0032](0032-upgrade-scoped-to-masked-calls.md) 收窄：调用外的升级放行，见文末更新。）
 - 回复以不压缩的形式传输，流量略大。
 - 一个 bug 或少见的编码会让请求失败而不是外泄，止血路径与 ADR-0005 相同。
+
+## 更新（2026-11-03）
+
+「带 `upgrade` 的请求一律不发」被 [ADR-0032](0032-upgrade-scoped-to-masked-calls.md) 收窄为「只在模型调用里不发」：模型调用之外的升级（别的插件自建的连接，如 dsh-im-infoflow 的入站）与 `CONNECT` 隧道放行，消息不脱敏，同一 host 打一条 warn。这是一次 fail-closed 到 fail-open 的取舍，代价见 ADR-0032。明确放行的情况（`enabled` 关、`/privacy off`、排除的 provider、关闭了脱敏的会话、`excludeHosts`）不变。

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -61,6 +62,68 @@ test('requests through the plugin’s own llm/stream listener are masked unless 
       }
     }
     for (const sessionId of [undefined, 'sess-1']) assert.ok((await run('DeepSeek', sessionId)).includes(OPENAI), 'an excluded provider goes as it is')
+  } finally {
+    for (const d of disposers) d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+  assert.equal(getGlobalDispatcher(), before)
+})
+
+test('through the plugin’s own listener, a plugin’s WebSocket is let through and a call’s is refused', async () => {
+  let upgrades = 0
+  const server = createServer()
+  server.on('upgrade', (req, socket) => {
+    upgrades++
+    const accept = createHash('sha1').update(`${String(req.headers['sec-websocket-key'])}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    socket.on('error', () => {})
+    setTimeout(() => socket.destroy(), 50)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/inbound`
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-ws-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const before = getGlobalDispatcher()
+  const disposers: Array<() => void> = []
+  const warnings: unknown[][] = []
+  let listener: Listener | undefined
+  const ctx: PluginContext = {
+    logger: { info() {}, warn: (...a: unknown[]) => warnings.push(a), error() {} },
+    effect: (fn) => disposers.push(fn()),
+    on: (name: string, l: unknown) => {
+      if (name === 'llm/stream') listener = l as Listener
+    },
+  }
+  try {
+    apply(ctx, {})
+    assert.ok(listener, 'the plugin listens to llm/stream')
+    const socket = () =>
+      new Promise<'open' | 'error'>((resolve) => {
+        const ws = new WebSocket(url)
+        ws.addEventListener('open', () => {
+          ws.close()
+          resolve('open')
+        })
+        ws.addEventListener('error', () => resolve('error'))
+      })
+    // a plugin opening its inbound outside any model call: the whole chain lets it through
+    assert.equal(await socket(), 'open')
+    assert.equal(upgrades, 1)
+    assert.equal(warnings.length, 1, 'one warn that its messages are not masked')
+    assert.match(String(warnings[0]?.[0]), /was let through: its messages are not masked/)
+    // the same socket opened from inside a model call is the provider's transport: refused
+    async function* adapter(): AsyncGenerator<'open' | 'error'> {
+      yield await socket()
+    }
+    let outcome: 'open' | 'error' | undefined
+    for await (const r of (listener as Listener)({ provider: 'openai' }, adapter) as AsyncIterable<'open' | 'error'>) outcome = r
+    assert.equal(outcome, 'error')
+    assert.equal(upgrades, 1, 'refused before any byte went out')
+    assert.match(String(warnings[1]?.[0]), /was refused: its messages cannot be masked/)
   } finally {
     for (const d of disposers) d()
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
