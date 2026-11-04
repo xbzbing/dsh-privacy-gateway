@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 
-import { notATemplate } from './checks.ts'
+import { algorithmValue, notATemplate } from './checks.ts'
 import type { Found } from './ids.ts'
 import type { KnownSpan } from './known.ts'
 import type { Rule } from './rules.ts'
@@ -52,8 +52,9 @@ function takes(r: Rule, s: string, a: number, b: number): boolean {
   if (r.bound && ((a > 0 && r.bound.includes(s[a - 1] as string)) || (b < s.length && r.bound.includes(s[b] as string)))) return false
   if (r.cat === 'secret') {
     const v = s.slice(a, b)
-    // a short one is no secret worth the name; a template is a stand-in, not a value
-    if (v.length < MIN_SECRET_CHARS || !notATemplate(v)) return false
+    // a short one is no secret worth the name; a template is a stand-in, not a
+    // value; an algorithm's name is published in a spec, not secret
+    if (v.length < MIN_SECRET_CHARS || !notATemplate(v) || algorithmValue(v)) return false
   }
   if (r.ok && !r.ok(s.slice(a, b))) return false
   return !r.at || r.at(s, a, b)

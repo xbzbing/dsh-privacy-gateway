@@ -132,6 +132,23 @@ test('a secret shorter than 8 characters is no value: it is guessed in no time, 
   assert.equal(MIN_SECRET_CHARS, MIN_KNOWN)
 })
 
+test('the name of a cryptographic algorithm is no value: a spec publishes it (docs/adr/0033)', () => {
+  // a Kafka config's scram_mechanism, found by a field name with token in it (the report)
+  for (const s of [
+    `'once_kafka_token.scram_mechanism': 'SCRAM-SHA-512',`,
+    'password_hash=PBKDF2WithHmacSHA256',
+    '{"key": "ECDHE-RSA-AES128-GCM-SHA256"}',
+    '密钥是 SCRAM-SHA-512',
+    'token 是 SCRAM-SHA-512，别改',
+  ]) {
+    assert.deepEqual(masked(s), [], s)
+  }
+  // an algorithm's words spelled out are no password's: a value of random characters still goes
+  for (const s of ['token=ZEBRA-256', 'api_key=justword256']) {
+    assert.deepEqual(masked(s), [s.slice(s.indexOf('=') + 1)], s)
+  }
+})
+
 test('a value typed to stand for a key is no key: a run of one character, or a word that says so', () => {
   // what a person writes where a key goes: one character over and over (docs/adr/0031)
   for (const text of ['sk-proj-' + 'x'.repeat(20), 'sk-ant-api03-' + 'x'.repeat(24), 'AKIA' + '0'.repeat(16), 'ghp_' + 'x'.repeat(36), 'sk-proj-' + 'x'.repeat(300)]) {

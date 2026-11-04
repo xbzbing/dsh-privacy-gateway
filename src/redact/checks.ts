@@ -238,6 +238,49 @@ export function fileNameValue(v: string): boolean {
   return dot > 0 && dot < v.length - 1 && FILE_EXT.has(v.slice(dot + 1).toLowerCase())
 }
 
+/**
+ * The words a published cryptographic algorithm's name is built from: scram,
+ * sha, aes, gcm, pbkdf, with, padding, tls, siv, poly. The list is closed and
+ * disjoint from SECRET_WORDS, so a real secret's random characters spell no
+ * word of it (docs/adr/0033).
+ */
+const ALGO_WORDS = new Set(
+  (
+    'scram sha shake md blake ripemd whirlpool crc xxh siphash ' +
+    'hmac hkdf pbkdf argon bcrypt scrypt with ' +
+    'aes des desede rc twofish serpent camellia idea chacha cha salsa blowfish aria sm ' +
+    'ecb cbc ctr ccm gcm cfb ofb xts siv kw kwr padding pkcs oaep pss no ' +
+    'rsa dsa dh ecdsa ecdh ecdhe ed x p ecc curve id ' +
+    'tls ssl sasl gssapi jwt jose hs rs es ps poly'
+  ).split(' '),
+)
+
+/** The words in a value: runs of letters, with the boundary of a camelCase word opened. */
+function algorithmWords(v: string): string[] {
+  const out: string[] = []
+  for (const part of v.split(/[^A-Za-z]+/)) {
+    if (part === '') continue
+    for (const w of part.match(/[A-Z]+[a-z]*|[a-z]+|[A-Z]+/g) ?? []) out.push(w.toLowerCase())
+  }
+  return out
+}
+
+/**
+ * The name of a published cryptographic algorithm, not a value: a Kafka
+ * scram_mechanism's SCRAM-SHA-512, PBKDF2WithHmacSHA256,
+ * ECDHE-RSA-AES128-GCM-SHA256. A spec publishes these names for anyone to
+ * read, so masking one hides nothing — it only mangles a config in a tool's
+ * output, and a reader suspects the config was edited. Every word of the
+ * value has to be one of ALGO_WORDS and its characters a name's, or it is not
+ * one: the words are published vocabulary, and a secret is not spelled out of
+ * them (docs/adr/0033).
+ */
+export function algorithmValue(v: string): boolean {
+  if (!hasDigit(v) || !/^[A-Za-z0-9][A-Za-z0-9 ._+/-]*$/.test(v)) return false
+  const words = algorithmWords(v)
+  return words.length > 0 && words.every((w) => ALGO_WORDS.has(w))
+}
+
 const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'secrets', 'password', 'passwords', 'passwd', 'pwd', 'key', 'keys', 'apikey', 'credential', 'credentials'])
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/
 
