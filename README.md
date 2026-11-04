@@ -2,9 +2,11 @@
 
 [English](README.en.md) | 简体中文
 
-DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
+![模型只看见 {{占位符}}：密钥、凭据、个人信息发出前换成占位符，回复里再换回原值，一处拦截，所有 provider 都经过它](docs/assets/screenshots/0-banner.png)
 
-状态：已发布到 npm。
+在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
+
+如果你在用**中转站**或者在处理**敏感信息**、**线上数据**，请务必注意保护信息安全。
 
 ## 安装
 
@@ -13,12 +15,20 @@ DeepSeek Harness 插件：在宿主进程的 undici 全局 dispatcher 上装一�
 dsh plugin --profile web add dsh-privacy-gateway@latest
 
 # 同一版本的 GitHub Release 附件（预发布也发在这里）
-dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0/dsh-privacy-gateway-0.1.0.tgz
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.4/dsh-privacy-gateway-0.1.4.tgz
 ```
 
 预发布版本号带 `-`，只发 GitHub Release、不发 npm。仓库不提交 `lib/`，`dsh plugin add github:…` 拿到的树加载不了（[ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)）。
 
-在默认的 web profile 里首次安装即装即用，无需重启。更新时，只改 client 的版本立即生效；含 host 改动的版本需重启 dsh。
+在默认的 web profile 里首次安装即装即用，无需重启 dsh 实例。通过 dsh web profile 的插件更新功能更新插件时，无需重启 dsh 实例。手动更新时建议先卸载旧版本再安装新版本，这样也不需要重启。
+
+## 功能
+
+- **脱敏范围**：密钥、token、密码、私钥、cookie、邮箱、手机号、身份证、银行卡、自定义敏感词，各有开关。
+- **动作可选**：按 kind 选 `mask` / `warn` / `block`，密钥可换成同形的假 key（`shape`）。
+- **记录与统计**：按天落盘的脱敏记录、统计卡、会话「隐私保护」标签页；记录里只有占位符，没有真值。
+- **`/privacy` 命令**：查状态、临时开关、`test` 预览一段文本会怎样发出。
+- **配置热更新**：日常项在插件页上改，下一次调用即生效；脱敏出错时请求不发出。
 
 ## 脱敏范围
 
@@ -58,6 +68,7 @@ someone@gmail.com                                                    → EMAIL
 - 同一个值重复出现，占位符相同。
 - 短于 8 个字符的秘密（`abc123`、`666666`、`888888` 这类口令）不算值：照原样发出，也不进记录。它们随时能被爆破，遮住只是给人一种并不存在的保护；值表本来也不把这么短的值当作已知值（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)）。
 - 明显是占位写法的值不算值：8 个以上相同字符连排（`sk-proj-xxxx…`、`AKIA0000…`），或自带「这是占位」说明（`your_api_key`、`example`、`changeme`、`placeholder`、`dummy`、`***`）。随机 key 出现 8 连排的概率低于十亿分之一，`sk_test_…` 这种真测试 key 照旧脱敏（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)）。
+- 加密算法的名字不算值：`SCRAM-SHA-512`、`PBKDF2WithHmacSHA256` 这类名字写在规范里、人人可读，遮住什么都不保护，原样发出（[ADR-0033](docs/adr/0033-algorithm-names.md)）。
 - 键名和值一样脱敏：`{"metadata": {"sk-…": …}}` 里的键名也换成占位符，回复里再换回来；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名不动（[ADR-0029](docs/adr/0029-mask-json-keys.md)）。
 
 ## 界面

@@ -2,9 +2,11 @@
 
 [简体中文](README.md) | English
 
-A DeepSeek Harness plugin that adds a redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
+![The model only sees {{placeholder}}: secrets, credentials and personal data are replaced with placeholders before they are sent, and restored in the replies — one interception point, every provider goes through it](docs/assets/screenshots/0-banner.png)
 
-Status: published on npm.
+A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
+
+If you are using an **API relay**, or you are working with **sensitive information** or **production data**, please be sure to protect information security.
 
 ## Install
 
@@ -13,12 +15,20 @@ Status: published on npm.
 dsh plugin --profile web add dsh-privacy-gateway@latest
 
 # The same version as a GitHub Release asset (prereleases get one too)
-dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.0/dsh-privacy-gateway-0.1.0.tgz
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.4/dsh-privacy-gateway-0.1.4.tgz
 ```
 
 A prerelease version has a `-` in it and goes to GitHub Releases only, never to npm. The repository does not commit `lib/`, so `dsh plugin add github:…` cannot load the plugin ([ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)).
 
-In the default web profile the first install works at once, with no restart. After an upgrade, a release that changed only the client takes effect at once; one with host changes needs a restart of dsh.
+In the default web profile the first install works at once, with no restart of the dsh instance. Updating the plugin through the dsh web profile's plugin update feature needs no restart of the dsh instance either. When updating by hand, uninstall the old version before installing the new one, and that needs no restart either.
+
+## Features
+
+- **What is masked**: keys, tokens, passwords, private keys, cookies, email addresses, phone numbers, ID card and bank card numbers, and your own words — each with its own switch.
+- **Actions**: pick `mask` / `warn` / `block` per kind; a key can be sent as a made-up key of its own form (`shape`).
+- **Records and statistics**: records written to disk by the day, a statistics card, and the session's 「隐私保护」 (Privacy) tab; a record holds placeholders, never a value.
+- **The `/privacy` command**: status, a temporary on / off, and `test` to preview how a text would go out.
+- **Live configuration**: everyday items are changed on the plugin page and apply from the next call; when masking fails, the request is not sent.
 
 ## What is masked
 
@@ -58,6 +68,7 @@ someone@gmail.com                                                    → EMAIL
 - One value seen again gets the same placeholder.
 - A secret shorter than 8 characters (`abc123`, `666666`, `888888`: a short password) is no value: it goes as written and makes no record. It is guessed in no time, so masking it only promises a protection that is not there — and the value table never matched anything that short as known anyway ([ADR-0031](docs/adr/0031-no-short-or-template-values.md)).
 - A value typed to stand for a key is no value: eight or more of one character in a row (`sk-proj-xxxx…`, `AKIA0000…`), or one that says what it is (`your_api_key`, `example`, `changeme`, `placeholder`, `dummy`, `***`). A random key has such a run with a chance below one in a billion, and a vendor's real test key (`sk_test_…`) is still masked ([ADR-0031](docs/adr/0031-no-short-or-template-values.md)).
+- The name of a cryptographic algorithm is no value: names like `SCRAM-SHA-512` and `PBKDF2WithHmacSHA256` are published in a spec for anyone to read, so masking one hides nothing; they go as they are ([ADR-0033](docs/adr/0033-algorithm-names.md)).
 - A key is masked the way a value is: the key in `{"metadata": {"sk-…": …}}` goes as a placeholder and comes back in the reply. The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched ([ADR-0029](docs/adr/0029-mask-json-keys.md)).
 
 ## Screens
