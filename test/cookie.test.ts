@@ -53,6 +53,26 @@ test('cookies.txt masks the seventh column', () => {
   assert.ok(out.text.includes('\t1924905600\tBDUSS\t{{COOKIE_'))
 })
 
+test('a cookie object written as a dict masks its value; its own fields stay', () => {
+  // a Playwright storageState / HAR object: domain, path and expires are the object's fields, no cookies (docs/adr/0010)
+  const text = `cookie={"name":"sess","value":"${SID}","domain":"example.test","path":"/","expires":"Wed, 21 Oct 2026 07:28:00 GMT","httpOnly":true}`
+  const out = check(text, [SID])
+  assert.ok(out.text.includes('"domain":"example.test"') && out.text.includes('"expires":"Wed, 21 Oct 2026 07:28:00 GMT"'), out.text)
+  assert.deepEqual(out.hits.map((h) => h.head), ['sess'])
+})
+
+test('a code sample building a cookie leaves its fields and the JSON after it', () => {
+  // the values are variables, and a field of an object is no cookie however it is named
+  const { masker } = setup()
+  const text = 'cookie={\\"name\\":name,\\"value\\":value 209:{"key":1,"time":"2030-01-01T00:00:00.000Z"}'
+  assert.equal(masker.maskText(text).n, 0)
+})
+
+test('a dict of cookies masks a value with a brace in it', () => {
+  const v = 'ab}cd8f9g0h1'
+  check(`cookies={"sess": "${v}"}`, [v])
+})
+
 test('a storageState cookie object masks its value; domain, path and expires stay', () => {
   const state = JSON.stringify({ cookies: [{ name: 'connect.sid', value: SID, domain: '.x.cn', path: '/', expires: 1924905600, httpOnly: true }] }, null, 2)
   const out = check(state, [SID])

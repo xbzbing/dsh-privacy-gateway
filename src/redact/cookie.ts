@@ -130,6 +130,30 @@ function quotedEnd(c: Ctx, i: number, quote: string): number {
 }
 
 /**
+ * The end of the object whose `{` is s[i]: the `}` that matches it, or the cap
+ * where it is not closed. A `}` inside a quoted value is no end, and a quote
+ * may be written escaped (\"…\", a JSON string holding JSON).
+ */
+function objectEnd(c: Ctx, i: number): number {
+  const s = c.s
+  const cap = Math.min(s.length, i + 4096)
+  let depth = 0
+  let k = i
+  while (k < cap) {
+    const ch = s[k] as string
+    if (ch === '"' || ch === "'") {
+      const q = c.next.index(ch, k + 1)
+      k = q < cap ? q + 1 : cap
+      continue
+    }
+    if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return k
+    k++
+  }
+  return cap
+}
+
+/**
  * A name starts where a run of name characters does, and is at most 64 of
  * them on each side of cookie: tried from every place in a long run, the
  * pattern read the rest of it each time.
@@ -148,12 +172,16 @@ function namedFields(c: Ctx): void {
     const first = name.endsWith('set-cookie')
     let i = m.index + m[0].length
     if (s[i] === '{') {
-      // a dict of cookies by name: {"BDUSS": "…", "STOKEN": "…"}
-      const close = s.indexOf('}', i)
-      const end = close < 0 ? Math.min(s.length, i + 4096) : close
-      for (const d of s.slice(i, end).matchAll(DICT_PAIR)) {
-        const g = (d.indices as Array<[number, number]>)[2] as [number, number]
-        value(c, d[1] as string, i + g[0], i + g[1])
+      const end = objectEnd(c, i)
+      const body = s.slice(i, end)
+      // a cookie written as an object: only its value is a cookie's (docs/adr/0010)
+      if (isCookieObject(body)) cookieObject(c, body, i, true)
+      else {
+        // a dict of cookies by name: {"BDUSS": "…", "STOKEN": "…"}
+        for (const d of body.matchAll(DICT_PAIR)) {
+          const g = (d.indices as Array<[number, number]>)[2] as [number, number]
+          value(c, d[1] as string, i + g[0], i + g[1])
+        }
       }
       read = end
       continue
@@ -193,6 +221,48 @@ function cookiesTxt(c: Ctx): void {
 
 const FLAT_OBJECT = /\{[^{}]{1,4000}\}/g
 const OBJ_FIELD = /\\?"(name|value|domain|httpOnly)\\?"[ \t]*:[ \t]*(\\?"([^"\\\n]*)\\?"|true|false)/dgi
+/** A cookie object's own fields, by the names they have whether or not their value is a literal ({\"name\":name). */
+const OBJ_NAME = /\\?["']name\\?["'][ \t]*:/i
+const OBJ_VALUE = /\\?["']value\\?["'][ \t]*:/i
+
+/**
+ * Whether a text reads as a cookie object (Playwright storageState, HAR, a
+ * browser extension's) and not as a dict of cookies by name: it has a name and
+ * a value field, and those are the object's own, no cookie's (docs/adr/0010).
+ */
+function isCookieObject(text: string): boolean {
+  return OBJ_NAME.test(text) && OBJ_VALUE.test(text)
+}
+
+/**
+ * Masks what an object writes of its cookie: the `value`, and nothing else —
+ * a `domain`, `path` or `expires` is no cookie and stays (docs/adr/0010). A
+ * HAR header object {"name": "Cookie", "value": "…"} is a Cookie: line, and one
+ * named Set-Cookie is a Set-Cookie: line. `named` says the object was found
+ * under a cookie's name, where a name and a value alone are enough. False where
+ * the object writes no value this can mask.
+ */
+function cookieObject(c: Ctx, text: string, base: number, named = false): boolean {
+  let name: string | undefined
+  let val: [number, number] | undefined
+  let cookieish = false
+  for (const f of text.matchAll(OBJ_FIELD)) {
+    const key = (f[1] as string).toLowerCase()
+    if (key === 'domain' || key === 'httponly') cookieish = true
+    if (f[3] === undefined) continue
+    if (key === 'name') name = f[3]
+    if (key === 'value') {
+      const g = (f.indices as Array<[number, number]>)[3] as [number, number]
+      val = [base + g[0], base + g[1]]
+    }
+  }
+  if (name === undefined || !val) return false
+  const lower = name.toLowerCase()
+  if (lower === 'cookie' || lower === 'set-cookie') pairs(c, val[0], val[1], lower === 'set-cookie')
+  else if (cookieish || named) value(c, name, val[0], val[1])
+  else return false
+  return true
+}
 
 /**
  * A cookie as an export writes it (Playwright storageState, HAR, a browser
@@ -200,28 +270,7 @@ const OBJ_FIELD = /\\?"(name|value|domain|httpOnly)\\?"[ \t]*:[ \t]*(\\?"([^"\\\
  * HAR header object {"name": "Cookie", "value": "…"} is a Cookie: line.
  */
 function cookieObjects(c: Ctx): void {
-  const s = c.s
-  for (const o of s.matchAll(FLAT_OBJECT)) {
-    const text = o[0]
-    if (!/value/i.test(text) || !/name/i.test(text)) continue
-    let name: string | undefined
-    let val: [number, number] | undefined
-    let cookieish = false
-    for (const f of text.matchAll(OBJ_FIELD)) {
-      const key = (f[1] as string).toLowerCase()
-      if (key === 'domain' || key === 'httponly') cookieish = true
-      if (f[3] === undefined) continue
-      if (key === 'name') name = f[3]
-      if (key === 'value') {
-        const g = (f.indices as Array<[number, number]>)[3] as [number, number]
-        val = [o.index + g[0], o.index + g[1]]
-      }
-    }
-    if (name === undefined || !val) continue
-    const lower = name.toLowerCase()
-    if (lower === 'cookie' || lower === 'set-cookie') pairs(c, val[0], val[1], lower === 'set-cookie')
-    else if (cookieish) value(c, name, val[0], val[1])
-  }
+  for (const o of c.s.matchAll(FLAT_OBJECT)) if (isCookieObject(o[0])) cookieObject(c, o[0], o.index)
 }
 
 function namedCookies(c: Ctx, plan: CookiePlan): void {

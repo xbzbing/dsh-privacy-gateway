@@ -25,3 +25,11 @@ magpie 没有 cookie 规则。会话 cookie 是登录凭据，常出现在 agent
 - 一串 cookie 逐值占位、名字保留，还原后 `curl -b '…'` 与原文逐字节相同。
 - 上下文之外、不在名单里的 cookie 值认不出来；要覆盖就把名字加进 `cookieNames`。
 - 名单 cookie 的 `名=值` 在正文里出现也会被脱敏，代价是偶尔换掉文档里的示例值。
+
+## 补充（2026-11-05）：对象与按名索引的 dict 分开认
+
+`cookie={…}` 后面那个对象既可能是「按 cookie 名索引的 dict」（`{"BDUSS": "…"}`），也可能是 cookie 对象（`{"name": "…", "value": "…", "domain": "…", "expires": "…"}`）。原来的实现一律按 dict 逐对取，于是对象的 `domain`、`expires`、`path` 被当成 cookie 值脱敏（与本节「只脱敏 `value`」相违），对象后面跟着的别的 JSON（记录文件里的一条 `{"key": …, "time": …}`）也被一起当成 cookie 对，`time`、`host`、`session` 这些字段的值因此进了知识表，之后在任何请求里以 `known` 命中。线上表现为：`127.0.0.1`（`http://127.0.0.1:61216` 这类 URL 里的地址）被学成 cookie 值，此后每个会话的地址都被换成同形假值，记录里看着像「COOKIE 却是个 IP/域名」。
+
+- 只有带 `name` 与 `value` 两个字段的对象才算 cookie 对象，也只脱敏它的 `value`；其余 `{…}` 才按 cookie 名索引的 dict 处理。
+- 对象的范围按配对的 `}` 找，引号里的 `}` 不算结束（原来取第一个 `}`，会把后面的 JSON 圈进来）。
+- 值的字面量才脱敏：`"value": value`（变量）没有值可脱。
