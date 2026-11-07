@@ -97,7 +97,7 @@ someone@gmail.com                                                    → EMAIL
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用（[ADR-0004](docs/adr/0004-protected-regions.md)） |
 | `protectTools` | `true` | 请求的 `tools` 数组原样发出 |
 | `excludeHosts` | `[]` | 不改写的 `host` 或 `host:port` |
-| `excludeProviders` | `[]` | 不脱敏的 provider id；「配置」页里从当前注册的 provider 中勾选（[ADR-0018](docs/adr/0018-exclude-providers.md)） |
+| `excludeProviders` | `[]` | 不脱敏的 provider id；「配置」页里从当前注册的 provider 中勾选。放行的请求原样发出、回复不还原、不留记录，有请求发出时日志里每个 provider 提示一次（[ADR-0018](docs/adr/0018-exclude-providers.md)、[ADR-0034](docs/adr/0034-log-excluded-provider.md)） |
 | `maxValues` | `5000` | 内存值表上限，满了淘汰最老的一半 |
 | `record` | `true` | 脱敏记录写盘；关掉只在内存里统计 |
 | `keepDays` | `30` | 记录保留天数 |

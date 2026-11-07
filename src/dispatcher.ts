@@ -4,7 +4,7 @@ import zlib from 'node:zlib'
 import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
-import { currentSession, inModelCall } from './providers.ts'
+import { bypassedProvider, currentSession, inModelCall } from './providers.ts'
 
 type Options = Dispatcher.DispatchOptions
 type Handler = Dispatcher.DispatchHandler
@@ -643,8 +643,10 @@ const RANK: Record<LayerRole, number> = { route: 0, proxy: 1 }
  * untouched. An upgrade a model call opens (the Codex WebSocket) is refused
  * (docs/adr/0025); one a plugin opens outside a call — dsh-im-infoflow's
  * inbound, say — is let through unmasked, with one warn per host
- * (docs/adr/0032). Masking that throws fails the request instead of sending
- * it (docs/adr/0005). The layers under it are ordered by role (docs/adr/0012).
+ * (docs/adr/0032). A request an excluded provider sends is let through
+ * unmasked, with one warn per provider (docs/adr/0034). Masking that throws
+ * fails the request instead of sending it (docs/adr/0005). The layers under it
+ * are ordered by role (docs/adr/0012).
  */
 export class MaskingDispatcher extends Dispatcher {
   readonly #engine: RedactionEngine
@@ -656,6 +658,8 @@ export class MaskingDispatcher extends Dispatcher {
   #order: Layer[] | undefined
   /** Hosts a tunnel was let through to: each warned about once, however often it reconnects. */
   readonly #warnedTunnels = new Set<string>()
+  /** Providers whose unmasked requests were reported: once each, however many requests (docs/adr/0034). */
+  readonly #warnedProviders = new Set<string>()
   /** Set once the gateway is disposed: every request that still reaches it (through a layer that holds it) passes through. */
   bypass = false
   readonly [kGateway] = true
@@ -783,7 +787,14 @@ export class MaskingDispatcher extends Dispatcher {
       }
     }
     const next = this.downstream()
-    if (this.bypass || !this.#candidate(opts)) return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
+    if (this.bypass || !this.#maskable(opts)) return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
+    if (this.#passes(opts)) {
+      // A request an excluded provider sends goes out as it is (docs/adr/0018), and no record
+      // shows it: said once for that provider, so the user learns this one is not masked
+      // (docs/adr/0034). Masking off and a session's own switch are told where they are turned off.
+      this.#noteUnmasked()
+      return next.dispatch({ ...opts, [kHop]: next } as Options, handler)
+    }
     void this.#intercept(opts, wrapHandler(handler))
     return true
   }
@@ -820,11 +831,24 @@ export class MaskingDispatcher extends Dispatcher {
     return t !== undefined && (this.#excludeHosts.includes(t.host) || this.#excludeHosts.includes(t.hostname))
   }
 
-  #candidate(opts: Options): boolean {
+  /** Says once per provider that requests of it go out unmasked, for a provider excludeProviders lets by (docs/adr/0034). */
+  #noteUnmasked(): void {
+    const provider = bypassedProvider()
+    // by id, in any case: the exclusion itself ignores case, so two spellings of one id are one provider
+    const id = provider?.toLowerCase()
+    if (id === undefined || this.#warnedProviders.has(id)) return
+    if (this.#warnedProviders.size >= 32) this.#warnedProviders.clear()
+    this.#warnedProviders.add(id)
+    // quoted: the id comes from the configuration, and a line break in it would forge a log line
+    this.#logger?.warn(`dsh-privacy-gateway: requests of provider ${JSON.stringify(provider)} go out unmasked (excludeProviders); this is said once for that provider`)
+  }
+
+  /** Whether `opts` would be read and masked but for a bypass: a POST of a JSON body, not a tunnel. */
+  #maskable(opts: Options): boolean {
     if (String(opts.method).toUpperCase() !== 'POST' || isTunnel(opts) || !isReadableBody(opts.body)) return false
     const type = headerValue(opts.headers, 'content-type')
     if (type !== undefined && !type.toLowerCase().includes('json')) return false
-    return !this.#passes(opts)
+    return true
   }
 
   /**

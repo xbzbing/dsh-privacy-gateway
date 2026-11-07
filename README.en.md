@@ -99,7 +99,7 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them ([ADR-0004](docs/adr/0004-protected-regions.md)) |
 | `protectTools` | `true` | Send the request's `tools` array as written |
 | `excludeHosts` | `[]` | `host` or `host:port` entries that are never rewritten |
-| `excludeProviders` | `[]` | Provider ids whose requests are not masked; checked on the Configure page from the providers registered now ([ADR-0018](docs/adr/0018-exclude-providers.md)) |
+| `excludeProviders` | `[]` | Provider ids whose requests are not masked; checked on the Configure page from the providers registered now. Their requests go out as they are, replies are not restored, nothing is recorded, and the log says so once for each provider ([ADR-0018](docs/adr/0018-exclude-providers.md), [ADR-0034](docs/adr/0034-log-excluded-provider.md)) |
 | `maxValues` | `5000` | Size of the in-memory value table; when full, the oldest half is dropped |
 | `record` | `true` | Write the masking records to disk; when off, the statistics stay in memory |
 | `keepDays` | `30` | Days of records kept |

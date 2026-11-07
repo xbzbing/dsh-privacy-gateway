@@ -72,6 +72,68 @@ test('requests through the plugin’s own llm/stream listener are masked unless 
   assert.equal(getGlobalDispatcher(), before)
 })
 
+test('an excluded provider’s request goes out unmasked, and the log says so once for that provider', async () => {
+  const bodies: string[] = []
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => chunks.push(c))
+    req.on('end', () => {
+      bodies.push(Buffer.concat(chunks).toString('utf8'))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-skip-warn-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const before = getGlobalDispatcher()
+  const disposers: Array<() => void> = []
+  const warnings: unknown[][] = []
+  // the one warn the gateway writes for a provider excludeProviders lets by
+  const reported = (): unknown[][] => warnings.filter((w) => String(w[0]).includes('excludeProviders'))
+  let listener: Listener | undefined
+  const ctx: PluginContext = {
+    logger: { info() {}, warn: (...a: unknown[]) => warnings.push(a), error() {} },
+    effect: (fn) => disposers.push(fn()),
+    on: (name: string, l: unknown) => {
+      if (name === 'llm/stream') listener = l as Listener
+    },
+  }
+  try {
+    apply(ctx, { excludeProviders: ['deepseek'] })
+    const call = async (provider: unknown, sessionId?: unknown, method = 'POST'): Promise<string> => {
+      const n = bodies.length
+      async function* adapter() {
+        const res = await fetch(url, method === 'GET' ? { method } : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }) })
+        yield await res.text()
+      }
+      for await (const _ of (listener as Listener)({ provider, sessionId }, adapter)) void _
+      return bodies[n] ?? ''
+    }
+    // a provider that is masked is no risk: nothing is said about it
+    assert.ok(!(await call('openai', 'sess-1')).includes(OPENAI))
+    assert.equal(reported().length, 0, 'no warn for a provider that is masked')
+    // an excluded provider's request goes out as it is, and the log says so, naming the provider
+    assert.ok((await call('DeepSeek', 'sess-1')).includes(OPENAI))
+    assert.equal(reported().length, 1)
+    assert.match(String(reported()[0]?.[0]), /"DeepSeek"/, 'the warn names the provider as the host did')
+    // a further request of it is not reported again, and one that would not be masked anyway is no risk
+    assert.ok((await call('deepseek')).includes(OPENAI))
+    await call('deepseek', undefined, 'GET')
+    assert.equal(reported().length, 1, 'one warn per provider, however many requests')
+    assert.ok(!JSON.stringify(warnings).includes(OPENAI), 'no value in a warn')
+  } finally {
+    for (const d of disposers) d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+  assert.equal(getGlobalDispatcher(), before)
+})
+
 test('through the plugin’s own listener, a plugin’s WebSocket is let through and a call’s is refused', async () => {
   let upgrades = 0
   const server = createServer()
