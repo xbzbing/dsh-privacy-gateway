@@ -74,8 +74,13 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconRefreshOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
   export const IconTrashOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
   export const IconWarningOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconChevronDownOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
   export const IconChevronRightOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
   export const IconChevronLeftOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+  export const IconInfoOutlineRegular: (props: { size?: number; className?: string }) => JSX.Element
+
+  /** A card shown on hover (the shell's own): the pointer may rest on it, so it reads as prose, not as a one-line bubble. */
+  export function HoverCard(props: { anchor: ReactNode; content: ReactNode; openDelayMs?: number; disabled?: boolean }): JSX.Element
   /** A row of mutually exclusive options. */
   export function SegmentedControl<V extends string>(props: {
     id: string

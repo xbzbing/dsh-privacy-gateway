@@ -1,7 +1,10 @@
 /**
  * The card's CSS, injected once; colours through the theme's --dsw-alias-*
- * tokens only, and code in the theme's own code font (--ds-font-family-code,
- * which dsh-client-ui-theme defines and the shell's markdown uses).
+ * tokens only, except the shell's hover card: it paints a fixed dark surface
+ * (#2C2C2E) and leaves the content's colour to the page, so its text takes the
+ * light palette the shell's own hover cards use (styles keep code in the
+ * theme's code font, --ds-font-family-code, which dsh-client-ui-theme defines
+ * and the shell's markdown uses).
  */
 const MONO = 'var(--ds-font-family-code,ui-monospace,monospace)'
 
@@ -39,10 +42,12 @@ const CSS = `
 .pgw-dist{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;min-width:0}
 .pgw-section{display:flex;flex-direction:column;gap:8px}
 .pgw-section__head{display:flex;align-items:baseline;gap:8px}
-.pgw-section__title,.pgw-dist__title{font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.pgw-section__title,.pgw-dist__title{display:flex;align-items:center;gap:4px;font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .pgw-bar{display:flex;flex-direction:column;gap:4px;font-size:12px}
 .pgw-bar__head{display:flex;justify-content:space-between;gap:8px}
+.pgw-bar__head>*{min-width:0}
 .pgw-bar__label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:${MONO};color:var(--dsw-alias-label-primary)}
+.pgw-bar__label--hint{cursor:help}
 .pgw-bar__value{flex:none;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
 .pgw-bar__track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .pgw-bar__fill{height:100%;border-radius:2px;background:var(--dsw-alias-state-business-primary)}
@@ -69,6 +74,16 @@ const CSS = `
 .pgw-values{border-collapse:collapse;width:100%}
 .pgw-values th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:4px 12px 4px 0;border-bottom:.5px solid var(--dsw-alias-border-l2);white-space:nowrap}
 .pgw-values td{padding:4px 12px 4px 0;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pgw-values__empty td{padding:12px 0;color:var(--dsw-alias-label-tertiary)}
+.pgw-filter{display:inline-flex;align-items:center;gap:2px;padding:0;border:none;background:none;font:inherit;font-size:12px;line-height:18px;color:inherit;cursor:pointer}
+@media (hover:hover){.pgw-filter:hover{color:var(--dsw-alias-label-primary)}}
+.pgw-filter--on{color:var(--dsw-alias-label-primary);font-weight:600}
+.pgw-filter__chevron{opacity:.7}
+.pgw-dist__anchor{display:inline-flex;align-items:center;gap:4px;cursor:help}
+.pgw-dist__info{color:var(--dsw-alias-label-tertiary)}
+.pgw-hint{display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:18px;text-align:left;color:#fff}
+.pgw-hint__title{font-weight:600}
+.pgw-hint__body,.pgw-hint__note{color:#cfd3d6}
 .pgw-values__ctx td{padding:0 12px 8px 0;white-space:normal}
 .pgw-values__ctx td>*{vertical-align:middle}
 .pgw-ctx{display:flex;flex-direction:column;gap:2px}

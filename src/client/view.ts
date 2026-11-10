@@ -4,7 +4,7 @@
  */
 import type { Overview } from '../remote.ts'
 import type { MaskRecord, Place, Totals, ValueRecord } from '../records.ts'
-import type { T } from './locales.ts'
+import type { Key, T } from './locales.ts'
 import type { Failure, Result } from './rpc.ts'
 
 export type Range = 'today' | 'week' | 'month'
@@ -26,6 +26,59 @@ export function bars(m: Record<string, number>, max = 6, others = '…'): Bar[] 
   if (rest > 0) shown.push([others, rest])
   const top = shown.reduce((m2, [, v]) => Math.max(m2, v), 0)
   return shown.map(([label, value]) => ({ label, value, pct: top > 0 ? Math.max(2, Math.round((value / top) * 100)) : 0 }))
+}
+
+/** The kinds the gateway writes, as the README's masking table names them (docs/adr/0035). */
+export const KIND_NAMES = ['SECRET', 'PASSWORD', 'API_KEY', 'TOKEN', 'PRIVATE_KEY', 'COOKIE', 'EMAIL', 'PHONE', 'ID_CARD', 'BANK_CARD', 'TERM'] as const
+
+/** The finders, as the record's `finder` names them (src/redact/ids.ts). */
+export const FINDER_NAMES = ['rule', 'word', 'known', 'cookie'] as const
+
+const KIND_HINT_KEYS: Record<string, Key> = {
+  SECRET: 'hint.kind.SECRET',
+  PASSWORD: 'hint.kind.PASSWORD',
+  API_KEY: 'hint.kind.API_KEY',
+  TOKEN: 'hint.kind.TOKEN',
+  PRIVATE_KEY: 'hint.kind.PRIVATE_KEY',
+  COOKIE: 'hint.kind.COOKIE',
+  EMAIL: 'hint.kind.EMAIL',
+  PHONE: 'hint.kind.PHONE',
+  ID_CARD: 'hint.kind.ID_CARD',
+  BANK_CARD: 'hint.kind.BANK_CARD',
+  TERM: 'hint.kind.TERM',
+}
+
+const FINDER_HINT_KEYS: Record<string, Key> = {
+  rule: 'hint.finder.rule',
+  word: 'hint.finder.word',
+  known: 'hint.finder.known',
+  cookie: 'hint.finder.cookie',
+}
+
+/** What a kind means, for the hover card, when this version knows it; a record of another version may say one it does not. */
+export function kindHintKey(kind: string): Key | undefined {
+  return KIND_HINT_KEYS[kind]
+}
+
+/** What a finder means, for the hover card, when this version knows it. */
+export function finderHintKey(finder: string): Key | undefined {
+  return FINDER_HINT_KEYS[finder]
+}
+
+/** What the values table shows: both narrow together, neither narrows when it is left out (docs/adr/0035). */
+export interface ValueFilter {
+  kind?: string
+  finder?: string
+}
+
+/** The values `f` keeps, in the record's order. */
+export function filterValues(values: readonly ValueRecord[], f: ValueFilter): ValueRecord[] {
+  return values.filter((v) => (f.kind === undefined || v.kind === f.kind) && (f.finder === undefined || v.finder === f.finder))
+}
+
+/** The names one column offers as filters: each once, the empty one dropped, in code-unit order so the menu holds still. */
+export function namesOf(values: readonly ValueRecord[], field: 'kind' | 'finder'): string[] {
+  return [...new Set(values.map((v) => v[field]).filter((n) => n !== ''))].sort()
 }
 
 export type WarningKey = 'warn.streak' | 'warn.unmapped' | 'warn.inTools' | 'warn.exfil'

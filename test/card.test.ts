@@ -7,14 +7,34 @@ import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
 
-import { afterRefresh, bars, bodyLines, elsewhereText, placeKey, placeLabel, readOverview, stepLabel, stepOf, timeLabel, took, valuesKey, warnings } from '../src/client/view.ts'
+import {
+  afterRefresh,
+  bars,
+  bodyLines,
+  elsewhereText,
+  filterValues,
+  FINDER_NAMES,
+  finderHintKey,
+  KIND_NAMES,
+  kindHintKey,
+  namesOf,
+  placeKey,
+  placeLabel,
+  readOverview,
+  stepLabel,
+  stepOf,
+  timeLabel,
+  took,
+  valuesKey,
+  warnings,
+} from '../src/client/view.ts'
 import { PACKAGE } from '../src/client/ids.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { DESCRIPTION_MARK, panelDecision, watchShowPanel, type ConfigForms } from '../src/client/panelConfig.ts'
 import { call, failureText, type ClientCtx } from '../src/client/rpc.ts'
 import { createStore } from '../src/client/store.ts'
 import { Config, SHOW_PANEL_DESCRIPTION } from '../src/config.ts'
-import { emptyTotals, type Stats } from '../src/records.ts'
+import { emptyTotals, type Stats, type ValueRecord } from '../src/records.ts'
 import { clampLimit, NAMESPACE, PrivacyGatewayService, type Overview } from '../src/remote.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -68,6 +88,40 @@ test('the bars go largest first, the rest summed, as shares of the largest', () 
   assert.equal(many.length, 7)
   assert.deepEqual(many[6], { label: 'other', value: 5, pct: 56 })
   assert.deepEqual(bars({}), [])
+})
+
+test('a record’s values are narrowed by kind and finder, each column offering its names once', () => {
+  const value = (kind: string, finder: ValueRecord['finder'], placeholder = `${kind}:${finder}`): ValueRecord => ({ placeholder, kind, finder, head: '', len: 8, n: 1 })
+  const values = [value('API_KEY', 'rule'), value('API_KEY', 'known', 'b'), value('EMAIL', 'rule', 'c'), value('TERM', 'word', 'd')]
+  assert.equal(filterValues(values, {}).length, 4)
+  assert.deepEqual(filterValues(values, { kind: 'API_KEY' }).map((v) => v.finder), ['rule', 'known'])
+  assert.deepEqual(filterValues(values, { finder: 'rule' }).map((v) => v.kind), ['API_KEY', 'EMAIL'])
+  assert.deepEqual(filterValues(values, { kind: 'API_KEY', finder: 'known' }).map((v) => v.placeholder), ['b'])
+  assert.deepEqual(filterValues(values, { kind: 'NOPE' }), [])
+  assert.deepEqual(namesOf(values, 'kind'), ['API_KEY', 'EMAIL', 'TERM'])
+  assert.deepEqual(namesOf(values, 'finder'), ['known', 'rule', 'word'])
+  // a value another version wrote without a name offers no filter row of its own
+  assert.deepEqual(namesOf([value('', 'rule')], 'kind'), [])
+  assert.deepEqual(namesOf([], 'finder'), [])
+})
+
+test('every kind and finder the gateway writes is explained in both languages', () => {
+  for (const k of KIND_NAMES) {
+    const key = kindHintKey(k)
+    assert.ok(key, k)
+    assert.equal(typeof zh[key], 'string', `zh ${k}`)
+    assert.equal(typeof en[key], 'string', `en ${k}`)
+    assert.notEqual(zh[key], en[key], `en says something else for ${k}`)
+  }
+  for (const f of FINDER_NAMES) {
+    const key = finderHintKey(f)
+    assert.ok(key, f)
+    assert.equal(typeof zh[key], 'string', `zh ${f}`)
+    assert.equal(typeof en[key], 'string', `en ${f}`)
+  }
+  // a name this version does not know is left without an explanation rather than given a wrong one
+  assert.equal(kindHintKey('TERM_OLD'), undefined)
+  assert.equal(finderHintKey('regexp'), undefined)
 })
 
 test('the warnings are the failure streak, unknown placeholders and restores in tool arguments', () => {

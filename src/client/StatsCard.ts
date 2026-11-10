@@ -158,9 +158,9 @@ function Card(props: CardProps): ReactNode {
     h(
       'div',
       { className: 'pgw-dists' },
-      h(Dist, { title: t('dist.kind'), data: totals.kinds, empty: t('dist.empty') }),
-      h(Dist, { title: t('dist.finder'), data: totals.finders, empty: t('dist.empty') }),
-      h(Dist, { title: t('dist.host'), data: totals.hosts, empty: t('dist.empty') }),
+      h(Dist, { t, title: t('dist.kind'), data: totals.kinds, others: t('dist.others.kind'), empty: t('dist.empty'), field: 'kind' }),
+      h(Dist, { t, title: t('dist.finder'), data: totals.finders, others: t('dist.others.finder'), empty: t('dist.empty'), field: 'finder' }),
+      h(Dist, { t, title: t('dist.host'), data: totals.hosts, others: t('dist.others.host'), empty: t('dist.empty') }),
     ),
     h(
       'div',

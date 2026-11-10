@@ -1,12 +1,25 @@
 /** The pieces of the statistics card (StatsCard.ts), drawn with the Web shell's own controls. */
-import { Button, IconChevronRightOutlineRegular, IconTrashOutlineRegular, IconWarningOutlineRegular, RiskConfirmation, Switch, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  HoverCard,
+  IconChevronDownOutlineRegular,
+  IconChevronRightOutlineRegular,
+  IconInfoOutlineRegular,
+  IconTrashOutlineRegular,
+  IconWarningOutlineRegular,
+  Menu,
+  RiskConfirmation,
+  Switch,
+  Tag,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createElement as h, Fragment, useEffect, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
 import { failureText, resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
-import { bars, elsewhereText, hintOf, placeKey, placeLabel, stepLabel, stepOf, timeLabel, took, type WarningKey } from './view.ts'
+import { bars, elsewhereText, filterValues, finderHintKey, hintOf, kindHintKey, namesOf, placeKey, placeLabel, stepLabel, stepOf, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 /** The signals worth a line of their own, one tinted line each with a warning icon. */
@@ -60,23 +73,61 @@ export function Kpis(props: { totals: Totals; t: T }): ReactNode {
   )
 }
 
-/** One distribution: its title, then a row per entry with a thin bar and the count. */
-export function Dist(props: { title: string; data: Record<string, number>; empty: string }): ReactNode {
-  const list = bars(props.data)
+/**
+ * What kind and finder mean, for the shell's hover card (docs/adr/0035).
+ * The shell's card is a fixed 244px wide, so this says only the definition:
+ * a table of the names would be squeezed into a tall column.
+ */
+export function HintCard(props: { t: T; field: 'kind' | 'finder'; note?: boolean }): ReactNode {
+  const { t, field } = props
+  return h(
+    'div',
+    { className: 'pgw-hint' },
+    h('div', { className: 'pgw-hint__title' }, t(field === 'kind' ? 'hint.kind.title' : 'hint.finder.title')),
+    h('div', { className: 'pgw-hint__body' }, t(field === 'kind' ? 'hint.kind.body' : 'hint.finder.body')),
+    props.note === true ? h('div', { className: 'pgw-hint__note' }, t('hint.count')) : null,
+  )
+}
+
+/** One name and what it stands for, for the hover card on that name. */
+function NameHint(props: { t: T; name: string; meaning: Key }): ReactNode {
+  return h('div', { className: 'pgw-hint' }, h('div', { className: 'pgw-hint__title pgw-mono' }, props.name), h('div', { className: 'pgw-hint__body' }, props.t(props.meaning)))
+}
+
+/**
+ * One distribution: the title explains the dimension, each name explains
+ * itself, then a row per entry with a thin bar and the count. The entries past
+ * the sixth are summed into one row (`others`) rather than dropped. The
+ * hover cards are only for kind and finder; a host explains nothing.
+ */
+export function Dist(props: { t: T; title: string; data: Record<string, number>; empty: string; others: string; field?: 'kind' | 'finder' }): ReactNode {
+  const { t, field } = props
+  const list = bars(props.data, 6, props.others)
+  const head =
+    field === undefined
+      ? props.title
+      : h(HoverCard, {
+          anchor: h('span', { className: 'pgw-dist__anchor' }, props.title, h(IconInfoOutlineRegular, { size: 12, className: 'pgw-dist__info' })),
+          content: h(HintCard, { t, field, note: true }),
+        })
   return h(
     'div',
     { className: 'pgw-dist' },
-    h('div', { className: 'pgw-section__title' }, props.title),
+    h('div', { className: 'pgw-section__title' }, head),
     list.length === 0
       ? h('div', { className: 'pgw-empty' }, props.empty)
-      : list.map((b) =>
-          h(
+      : list.map((b) => {
+          const key = field === undefined ? undefined : (field === 'kind' ? kindHintKey : finderHintKey)(b.label)
+          // the help cursor and the native title stay only where no card explains the name (the host rows and the summed one)
+          const label = h('span', key === undefined ? { className: 'pgw-bar__label', title: b.label } : { className: 'pgw-bar__label pgw-bar__label--hint' }, b.label)
+          const labelNode = key === undefined || field === undefined ? label : h(HoverCard, { anchor: label, content: h(NameHint, { t, name: b.label, meaning: key }) })
+          return h(
             'div',
             { className: 'pgw-bar', key: b.label },
-            h('div', { className: 'pgw-bar__head' }, h('span', { className: 'pgw-bar__label', title: b.label }, b.label), h('span', { className: 'pgw-bar__value' }, b.value.toLocaleString())),
+            h('div', { className: 'pgw-bar__head' }, labelNode, h('span', { className: 'pgw-bar__value' }, b.value.toLocaleString())),
             h('div', { className: 'pgw-bar__track' }, h('div', { className: 'pgw-bar__fill', style: { width: `${b.pct}%` } })),
-          ),
-        ),
+          )
+        }),
   )
 }
 
@@ -96,10 +147,58 @@ export function RecordHead(props: { t: T }): ReactNode {
   )
 }
 
+/** The menu's id for the row that takes a filter off. */
+const ANY = '*'
+
+/**
+ * A kind or finder column head: the shell's menu narrows the rows below to one
+ * name, and the hover card says what the dimension and each name mean
+ * (docs/adr/0035). The two columns narrow together.
+ */
+function FilterHead(props: { t: T; field: 'kind' | 'finder'; names: readonly string[]; value: string | undefined; hint: ReactNode; onChange(next: string | undefined): void }): ReactNode {
+  const { t, field } = props
+  const [open, setOpen] = useState(false)
+  const label = t(field === 'kind' ? 'col.kind' : 'col.finder')
+  const items: MenuEntry[] = [{ id: ANY, label: t('filter.all') }, ...props.names.map((name) => ({ id: name, label: name }))]
+  const button = h(
+    'button',
+    {
+      type: 'button',
+      className: `pgw-filter${props.value === undefined ? '' : ' pgw-filter--on'}`,
+      'aria-haspopup': 'menu',
+      'aria-expanded': open,
+      'aria-label': t('filter.aria', { name: t(field === 'kind' ? 'filter.kind' : 'filter.finder'), value: props.value ?? t('filter.all') }),
+      onClick: () => setOpen((was) => !was),
+    },
+    props.value === undefined ? label : `${label} · ${props.value}`,
+    h(IconChevronDownOutlineRegular, { size: 10, className: 'pgw-filter__chevron' }),
+  )
+  return h(Menu, {
+    open,
+    onClose: () => setOpen(false),
+    items,
+    selectedId: props.value ?? ANY,
+    onSelect: (id: string) => {
+      setOpen(false)
+      props.onChange(id === ANY ? undefined : id)
+    },
+    align: 'start',
+    portal: true,
+    // the menu and the explanation must not open over each other: while the menu is up, hovering only moves the pointer
+    anchor: h(HoverCard, { anchor: button, content: props.hint, disabled: open }),
+  })
+}
+
 /** One record: a row that opens onto its values and, when kept, the vendor view. */
 export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean; toggle: () => void; t: T; viewable: boolean }): ReactNode {
   const { r, t } = props
   const [viewing, setViewing] = useState(false)
+  // the values table narrowed to one kind and one finder, as its column heads pick them (docs/adr/0035)
+  const [kind, setKind] = useState<string | undefined>(undefined)
+  const [finder, setFinder] = useState<string | undefined>(undefined)
+  const shown = filterValues(r.values, { ...(kind === undefined ? {} : { kind }), ...(finder === undefined ? {} : { finder }) })
+  const kindNames = namesOf(r.values, 'kind')
+  const finderNames = namesOf(r.values, 'finder')
   const detailId = useId()
   // where the request sat in its session: the turn and step the trajectory names it by (docs/adr/0030)
   const at = stepOf(r)
@@ -158,56 +257,80 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
             : h(
                 'table',
                 { className: 'pgw-values' },
-                h('thead', null, h('tr', null, ...(['col.placeholder', 'col.kind', 'col.finder', 'col.head', 'col.len', 'col.n', 'col.action'] as Key[]).map((k) => h('th', { key: k }, t(k))))),
+                h(
+                  'thead',
+                  null,
+                  h(
+                    'tr',
+                    null,
+                    h('th', { key: 'col.placeholder' }, t('col.placeholder')),
+                    h(
+                      'th',
+                      { key: 'col.kind' },
+                      h(FilterHead, { t, field: 'kind', names: kindNames, value: kind, hint: h(HintCard, { t, field: 'kind' }), onChange: setKind }),
+                    ),
+                    h(
+                      'th',
+                      { key: 'col.finder' },
+                      h(FilterHead, { t, field: 'finder', names: finderNames, value: finder, hint: h(HintCard, { t, field: 'finder' }), onChange: setFinder }),
+                    ),
+                    h('th', { key: 'col.head' }, t('col.head')),
+                    h('th', { key: 'col.len' }, t('col.len')),
+                    h('th', { key: 'col.n' }, t('col.n')),
+                    h('th', { key: 'col.action' }, t('col.action')),
+                  ),
+                ),
                 h(
                   'tbody',
                   null,
-                  r.values.flatMap((v) => {
-                    const elsewhere = elsewhereText(v, t)
-                    // a value this run sent before says where it first went (docs/adr/0030)
-                    const firstText = v.first ? t('recent.valueFirst', { turn: v.first.turn, step: v.first.step }) : at ? t('recent.valueFirstHere') : ''
-                    // the row shows where the value went and what was around it: either alone is worth a line
-                    const placed = v.at !== undefined || v.before !== undefined || v.after !== undefined || elsewhere !== '' || firstText !== ''
-                    return [
-                      h(
-                        'tr',
-                        { key: v.placeholder, className: v.before !== undefined || v.after !== undefined ? 'pgw-values__has' : undefined },
-                        h('td', { className: 'pgw-mono' }, v.placeholder),
-                        h('td', null, v.kind),
-                        h('td', null, v.finder),
-                        h('td', { className: 'pgw-mono' }, hintOf(v)),
-                        h('td', null, v.len),
-                        h('td', null, v.n),
-                        h('td', null, v.action ? t(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
-                      ),
-                      placed
-                        ? h(
-                            'tr',
-                            { key: `${v.placeholder}:ctx`, className: 'pgw-values__ctx' },
-                            h(
-                              'td',
-                              { colSpan: 7 },
+                  shown.length === 0
+                    ? h('tr', { key: 'none', className: 'pgw-values__empty' }, h('td', { colSpan: 7 }, t('filter.none')))
+                    : shown.flatMap((v) => {
+                      const elsewhere = elsewhereText(v, t)
+                      // a value this run sent before says where it first went (docs/adr/0030)
+                      const firstText = v.first ? t('recent.valueFirst', { turn: v.first.turn, step: v.first.step }) : at ? t('recent.valueFirstHere') : ''
+                      // the row shows where the value went and what was around it: either alone is worth a line
+                      const placed = v.at !== undefined || v.before !== undefined || v.after !== undefined || elsewhere !== '' || firstText !== ''
+                      return [
+                        h(
+                          'tr',
+                          { key: v.placeholder, className: v.before !== undefined || v.after !== undefined ? 'pgw-values__has' : undefined },
+                          h('td', { className: 'pgw-mono' }, v.placeholder),
+                          h('td', null, v.kind),
+                          h('td', null, v.finder),
+                          h('td', { className: 'pgw-mono' }, hintOf(v)),
+                          h('td', null, v.len),
+                          h('td', null, v.n),
+                          h('td', null, v.action ? t(v.action === 'warn' ? 'action.warn' : 'action.block') : ''),
+                        ),
+                        placed
+                          ? h(
+                              'tr',
+                              { key: `${v.placeholder}:ctx`, className: 'pgw-values__ctx' },
                               h(
-                                'div',
-                                { className: 'pgw-ctx' },
+                                'td',
+                                { colSpan: 7 },
                                 h(
                                   'div',
-                                  { className: 'pgw-ctx__line' },
-                                  v.at
-                                    ? h(Tag, { tone: 'neutral', className: 'pgw-ctx__place', title: v.at.path }, t(placeKey(v.at)), h('span', { className: 'pgw-ctx__path pgw-mono' }, `· ${placeLabel(v.at.path)}`))
-                                    : null,
-                                  v.before !== undefined || v.after !== undefined
-                                    ? h('span', { className: 'pgw-ctx__text', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark pgw-mono' }, v.placeholder), v.after ?? '')
-                                    : null,
+                                  { className: 'pgw-ctx' },
+                                  h(
+                                    'div',
+                                    { className: 'pgw-ctx__line' },
+                                    v.at
+                                      ? h(Tag, { tone: 'neutral', className: 'pgw-ctx__place', title: v.at.path }, t(placeKey(v.at)), h('span', { className: 'pgw-ctx__path pgw-mono' }, `· ${placeLabel(v.at.path)}`))
+                                      : null,
+                                    v.before !== undefined || v.after !== undefined
+                                      ? h('span', { className: 'pgw-ctx__text', title: t('recent.contextHint') }, v.before ?? '', h('mark', { className: 'pgw-ctx__mark pgw-mono' }, v.placeholder), v.after ?? '')
+                                      : null,
+                                  ),
+                                  elsewhere !== '' ? h('div', { className: 'pgw-ctx__more' }, elsewhere) : null,
+                                  firstText !== '' ? h('div', { className: 'pgw-ctx__more' }, firstText) : null,
                                 ),
-                                elsewhere !== '' ? h('div', { className: 'pgw-ctx__more' }, elsewhere) : null,
-                                firstText !== '' ? h('div', { className: 'pgw-ctx__more' }, firstText) : null,
                               ),
-                            ),
-                          )
-                        : null,
-                    ]
-                  }),
+                            )
+                          : null,
+                      ]
+                    }),
                 ),
               ),
           r.valuesOmitted ? h('div', { className: 'pgw-meta' }, t('recent.omitted', { n: r.valuesOmitted.toLocaleString() })) : null,
