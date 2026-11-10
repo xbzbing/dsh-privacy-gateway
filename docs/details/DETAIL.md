@@ -1,6 +1,12 @@
 # 隐私网关
 
-在 dsh 的进程里装一层脱敏网关：发给模型的请求里出现密钥、令牌、cookie 等敏感值时，先换成占位符再发出；模型回复里的占位符，在交给 agent 之前换回真值。拦截点在 undici 的全局 dispatcher，所有走 `fetch()` 的 provider 都经过它，包括插件提供的 adapter，agent 和 provider 都不用改。
+在 dsh 的进程里装一层脱敏网关：发给模型的请求里出现密钥、令牌、cookie 等敏感值时，先换成占位符再发出；模型回复里的占位符，在交给 agent 之前换回真值。
+
+## 项目仓库
+
+[dsh-privacy-gateway](https://github.com/xbzbing/dsh-privacy-gateway)：配置项、设计决策（ADR）和完整说明见仓库 README。
+
+如果项目对你有帮助，请为项目点亮一个小星星吧🌟
 
 ## 功能
 
@@ -13,6 +19,3 @@
 - **记录与统计**：只记脱敏和还原过的请求，记录里不写值本身；`/privacy` 命令查看状态和预览，插件详情页有统计卡，也可以在会话顶部打开「隐私保护」标签页。
 - **失败不放行**：脱敏出错时请求不发出；`/privacy off` 可以临时关掉。
 
-## 仓库
-
-[github.com/xbzbing/dsh-privacy-gateway](https://github.com/xbzbing/dsh-privacy-gateway)：配置项、设计决策（ADR）和完整说明见仓库 README。

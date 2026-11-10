@@ -1,6 +1,12 @@
 # Privacy Gateway
 
-Adds a redaction gateway to the dsh process. When a request to a model has a secret in it, such as an API key, a token or a cookie, the value goes out as a placeholder; placeholders in the model's reply are replaced with the real values before the agent sees them. The gateway sits on undici's global dispatcher, so every provider that goes through `fetch()` passes it, adapters from plugins included, and neither the agent nor the providers need any change.
+Adds a redaction gateway to the dsh process. When a request to a model has a secret in it, such as an API key, a token or a cookie, the value goes out as a placeholder; placeholders in the model's reply are replaced with the real values before the agent sees them.
+
+## Repository
+
+[dsh-privacy-gateway](https://github.com/xbzbing/dsh-privacy-gateway): the configuration options, the design decisions (ADRs) and the full documentation are in the repository README.
+
+If this project helps you, please give it a star 🌟
 
 ## Features
 
@@ -12,7 +18,3 @@ Adds a redaction gateway to the dsh process. When a request to a model has a sec
 - **Look-alike keys**: optionally send a key as a made-up one with the same prefix, length and kinds of character, so the model cannot tell it was masked; a value under 8 characters, or with unusual characters, keeps the placeholder.
 - **Records and statistics**: only requests with something masked or restored are recorded, and a record never holds a value. The `/privacy` command shows the state and a preview; the plugin's detail page has a statistics card, and a Privacy tab can be turned on at the top of the session.
 - **Fails closed**: when masking fails, the request is not sent; `/privacy off` turns masking off for the moment.
-
-## Repository
-
-[github.com/xbzbing/dsh-privacy-gateway](https://github.com/xbzbing/dsh-privacy-gateway): the README there has the configuration, the design decisions (ADRs) and the full documentation.
