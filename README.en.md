@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-![The model only sees {{placeholder}}: secrets, credentials and personal data are replaced with placeholders before they are sent, and restored in the replies — one interception point, every provider goes through it](docs/assets/screenshots/0-banner.png)
+![The model only sees {{placeholder}}: secrets, credentials and personal data go out as placeholders and come back as real values — one interception point, every provider goes through it](docs/assets/screenshots/0-banner-en.png)
 
 A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
