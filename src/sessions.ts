@@ -21,6 +21,8 @@ export class SessionSwitches {
   readonly #logger: Logger | undefined
   /** Insertion order is the order the sessions were turned off. */
   readonly #off = new Set<string>()
+  /** Choices whose write failed, by session and value: a later save must not drop them. */
+  readonly #unsaved = new Map<string, boolean>()
 
   constructor(options: { file?: string; logger?: Logger } = {}) {
     this.#file = options.file
@@ -76,7 +78,9 @@ export class SessionSwitches {
    * Writes the one change just made. Another dsh process may have saved its
    * own choices since this one read the file: the file is read again and only
    * this change applied to it, so a session another process turned back on
-   * is not turned off again by this one's older copy. The merged list is this
+   * is not turned off again by this one's older copy. A choice this process
+   * could not write earlier is applied too: it is still the user's, and the
+   * next successful save carries it to the file. The merged list is this
    * process's from then on.
    */
   #save(session: string, on: boolean): void {
@@ -87,6 +91,9 @@ export class SessionSwitches {
       const onDisk = this.#read(file)
       if (onDisk) {
         const merged = new Set(onDisk)
+        for (const [id, state] of this.#unsaved) {
+          if (id !== session) apply(merged, id, state)
+        }
         apply(merged, session, on)
         this.#off.clear()
         for (const id of merged) this.#off.add(id)
@@ -94,9 +101,11 @@ export class SessionSwitches {
       mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
       writeFileSync(tmp, `${JSON.stringify({ off: [...this.#off] })}\n`, { mode: 0o600 })
       renameSync(tmp, file)
+      this.#unsaved.clear()
     } catch (err) {
       rmSync(tmp, { force: true })
-      this.#logger?.warn(`dsh-privacy-gateway: could not save ${file}; the choice holds until restart`, err)
+      this.#unsaved.set(session, on)
+      this.#logger?.warn(`dsh-privacy-gateway: could not save ${file}; the choice holds for this run and goes in with the next save`, err)
     }
   }
 }

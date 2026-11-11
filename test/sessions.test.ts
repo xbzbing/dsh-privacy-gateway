@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -143,6 +143,32 @@ test('the list is saved 0600 in a 0700 directory, and no temporary file is left,
     assert.ok(warned.length >= 1)
     assert.deepEqual(readdirSync(blocked), ['sessions.json'])
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a choice that could not be written goes in with the next save', { skip: process.getuid?.() === 0 }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pgw-sessions-'))
+  const file = join(dir, 'sessions.json')
+  try {
+    const s = new SessionSwitches({ file })
+    s.set('a', false)
+    chmodSync(dir, 0o500)
+    assert.equal(s.set('b', false), true, 'the choice holds for this run')
+    chmodSync(dir, 0o700)
+    s.set('c', false)
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { off: ['a', 'b', 'c'] })
+
+    // and a failed turn-on is not undone by the next save either
+    const t = new SessionSwitches({ file })
+    chmodSync(dir, 0o500)
+    assert.equal(t.set('b', true), true)
+    chmodSync(dir, 0o700)
+    t.set('d', false)
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { off: ['a', 'c', 'd'] })
+    assert.equal(new SessionSwitches({ file }).isOff('b'), false)
+  } finally {
+    chmodSync(dir, 0o700)
     rmSync(dir, { recursive: true, force: true })
   }
 })
