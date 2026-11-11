@@ -92,6 +92,20 @@ function value(c: Ctx, name: string, a: number, b: number): void {
 }
 
 /**
+ * The first place at or after `i` that ends a value: a character of `set`, or
+ * a backslash only where it escapes a quote. A backslash before anything else
+ * (a JSON escape the text kept, \u003c) is part of the value, not its end.
+ */
+function endsAt(c: Ctx, set: string, i: number): number {
+  let at = c.next.any(set, i)
+  while (at < c.s.length && c.s[at] === '\\') {
+    if (c.s[at + 1] === '"' || c.s[at + 1] === "'") return at
+    at = c.next.any(set, at + 1)
+  }
+  return at
+}
+
+/**
  * The pairs of a cookie string in s[from:to] (a Cookie: header's, curl -b's):
  * name=value; name=value … until a piece that is no pair (the prose after
  * it). `first` takes only the first, as Set-Cookie's attributes are no
@@ -111,7 +125,7 @@ function pairs(c: Ctx, from: number, to: number, first: boolean): number {
       const q = c.next.index('"', i + 1)
       i = q < to ? q + 1 : to
     } else {
-      i = Math.min(c.next.any(VALUE_END, i), to)
+      i = Math.min(endsAt(c, VALUE_END, i), to)
     }
     value(c, name, vs, i)
     if (first) break
@@ -121,7 +135,7 @@ function pairs(c: Ctx, from: number, to: number, first: boolean): number {
 
 /** The end of an unquoted cookie string that starts at s[i]. */
 function regionEnd(c: Ctx, i: number): number {
-  return c.next.any(REGION_END, i)
+  return endsAt(c, REGION_END, i)
 }
 
 /** The end of the quoted string whose opening quote ends at s[i-1]: its closing quote (`quote`, \" for \"), or the line's end. */
@@ -284,7 +298,7 @@ function namedCookies(c: Ctx, plan: CookiePlan): void {
     if (m[0].endsWith('=') && s[i] === '"') {
       i = Math.min(c.next.index('"', i + 1) + 1, s.length)
     } else {
-      i = c.next.any(NAMED_END, i)
+      i = endsAt(c, NAMED_END, i)
     }
     value(c, m[1] as string, vs, i)
     read = i

@@ -16,6 +16,15 @@ import { shapeChar } from './shape.ts'
 /** The shortest value matched as known: shorter ones would turn up all over ordinary text. */
 export const MIN_KNOWN = 8
 
+/** The lengths the known index keys its buckets by, longest first: a shared prefix stays a small bucket. */
+const INDEX_LENGTHS = [24, 16, MIN_KNOWN] as const
+
+/** The longest index key a value of `v.length` characters can have. */
+function indexLen(v: string): number {
+  for (const n of INDEX_LENGTHS) if (v.length >= n) return n
+  return MIN_KNOWN
+}
+
 interface KnownValue {
   v: string
   p: string
@@ -73,7 +82,10 @@ export class ValueTable {
   /** placeholder → value, the least recently used first. */
   #values = new Map<string, string>()
   #kinds = new Set<string>()
+  /** The first `indexLen(v)` characters of a value → its bucket, one entry per value. */
   #known = new Map<string, KnownValue[]>()
+  /** value → the entry in its bucket, so remembering one twice does not walk the bucket. */
+  #byValue = new Map<string, KnownValue>()
   #bits = new Uint32Array(BITS / 32)
   /** made-up key → its kind (docs/adr/0015); their values are in #values with the placeholders'. */
   #shapes = new Map<string, string>()
@@ -92,7 +104,11 @@ export class ValueTable {
 
   /** Remembers `value` behind `placeholder`, or marks it used now. */
   put(placeholder: string, kind: string, value: string): void {
-    if (this.#values.has(placeholder)) {
+    const have = this.#values.get(placeholder)
+    if (have !== undefined) {
+      // a tag is 40 bits of HMAC: two values under one is a collision, and
+      // restoring either would send the other's value. Fail closed instead.
+      if (have !== value) throw new Error(`dsh-privacy-gateway: placeholder collision at ${placeholder}`)
       this.#values.delete(placeholder)
       this.#values.set(placeholder, value)
       return
@@ -200,13 +216,16 @@ export class ValueTable {
     for (let i = 0; i + MIN_KNOWN <= s.length; i++) {
       const g = gram(s, i)
       if ((((this.#bits[g >>> 5] as number) >>> (g & 31)) & 1) === 0) continue
-      const bucket = this.#known.get(s.slice(i, i + MIN_KNOWN))
-      if (!bucket) continue
       let best: KnownValue | undefined
-      for (const k of bucket) {
-        if (!covers(k.kind)) continue
-        if ((best && k.v.length <= best.v.length) || !s.startsWith(k.v, i) || !standsAlone(k.kind, s, i, i + k.v.length)) continue
-        best = k
+      for (const len of INDEX_LENGTHS) {
+        if (i + len > s.length) continue
+        const bucket = this.#known.get(s.slice(i, i + len))
+        if (!bucket) continue
+        for (const k of bucket) {
+          if (!covers(k.kind)) continue
+          if ((best && k.v.length <= best.v.length) || !s.startsWith(k.v, i) || !standsAlone(k.kind, s, i, i + k.v.length)) continue
+          best = k
+        }
       }
       if (best) {
         out.push({ start: i, end: i + best.v.length, kind: best.kind })
@@ -219,21 +238,21 @@ export class ValueTable {
   #addKnown(p: string, kind: string, v: string): void {
     // the user's own words match anywhere already
     if (kind === 'TERM' || v.length < MIN_KNOWN) return
-    const head = v.slice(0, MIN_KNOWN)
-    const bucket = this.#known.get(head)
-    if (bucket) {
-      const i = bucket.findIndex((k) => k.v === v)
-      if (i >= 0) {
-        // one value under two kinds: the same one wins whichever came first
-        if (p < (bucket[i] as KnownValue).p) {
-          bucket[i] = { v, p, kind }
-        }
-        return
+    const have = this.#byValue.get(v)
+    if (have !== undefined) {
+      // one value under two kinds: the same one wins whichever came first
+      if (p < have.p) {
+        have.p = p
+        have.kind = kind
       }
-      bucket.push({ v, p, kind })
-    } else {
-      this.#known.set(head, [{ v, p, kind }])
+      return
     }
+    const k: KnownValue = { v, p, kind }
+    this.#byValue.set(v, k)
+    const head = v.slice(0, indexLen(v))
+    const bucket = this.#known.get(head)
+    if (bucket) bucket.push(k)
+    else this.#known.set(head, [k])
     const g = gram(v, 0)
     this.#bits[g >>> 5] = ((this.#bits[g >>> 5] as number) | (1 << (g & 31))) >>> 0
   }
@@ -246,6 +265,7 @@ export class ValueTable {
       this.#values.delete(k)
     }
     this.#known = new Map()
+    this.#byValue = new Map()
     this.#bits.fill(0)
     const shapes = this.#shapes
     this.#shapes = new Map()

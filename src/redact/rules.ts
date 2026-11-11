@@ -4,7 +4,7 @@
  * host's display mask knows added (design §5.1). A rule's value is its
  * pattern's group 1 when it has one, else all of what it matches.
  */
-import { ALNUM, TOKEN_CH, basicValue, bearerValue, fieldAt, keyAt, notASlug, notAVariable, pemBody, secretValue } from './checks.ts'
+import { ALNUM, TOKEN_CH, basicValue, bearerValue, fieldAt, keyAt, namedAt, namedValue, notASlug, notAVariable, pemBody, secretValue } from './checks.ts'
 import { chineseID, emailAt, hiddenInURL, luhn, phoneAt, realEmail } from './personal.ts'
 
 export { ALNUM, TOKEN_CH, notASlug }
@@ -154,8 +154,8 @@ export const rules: readonly Rule[] = [
     re: new RegExp(`(?:${SECRET_NAMES.join('|')})[A-Za-z0-9_.-]{0,64}${QUOTE}[ \\t]*[:=][ \\t]*${QUOTE}(${SECRET_CH}{8,${MAX_SECRET}})`, 'yid'),
     fold: SECRET_STARTS,
     anchor: at,
-    ok: secretValue,
-    at: fieldAt,
+    ok: namedValue,
+    at: namedAt,
   }),
   // a field called key and nothing more ("key": "oc_sk_…"): only a long value of letters and digits both
   s({

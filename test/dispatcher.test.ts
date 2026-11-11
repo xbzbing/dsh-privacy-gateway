@@ -9,7 +9,7 @@ import zlib, { gzipSync } from 'node:zlib'
 import { Agent, Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, request, setGlobalDispatcher } from 'undici'
 
 import { defaults } from '../src/config.ts'
-import { installGateway, MaskingDispatcher, withContentLength, type InstalledGateway } from '../src/dispatcher.ts'
+import { installGateway, MaskingDispatcher, type InstalledGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine, type Exchange, type RedactionEngine, type RequestInfo } from '../src/engine.ts'
 import { routeStream, makeSkip } from '../src/providers.ts'
 
@@ -137,11 +137,15 @@ test('requests that are not model requests pass byte for byte', async () => {
     await withGateway(async () => {
       await (await fetch(`${o.url}/search?q=${OPENAI}`)).text()
       await (await fetch(`${o.url}/v1/embeddings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: 'x', key: OPENAI }) })).text()
+      await (await fetch(`${o.url}/v1/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: `key ${OPENAI}` }) })).text()
       await (await fetch(`${o.url}/upload`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: chat(OPENAI) })).text()
     })
     assert.equal(o.seen[0]?.url, `/search?q=${OPENAI}`)
-    assert.equal(o.seen[1]?.body, JSON.stringify({ input: 'x', key: OPENAI }), '`input` that is not an array is no model request')
-    assert.equal(o.seen[2]?.body, chat(OPENAI), 'a non-JSON content type is not read')
+    assert.ok(!o.seen[1]?.body.includes(OPENAI), 'a string `input` is a model request')
+    assert.match(o.seen[1]?.body ?? '', /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+    assert.ok(!o.seen[2]?.body.includes(OPENAI), 'a `prompt` is a model request')
+    assert.match(o.seen[2]?.body ?? '', /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+    assert.equal(o.seen[3]?.body, chat(OPENAI), 'a non-JSON content type is not read')
   } finally {
     await o.close()
   }
@@ -223,6 +227,21 @@ test('a compressed event-stream reply is decoded and restored as it streams', as
       assert.ok(text.includes(`"content":"key ${OPENAI}"`), text)
       assert.ok(!text.includes(placeholder))
       assert.ok(text.endsWith('data: [DONE]\n\n'))
+    })
+  } finally {
+    await o.close()
+  }
+})
+
+test('a reply that names gzip but is not gzip fails downstream, not silently through', async () => {
+  const o = await origin((_s, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip' })
+    res.end('this is not gzip')
+  })
+  try {
+    await withGateway(async () => {
+      const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
+      await assert.rejects(res.body.text())
     })
   } finally {
     await o.close()
@@ -663,14 +682,7 @@ test('Dispatcher1Wrapper.wrapHandler is there: the gateway adapts legacy handler
   assert.equal(typeof (Dispatcher1Wrapper as unknown as { wrapHandler?: unknown }).wrapHandler, 'function')
 })
 
-test('withContentLength gives flat pairs for every header form, so undici reads iterable headers', async () => {
-  const flat = withContentLength(new Map([['content-type', 'application/json'], ['content-length', '1']]) as never, 7)
-  assert.deepEqual(flat, ['content-type', 'application/json', 'content-length', '7'])
-  assert.deepEqual(withContentLength([['Content-Length', '1'], ['x', 'y']] as never, 3), ['Content-Length', '3', 'x', 'y'])
-  assert.deepEqual(withContentLength({ 'content-length': '1', a: ['b', 'c'] }, 2), ['content-length', '2', 'a', ['b', 'c']])
-  const same = { a: 'b' }
-  assert.equal(withContentLength(same, 2), same, 'no content-length: the headers as they were')
-
+test('a Map of headers with content-length is read by undici after the body is rewritten', async () => {
   const o = await emptyOrigin()
   try {
     await withGateway(async () => {

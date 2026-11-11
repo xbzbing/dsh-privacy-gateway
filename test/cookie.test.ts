@@ -114,3 +114,11 @@ test('a masked cookie value becomes known', () => {
 test('secrets off masks no cookie', () => {
   check(`Cookie: BDUSS=${BDUSS}`, [], { secrets: false })
 })
+
+test('a value with a JSON escape the text kept is masked whole, not cut at the backslash', () => {
+  const text = 'Cookie: BDUSS=abc\\u003cdefghijklmnop; lang=zh-CN'
+  const { masker, restorer } = setup()
+  const out = masker.maskText(text)
+  assert.match(out.text, /BDUSS=\{\{COOKIE_[a-z2-7]{8}\}\}; lang=zh-CN/)
+  assert.equal(restorer.restoreText(out.text), text)
+})

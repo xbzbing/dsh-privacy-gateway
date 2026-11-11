@@ -51,3 +51,34 @@ test('protected regions reach the vendor byte for byte, and only the masked valu
     assert.ok(JSON.parse(out.text), c.name)
   }
 })
+
+test('an <env> block is protected only in the text the host writes (ADR-0004 supplement)', () => {
+  const table = new ValueTable(5000)
+  const masker = new Masker(randomBytes(32), table, { secrets: true, protectEnvBlock: true, protectTools: true })
+  const env = `<env>\n  cwd: /tmp\n  ${KEY}\n</env>`
+  const one = (body: string): string => {
+    const out = masker.maskJSON(body)
+    assert.ok(out, body.slice(0, 80))
+    return out.text
+  }
+  // the system prompt's block stays byte for byte, key inside included
+  const system = one(JSON.stringify({ model: 'm', messages: [{ role: 'system', content: `agent\n${env}` }, { role: 'user', content: 'hi' }] }))
+  assert.ok(system.includes(JSON.stringify(env).slice(1, -1)))
+  // a user message quoting one is no protected region: the key goes as its placeholder
+  for (const body of [
+    JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `<env> oops ${KEY}` }] }),
+    JSON.stringify({ model: 'm', messages: [{ role: 'user', content: [{ type: 'tool_result', content: `read: <env> ${KEY}` }] }] }),
+    JSON.stringify({ model: 'm', messages: [{ role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'bash', arguments: JSON.stringify({ cmd: `echo <env> ${KEY}` }) } }] }] }),
+  ]) {
+    const out = one(body)
+    assert.ok(!out.includes(KEY), out)
+    assert.match(out, /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+  }
+  // the Responses instructions stay whole; the user input beside them does not
+  const responses = one(JSON.stringify({ model: 'm', instructions: `agent\n${env}`, input: [{ role: 'user', content: [{ type: 'input_text', text: `<env> ${KEY}` }] }] }))
+  assert.equal(responses.split(KEY).length - 1, 1, responses)
+  assert.match(responses, /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+  // Gemini: systemInstruction is the host's, contents are not
+  const gemini = one(JSON.stringify({ model: 'm', systemInstruction: { parts: [{ text: `<env>${KEY}</env>` }] }, contents: [{ role: 'user', parts: [{ text: `<env>${KEY}</env>` }] }] }))
+  assert.equal(gemini.split(KEY).length - 1, 1, gemini)
+})

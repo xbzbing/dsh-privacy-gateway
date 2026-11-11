@@ -155,11 +155,6 @@ export function editHeaders(headers: HeaderInput, set: Readonly<Record<string, s
   return out as unknown as HeaderInput
 }
 
-/** `headers` with an existing `content-length` set to `length`; every other header as it was. */
-export function withContentLength(headers: HeaderInput, length: number): HeaderInput {
-  return editHeaders(headers, { 'content-length': String(length) })
-}
-
 function incomingValue(headers: IncomingHeaders, name: string): string {
   const v = (headers as Record<string, string | string[] | undefined> | undefined)?.[name]
   return Array.isArray(v) ? v.join(', ') : (v ?? '')

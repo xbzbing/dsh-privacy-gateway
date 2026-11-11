@@ -119,9 +119,20 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-/** A chat (`messages`), Responses (`input`) or Gemini and Vertex (`contents`) request: the shapes this gateway rewrites. */
+/**
+ * A chat (`messages`), Responses (`input`), Gemini and Vertex (`contents`) or
+ * a completion (`prompt`, and `input` as one string) request: the shapes this
+ * gateway rewrites.
+ */
 export function isModelRequest(doc: unknown): doc is Record<string, unknown> {
-  return isObject(doc) && (Array.isArray(doc.messages) || Array.isArray(doc.input) || Array.isArray(doc.contents))
+  return (
+    isObject(doc) &&
+    (Array.isArray(doc.messages) ||
+      Array.isArray(doc.input) ||
+      typeof doc.input === 'string' ||
+      Array.isArray(doc.contents) ||
+      typeof doc.prompt === 'string')
+  )
 }
 
 function definitions(doc: Record<string, unknown>): string[] {
@@ -172,6 +183,34 @@ function keepIn(path: string, key: string, s: string, args: string[], defs: stri
   if (under(path, args)) return false
   if (under(path, defs)) return key !== 'description'
   return KEPT.has(key) || isID(key)
+}
+
+/** Keys whose strings are URLs the vendor may fetch: a signed one must go as it is, byte for byte. */
+const URL_KEYS = new Set(['url', 'image_url'])
+
+/** A URL carrying a signature: masking any part of it breaks the fetch it was made for. */
+const SIGNED_URL = /[?&](?:X-Amz-(?:Signature|Credential|Security-Token)|X-Goog-(?:Signature|Credential)|Signature|sig|hmac|token|access_token)=/i
+
+function isSignedURL(s: string): boolean {
+  return SIGNED_URL.test(s)
+}
+
+/**
+ * Whether `path` is text the host writes: the system prompt of a chat, the
+ * `system` blocks of Anthropic, the `instructions` of Responses, Gemini's
+ * `systemInstruction`. Only there is an `<env>` block protected: a user
+ * message, a tool result or a tool's arguments may quote one by accident, and
+ * protecting it would send the rest of that string in the clear (ADR-0004).
+ */
+function hostEnvPath(path: string, doc: Record<string, unknown>): boolean {
+  if (path === 'instructions' || path.startsWith('instructions.')) return true
+  if (path === 'system' || path.startsWith('system.') || path === 'systemInstruction' || path.startsWith('systemInstruction.')) return true
+  const m = /^(messages|input)\.(\d+)\./.exec(path)
+  if (!m) return false
+  const list = doc[m[1] as string]
+  const item = Array.isArray(list) ? list[Number(m[2])] : undefined
+  if (!isObject(item)) return false
+  return item.role === 'system' || item.role === 'developer'
 }
 
 /**
@@ -294,8 +333,10 @@ export class Masker {
    * The values of a string; with `view` (escaped), the finders read its text
    * and the values come back as places in `raw`. The rules read the view's
    * match text, where a quote an escape wrote inside a value stays in it.
+   * `knownOnly` is for a URL the vendor fetches: only a value already masked
+   * goes back as its placeholder, no rule rewrites a link (ADR-0004).
    */
-  #find(raw: string, view: DecodedView | undefined, escaped: boolean, pass: Pass): Found[] {
+  #find(raw: string, view: DecodedView | undefined, escaped: boolean, pass: Pass, knownOnly = false): Found[] {
     const o = this.#options
     const s = view?.text ?? raw
     const forRules = view?.match ?? raw
@@ -304,11 +345,13 @@ export class Masker {
     const lower = (): string => (low ??= lowerASCII(s))
     const lowerRules = (): string => (lowRules ??= lowerASCII(forRules))
     // a cookie's value is one value however else it reads (a JWT in it, token=…): by its context first
-    const cookies = o.secrets ? cookieSpans(s, o.cookies, lower) : []
-    let found: Found[] = o.words && o.words.length > 0 ? wordSpans(s, o.words) : []
-    for (const r of rules) {
-      if (r.cat === 'secret' ? !o.secrets : !o.personal) continue
-      found.push(...ruleSpans(r, forRules, lowerRules))
+    const cookies = !knownOnly && o.secrets ? cookieSpans(s, o.cookies, lower) : []
+    let found: Found[] = !knownOnly && o.words && o.words.length > 0 ? wordSpans(s, o.words) : []
+    if (!knownOnly) {
+      for (const r of rules) {
+        if (r.cat === 'secret' ? !o.secrets : !o.personal) continue
+        found.push(...ruleSpans(r, forRules, lowerRules))
+      }
     }
     if (o.secrets || o.personal) {
       const known = (): KnownSpan[] => this.#table.knownSpans(s, this.#covers)
@@ -322,12 +365,12 @@ export class Masker {
   }
 
   /** The masked string, how many values went, and each change as an edit of `raw`. */
-  #mask(raw: string, escaped: boolean, keep: readonly Range[], pass: Pass): { text: string; n: number; edits: Edit[] } {
+  #mask(raw: string, escaped: boolean, keep: readonly Range[], pass: Pass, knownOnly = false): { text: string; n: number; edits: Edit[] } {
     const o = this.#options
     const none = { text: raw, n: 0, edits: [] }
     if (raw.length < 3 || (!o.secrets && !o.personal && !(o.words && o.words.length > 0))) return none
     const view = escaped && raw.includes('\\') ? decodedView(raw) : undefined
-    let found = this.#find(raw, view, escaped, pass)
+    let found = this.#find(raw, view, escaped, pass, knownOnly)
     if (found.length === 0) return none
     // nothing inside a placeholder already there: masking again changes nothing
     const fixed: Range[] = [...keep]
@@ -448,9 +491,18 @@ export class Masker {
       body,
       (path, shown, key, s) => {
         if (protectTools && under(path, TOOL_ROOTS)) return s
-        if (keepIn(path, key, s, args, defs)) return s
         if (this.#options.context) pass.at = shown === path ? placeOf(doc, path) : { ...placeOf(doc, path), path: shown }
-        const r = this.#mask(s, asJSON(key, ''), protectEnvBlock ? envBlockRanges(s) : [], pass)
+        if (URL_KEYS.has(key) && !under(path, args) && !under(path, defs)) {
+          // a value already masked must not go back in the clear inside a link (ADR-0004);
+          // a signed URL goes whole, and no rule rewrites a link the vendor must fetch
+          if (s.startsWith('data:') || isSignedURL(s)) return s
+          const r = this.#mask(s, asJSON(key, ''), [], pass, true)
+          n += r.n
+          return r.edits
+        }
+        if (keepIn(path, key, s, args, defs)) return s
+        const protect = protectEnvBlock && hostEnvPath(path, doc) ? envBlockRanges(s) : []
+        const r = this.#mask(s, asJSON(key, ''), protect, pass)
         n += r.n
         // spliced into the literal as written, so what is not masked keeps its escapes
         return r.edits

@@ -58,3 +58,16 @@ test('a long word before an underscore is restored in linear time', () => {
   const t = ms(() => restorer.restoreText('a'.repeat(40000) + ' _'))
   assert.ok(t < 100, `took ${t} ms`)
 })
+
+test('a full table fills and matches in linear time, even when every value shares a prefix', () => {
+  const table = new ValueTable(4999)
+  const values = Array.from({ length: 4999 }, (_, i) => `sk-proj-${i.toString(36).padStart(5, '0')}${'aB3xY9'.repeat(4)}`)
+  const fill = ms(() => {
+    for (let i = 0; i < values.length; i++) table.put(`{{API_KEY_${i.toString(16).padStart(8, '0')}}}`, 'API_KEY', values[i] as string)
+  })
+  assert.equal(table.size, 4999)
+  assert.ok(fill < 200, `fill took ${fill} ms`)
+  const text = values.join(' ').slice(0, 32768)
+  const match = ms(() => table.knownSpans(text, () => true))
+  assert.ok(match < 200, `match took ${match} ms`)
+})

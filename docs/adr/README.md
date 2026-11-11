@@ -48,3 +48,4 @@
 | [ADR-0033](0033-algorithm-names.md) | 加密算法的名字不算值 | Accepted | 脱敏 |
 | [ADR-0034](0034-log-excluded-provider.md) | 放行的 provider 有请求发出时日志提示一次 | Accepted | 架构 |
 | [ADR-0035](0035-kind-finder-hints-and-filters.md) | 统计卡释义 kind / finder，明细表可按两者筛选 | Accepted | 界面 |
+| [ADR-0036](0036-named-field-values.md) | 具名赋值允许纯字母长口令与纯数字口令 | Accepted | 脱敏 |

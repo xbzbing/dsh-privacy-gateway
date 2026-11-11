@@ -124,6 +124,18 @@ export function secretValue(v: string): boolean {
   return hasDigit(v) && hasLetter(v)
 }
 
+/**
+ * A value of a field already named as a secret (`DB_PASSWORD=…`, `api_key: …`):
+ * the name has done the proving, so a long passphrase of letters only and a
+ * long number count too (ADR-0036). `secretValue` stays the test for a value
+ * found in free text, where a long word is usually just a word.
+ */
+export function namedValue(v: string): boolean {
+  if (!notAVariable(v) || v.startsWith('process.env') || v.startsWith('os.')) return false
+  if (keyValue(v)) return true
+  return /^\d{10,}$/.test(v)
+}
+
 const IDENT_PATH = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*$/
 
 /**
@@ -324,6 +336,17 @@ export function fieldAt(s: string, a: number, b: number): boolean {
   return (
     !fileField(s, a) && !LINE_REF.test(v) && !pathValue(v) && !fileNameValue(v) && !namesASecret(v) && !skillName(s, a, b) && !versionValue(v)
   )
+}
+
+/**
+ * Where a value of a field already named as a secret starts: `fieldAt`'s
+ * places, plus a long run of digits. A bare number reads as a line reference
+ * elsewhere (`token.go:L643`), but after `password=` it is the password
+ * (ADR-0036).
+ */
+export function namedAt(s: string, a: number, b: number): boolean {
+  if (fieldAt(s, a, b)) return true
+  return /^\d{10,}$/.test(s.slice(a, b)) && !fileField(s, a)
 }
 
 export { trimEnd, trimStart }

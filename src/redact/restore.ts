@@ -121,10 +121,10 @@ function commentLines(b: string): number {
   return n
 }
 
-/** Where the first complete event in b ends, and the length of the blank line that ends it. */
-function eventEnd(b: string): [number, number] {
-  const i = b.indexOf('\n\n')
-  const j = b.indexOf('\r\n\r\n')
+/** Where the first complete event in b ends, and the length of the blank line that ends it; from `at` on. */
+function eventEnd(b: string, at = 0): [number, number] {
+  const i = b.indexOf('\n\n', at)
+  const j = b.indexOf('\r\n\r\n', at)
   if (i < 0 && j < 0) return [-1, 0]
   if (j >= 0 && (i < 0 || j < i)) return [j, 4]
   return [i, 2]
@@ -299,16 +299,26 @@ export class Restorer {
     return out.join('')
   }
 
-  /** Restores the strings of a JSON body; text that is not JSON is restored as text. */
+  /** Restores the strings and the keys of a JSON body; text that is not JSON is restored as text. */
   restoreJSON(text: string, tally?: Tally): string {
     if (this.#table.size === 0 || (this.#table.shapes === 0 && !text.includes('_'))) return text
     const type = typeOf(text)
     const leave = this.#guard !== 'off' && this.#judge(toolText(text, type) ?? '', tally) && this.#guard === 'block'
-    const out = walkJSON(text, (path, _shown, key, s) => {
-      if (SIGNATURE_KEYS.has(key)) return s
-      const tool = inToolCall(path, key, type)
-      return this.restoreText(s, asJSON(key, type), tally, tool, leave && tool)
-    })
+    const out = walkJSON(
+      text,
+      (path, _shown, key, s) => {
+        if (SIGNATURE_KEYS.has(key)) return s
+        const tool = inToolCall(path, key, type)
+        return this.restoreText(s, asJSON(key, type), tally, tool, leave && tool)
+      },
+      // a key the masker turned into a placeholder (maskKeys) comes back as the agent wrote it
+      (path, _shown, name) => {
+        if (KEPT.has(name)) return undefined
+        const tool = inToolCall(path === '' ? name : `${path}.${name}`, name, type)
+        const restored = this.restoreText(name, false, tally, tool, leave && tool)
+        return restored === name ? undefined : restored
+      },
+    )
     return out ?? this.restoreText(text, false, tally)
   }
 
@@ -453,6 +463,8 @@ export class Restorer {
       }
       return event(ev)
     }
+    /** How far into `buf` a blank line was last looked for: a long event in many chunks is searched once. */
+    let scanned = 0
     const drain = (): string => {
       let out = ''
       for (;;) {
@@ -460,12 +472,18 @@ export class Restorer {
         if (c > 0) {
           out += buf.slice(0, c)
           buf = buf.slice(c)
+          scanned = 0
           continue
         }
-        const [i, n] = eventEnd(buf)
-        if (i < 0) return out
+        const [i, n] = eventEnd(buf, scanned)
+        if (i < 0) {
+          // a blank line may split a chunk: the last three characters are looked at again
+          scanned = Math.max(0, buf.length - 3)
+          return out
+        }
         const ev = buf.slice(0, i + n)
         buf = buf.slice(i + n)
+        scanned = 0
         out += route(ev)
       }
     }

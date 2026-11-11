@@ -62,3 +62,28 @@ test('JSON that does not read puts back only a value that needs no escaping', ()
   // text that is no JSON gets every value back
   assert.ok(run(restorer, [`data: plain ${q}\n\n`]).out.includes(QUOTED))
 })
+
+test('an event split at every byte is still one event', () => {
+  const { p, restorer } = setup()
+  const ev = `event: message\ndata: {"content":"use ${p}"}\n\n`
+  for (const size of [1, 2, 3, 4, 5, 7]) {
+    const chunks: string[] = []
+    for (let i = 0; i < ev.length; i += size) chunks.push(ev.slice(i, i + size))
+    const { out } = run(restorer, chunks)
+    assert.equal(out, `event: message\ndata: {"content":"use ${KEY}"}\n\n`, `chunk size ${size}`)
+  }
+})
+
+test('a very large event arriving in many chunks is read once, not from the start each time', () => {
+  const restorer = new Restorer(new ValueTable(10))
+  const s = restorer.stream()
+  const body = 'x'.repeat(1024 * 1024)
+  const ev = `data: {"t":"${body}"}\n\n`
+  const t = performance.now()
+  let out = ''
+  for (let i = 0; i < ev.length; i += 1024) out += s.push(enc.encode(ev.slice(i, i + 1024)))
+  out += s.end()
+  const took = performance.now() - t
+  assert.ok(out.includes(body))
+  assert.ok(took < 1000, `took ${took} ms`)
+})

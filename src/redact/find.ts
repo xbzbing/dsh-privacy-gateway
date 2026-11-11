@@ -96,7 +96,7 @@ export function ruleSpans(r: Rule, s: string, lower: () => string): Found[] {
   return out
 }
 
-/** Where s has one of the user's words, as written (magpie `Options.Words`, whole words and case folding off). */
+/** Where s has one of the user's words, as written: a plain substring match, no word boundary or case folding (magpie `Options.Words` with both off). */
 export function wordSpans(s: string, words: readonly string[]): Found[] {
   const out: Found[] = []
   for (const raw of words) {

@@ -317,3 +317,14 @@ test('a *_PWD field masks its value', () => {
   assert.deepEqual(masked('MYSQL_PWD=Hunt3rPass9 mysql -u root'), ['Hunt3rPass9'])
   assert.deepEqual(masked('cd $PWD && OLDPWD=/Users/me/src'), [])
 })
+
+test('a named field masks a long letters-only passphrase or a long number (ADR-0036)', () => {
+  const passphrase = 'correct' + 'horse' + 'battery' + 'staple'
+  assert.deepEqual(masked(`DB_PASSWORD=${passphrase}`), [passphrase])
+  assert.deepEqual(masked(`{"api_key": "${passphrase}"}`), [passphrase])
+  const token = ['my-very', 'long', 'passphrase', 'here'].join('-')
+  assert.deepEqual(masked(`token = ${token}`), [token])
+  assert.deepEqual(masked('password=' + '8291374651'), ['8291374651'])
+  // a long word found in free text is still no secret
+  assert.deepEqual(masked(`the passphrase is ${passphrase}`), [])
+})

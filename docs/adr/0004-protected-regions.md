@@ -28,3 +28,17 @@ oc2dsh 的免费车道 gate 校验三样东西：payload、连接栈、session i
 - gate 的 payload 半边保持不变，回归由单测守住：构造带 `<env>` 块与 `bash`、`read` 工具的 body，断言这两处脱敏后逐字节不变。
 - `<env>` 块和工具定义里的密钥不会被脱敏。这两处是 oc2dsh 与宿主生成的内容，正常不含用户密钥。
 - 要证明守卫是必要的，live probe 需要关掉 `protectEnvBlock` 做反例，确认表现为 429 且没有 `retry-after`。
+
+### 补充（2026-11-11）：`<env>` 只在宿主写的文本里保护
+
+原实现把 `envBlockRanges` 用在 walk 到的**每个**字符串上，只看内容、不看来源。用户消息、工具结果或工具参数里只要出现 `<env>`（甚至没有 `</env>`），其后的内容就会整段跳过脱敏、原样发给模型服务；`/privacy test` 的预览又用空保护区间，所以自检看不到这条旁路。
+
+保护改为按来源判定：只有 `instructions`、`system`、`systemInstruction`，以及 `messages[i].role` / `input[i].role` 为 `system` / `developer` 的字符串才应用 `<env>` 区间。其余字符串照常脱敏。工具定义仍按 `under(path, TOOL_ROOTS)` 判定，本来就是按来源的。回归覆盖系统提示词、用户消息、`tool_result`、工具参数、无闭合标签和 Gemini 的 `systemInstruction`。
+
+### 补充（2026-11-11）：`url` / `image_url` 只做已知值脱敏
+
+`KEPT` 把 `url`、`image_url` 的整段字符串也挡在脱敏之外：供应商要按原样取图、取文件，改一个字符链接就失效。这个例外原本连已经脱敏过的值也一起放过：同一个密钥先在 `Authorization` 里换成占位符，下一轮出现在 `image_url.url` 的 query 里时原样发出，与 README「脱敏过的值在请求的其它地方再出现，也按同一个占位符脱敏」矛盾。
+
+现在这两个键（工具参数和工具定义里的除外）只做已知值脱敏：查值表，把之前脱敏过的值换成同一个占位符；规则不再改写 URL，以免误伤路径、版本号或签名。带签名的 URL 整段原样发出：query 里出现 `X-Amz-Signature`、`X-Amz-Credential`、`X-Amz-Security-Token`、`X-Goog-Signature`、`X-Goog-Credential`、`Signature`、`sig`、`hmac`、`token`、`access_token` 之一即视为签名 URL。签名 URL 里出现已知值时仍会原样发出，这是有意的取舍：改了就取不到，而且签名本身通常就是那个 URL 的凭据。`data:` URL 不读。
+
+代价：一个从未见过的密钥直接写在 URL 里仍然原样发出，这是原有行为；普通 URL 里重复出现的密钥不再泄露，签名 URL 保持可用。

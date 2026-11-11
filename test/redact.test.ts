@@ -312,7 +312,9 @@ test('a secret used as a JSON key goes as a placeholder, and comes back in the r
   assert.equal(table.get(p), OPENAI)
   assert.equal(r.hits.filter((h) => h.at?.path === `metadata.${p}`).length, 1)
   // the vendor's reply names it, and the reply comes back as the agent wrote it
-  assert.equal(restorer.restoreText(JSON.stringify({ said: { [p]: 'x' } })), JSON.stringify({ said: { [OPENAI]: 'x' } }))
+  const reply = JSON.stringify({ said: { [p]: 'x' } })
+  assert.equal(restorer.restoreText(reply), JSON.stringify({ said: { [OPENAI]: 'x' } }))
+  assert.equal(restorer.restoreJSON(reply), JSON.stringify({ said: { [OPENAI]: 'x' } }))
 })
 
 test('a key of the protocol itself, a tool definition’s or a tool call’s own names are never masked', () => {
@@ -391,4 +393,24 @@ test('a body already masked goes through again unchanged, keys and all', () => {
   assert.equal(again.text, once.text)
   assert.equal(again.n, 0)
   assert.equal(again.hits.length, 0)
+})
+
+test('a value already masked is masked again inside a URL, but a signed URL goes whole (ADR-0004)', () => {
+  const { masker } = setup()
+  const first = masker.maskJSON(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }))
+  assert.ok(first)
+  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(first.text)?.[0] ?? ''
+  assert.ok(p !== '')
+  const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'see the image' }], image_url: { url: `https://cdn.example/i.png?k=${OPENAI}` } })
+  const out = masker.maskJSON(body)
+  assert.ok(out)
+  assert.equal(out.n, 1)
+  assert.ok(out.text.includes(p))
+  assert.ok(!out.text.includes(OPENAI))
+  // signed: the vendor's fetch depends on every byte
+  const signed = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'see' }], image_url: { url: `https://s3.example/i.png?X-Amz-Signature=abc&k=${OPENAI}` } })
+  assert.equal(masker.maskJSON(signed)?.text, signed)
+  // a `data:` URL is not read at all
+  const data = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'see' }], image_url: { url: `data:image/png;base64,${Buffer.from(OPENAI).toString('base64')}` } })
+  assert.equal(masker.maskJSON(data)?.text, data)
 })

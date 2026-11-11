@@ -29,7 +29,7 @@
 - 除 ADR-0025 的三处外不改请求头：按新 body 重算 `content-length`；明文发出解码过的 body 时去掉 `content-encoding`；脱敏过的请求把 `accept-encoding` 设成 `identity`。
 - 定时自检：全局 dispatcher 被别人顶掉时，以当时的全局 dispatcher 为下游重新装上。下游的顺序与合成契约见 ADR-0012。
 - 卸载（插件重载、卸载、退出）后网关一律放行：仍持有它的层发来的请求原样透传。网关在顶上时，全局 dispatcher 交还给第一个 `proxy` 层（最后一个在顶上被收编的，否则是安装时的那个），不交给 `route` 层。新装的网关遇到已卸载的网关时装在它交还的 dispatcher 上，重载不会层层叠加。
-- 依赖锁 `undici@8.11.2`，与宿主 `dsh-http-proxy` 同版本。undici 8 的 `setGlobalDispatcher` 同时写 `undici.globalDispatcher.2`（原对象）与 `.1`（`Dispatcher1Wrapper` 包装，Node 内置 fetch 读它），所以插件自带一份 undici 也与宿主共用同一个全局 dispatcher。
+- 依赖锁 `undici@8.12.4`；宿主 `dsh-http-proxy` 当前是 `8.11.2`，8.x 内共用 `globalDispatcher.2` / `.1` 的契约不变，宿主升级时重新复验。undici 8 的 `setGlobalDispatcher` 同时写 `undici.globalDispatcher.2`（原对象）与 `.1`（`Dispatcher1Wrapper` 包装，Node 内置 fetch 读它），所以插件自带一份 undici 也与宿主共用同一个全局 dispatcher。
 
 ## Consequences
 
@@ -38,3 +38,9 @@
 - WebSocket 握手经过它，握手之后的消息不经过。所以除明确放行外，网关拒绝升级与 `CONNECT` 隧道（ADR-0025）；Codex 因此回落到 SSE。
 - 宿主升级改 undici 版本或 dispatcher 契约时，要重新跑端到端测试复验。
 - 安装顺序有风险：`dsh-http-proxy` 若晚于本插件安装，会把本插件顶掉；靠自检修复（每秒一次，经过网关的请求也会先自检，ADR-0012），自检间隔内的请求不受保护。
+
+### 补充（2026-11-11）：字符串 `input` 与 `prompt` 也算模型请求
+
+形状白名单原先只认数组：`messages`（Chat Completions）、`input`（Responses）、`contents`（Gemini / Vertex）。embeddings 的字符串 `input` 与 completions 的字符串 `prompt` 不匹配，`maskJSON` 返回 null，dispatcher 把 body 原样发出：没有脱敏，也没有记录或提示。这是形状判定的盲区，不是有意的放行。
+
+现在字符串 `input` 与字符串 `prompt` 也按模型请求处理：其中的字符串走与其它字符串相同的查找器、动作和已知值逻辑。其余 JSON body 仍然不算模型请求，原样发出；非 JSON content-type 也不读。不认识的形状仍静默放行——判断 host 是否模型服务没有可靠依据，加告警会把普通 API 请求写成脱敏记录。README 写明覆盖范围。
