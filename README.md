@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 简体中文
 
-![模型只看见 {{占位符}}：密钥、凭据、个人信息发出前换成占位符，回复里再换回原值，一处拦截，所有 provider 都经过它](docs/assets/screenshots/0-banner.png)
+![模型只看见 {{占位符}}：密钥、凭据、个人信息发出前换成占位符，回复里再换回原值，一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
 
 在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
@@ -42,7 +42,7 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/rele
 | `EMAIL` / `PHONE` / `ID_CARD` / `BANK_CARD` | 邮箱、大陆手机号、身份证号（校验位）、银行卡号（Luhn） | `personal` |
 | `TERM` | 配置里 `words` 列出的词 | 有词就脱敏 |
 
-脱敏过的值在请求的其它地方再出现，也按同一个占位符脱敏（finder 记为 `known`）。同一个 host 重发的历史保持原来的字节，prompt cache 照样命中。
+脱敏过的值在请求的其它地方再出现，也按同一个占位符脱敏（finder 记为 `known`），`url` / `image_url` 里的也算；带签名的 URL（S3 预签名等）原样发出，改了会失效（[ADR-0004](docs/adr/0004-protected-regions.md)）。同一个 host 重发的历史保持原来的字节，prompt cache 照样命中。
 
 照着试：下面每行都是**假值**，复制进会话发出去，统计卡的对应记录里就会出现替换后的占位符。记录、统计、日志和 vendorView 副本里都没有原值，只有占位符和首尾几个字符。
 
@@ -94,7 +94,7 @@ someone@gmail.com                                                    → EMAIL
 | `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `{{…}}` 占位符；不足 8 个字符、或含字母数字与 `-` `_` `.` 以外字符的值仍用占位符；回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
 | `cookieNames` | `[]` | 追加要脱敏的 cookie 名 |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不脱敏的 cookie 名 |
-| `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用（[ADR-0004](docs/adr/0004-protected-regions.md)） |
+| `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用；只保护宿主生成的文本（系统提示词、`system`、`instructions`、`systemInstruction`），用户消息和工具结果里的 `<env>` 不算（[ADR-0004](docs/adr/0004-protected-regions.md) 补充） |
 | `protectTools` | `true` | 请求的 `tools` 数组原样发出 |
 | `excludeHosts` | `[]` | 不改写的 `host` 或 `host:port` |
 | `excludeProviders` | `[]` | 不脱敏的 provider id；「配置」页里从当前注册的 provider 中勾选。放行的请求原样发出、回复不还原、不留记录，有请求发出时日志里每个 provider 提示一次（[ADR-0018](docs/adr/0018-exclude-providers.md)、[ADR-0034](docs/adr/0034-log-excluded-provider.md)） |
@@ -120,7 +120,7 @@ someone@gmail.com                                                    → EMAIL
 
 ## 记录与统计
 
-只记有脱敏或还原的模型请求，一条请求一条：时间与耗时、host、model、会话及其工作区与标题、替换处数、每个值的占位符 / kind / finder / 开头 / 长度 / 出现过的每一处、请求所在的轮次与步数、值首次被发出的轮次与步数、回复里还原的处数（工具参数里的另计），以及值表里没有的占位符数。记录里不写值本身，也不记 URL 的 query（[ADR-0008](docs/adr/0008-masking-records.md)、[ADR-0020](docs/adr/0020-record-attribution.md)）。
+只记有脱敏或还原的模型请求，一条请求一条：时间与耗时、host、model、会话及其工作区与标题、替换处数、每个值的占位符 / kind / finder / 开头 / 长度 / 出现过的每一处（每值最多 8 处，其余只计数）、请求所在的轮次与步数、值首次被发出的轮次与步数、回复里还原的处数（工具参数里的另计），以及值表里没有的占位符数。记录里不写值本身，也不记 URL 的 query（[ADR-0008](docs/adr/0008-masking-records.md)、[ADR-0020](docs/adr/0020-record-attribution.md)）。
 
 「开头」只留辨识用的几个字符：有前缀的留下前缀和其后 4 个，没有的留前 4 个，长值再加末尾 2 个（`sk-proj-g6sx…3QaZ`），短值更少；个人信息和自定义词只留 1 个（[ADR-0019](docs/adr/0019-hint.md)）。
 
@@ -133,7 +133,7 @@ someone@gmail.com                                                    → EMAIL
 ## 须知
 
 - 会话日志里是真值：还原发生在日志落盘之前（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。会话同步、备份、分享带走的是真值。
-- 覆盖面只有走全局 `fetch()` 的流量；`node:http` 直连、worker 线程、独立进程不经过网关（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。
+- 覆盖面只有走全局 `fetch()` 的流量；`node:http` 直连、worker 线程、独立进程不经过网关（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。只改写识别得出的 JSON 模型请求（数组 `messages`、数组或字符串 `input`、`contents`、字符串 `prompt`）；multipart、表单、非 JSON body 原样发出，也不留记录（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。
 - 压缩的请求与回复先解压再脱敏、还原；认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的插件自己的连接，如 dsh-im-infoflow 的入站）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
 - 值表只在内存里（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。重启后，规则命不中、只靠记忆兜住的值第一次出站会按原文发出。
 - 还原发生在回复里，包括工具调用参数：模型被诱导把占位符写进 `curl` 之类的命令时，工具执行时用的是真值。插件只记账（统计卡与 `/privacy status` 里的「工具参数」计数），不拦截（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。

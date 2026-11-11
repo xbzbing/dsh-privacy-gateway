@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-![The model only sees {{placeholder}}: secrets, credentials and personal data go out as placeholders and come back as real values — one interception point, every provider goes through it](docs/assets/screenshots/0-banner-en.png)
+![The model only sees {{placeholder}}: secrets, credentials and personal data go out as placeholders and come back as real values — one interception point, every model request through the global fetch goes through it](docs/assets/screenshots/0-banner-en.png)
 
 A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
@@ -42,7 +42,7 @@ In the default web profile the first install works at once, with no restart of t
 | `EMAIL` / `PHONE` / `ID_CARD` / `BANK_CARD` | Email addresses, mainland China mobile numbers, ID card numbers (check digit), bank card numbers (Luhn) | `personal` |
 | `TERM` | The words listed in the `words` config | whenever there are words |
 
-A value masked once is masked with the same placeholder wherever else the request has it (its finder is `known`). History sent to the same host again keeps the bytes it went with before, so the prompt cache still hits.
+A value masked once is masked with the same placeholder wherever else the request has it (its finder is `known`), `url` / `image_url` included; a signed URL (an S3 presigned one, say) goes as it is, since masking one character breaks it ([ADR-0004](docs/adr/0004-protected-regions.md)). History sent to the same host again keeps the bytes it went with before, so the prompt cache still hits.
 
 To try it: every line below is a **fake** value; paste one into a session and the matching record on the card shows the placeholder it became. Neither the records, the stats, the log nor the vendorView copy holds the value, only the placeholder and a few characters at each end.
 
@@ -96,7 +96,7 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `shape` | `false` | Send a key as a made-up key of its own form (same prefix, length and kinds of character) instead of a `{{…}}` placeholder; a value under 8 characters, or holding anything but letters, digits, `-`, `_` and `.`, keeps the placeholder; replies put it back the same way ([ADR-0015](docs/adr/0015-shape.md)) |
 | `cookieNames` | `[]` | More cookie names to mask |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | Cookie names never masked |
-| `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them ([ADR-0004](docs/adr/0004-protected-regions.md)) |
+| `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them; only in text the host writes (the system prompt, `system`, `instructions`, `systemInstruction`), never in a user message or a tool result ([ADR-0004](docs/adr/0004-protected-regions.md) supplement) |
 | `protectTools` | `true` | Send the request's `tools` array as written |
 | `excludeHosts` | `[]` | `host` or `host:port` entries that are never rewritten |
 | `excludeProviders` | `[]` | Provider ids whose requests are not masked; checked on the Configure page from the providers registered now. Their requests go out as they are, replies are not restored, nothing is recorded, and the log says so once for each provider ([ADR-0018](docs/adr/0018-exclude-providers.md), [ADR-0034](docs/adr/0034-log-excluded-provider.md)) |
@@ -122,7 +122,7 @@ No answer of the command has a value in it.
 
 ## Records and statistics
 
-Only a model request that had something masked or restored makes a record, one each: its time and duration, host, model, session with its workspace and title, places replaced, each value's placeholder / kind / finder / head / length / every place it was at, the turn and step the request went out in, the turn and step the value was first sent in this run, the places restored in the reply (those in tool arguments counted apart), and the placeholders the value table does not know. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md), [ADR-0020](docs/adr/0020-record-attribution.md)).
+Only a model request that had something masked or restored makes a record, one each: its time and duration, host, model, session with its workspace and title, places replaced, each value's placeholder / kind / finder / head / length / every place it was at (up to 8 per value, the rest counted), the turn and step the request went out in, the turn and step the value was first sent in this run, the places restored in the reply (those in tool arguments counted apart), and the placeholders the value table does not know. A record never holds a value, nor a URL's query ([ADR-0008](docs/adr/0008-masking-records.md), [ADR-0020](docs/adr/0020-record-attribution.md)).
 
 The head keeps a few characters to recognize it by: a key with a prefix keeps the prefix and the 4 characters after it, one without keeps its first 4, and a long value also keeps its last 2 (`sk-proj-g6sx…3QaZ`); shorter values keep fewer, and personal data and your words keep one ([ADR-0019](docs/adr/0019-hint.md)).
 
@@ -135,7 +135,7 @@ With `vendorView` on (「保留发出内容，供对照查看」 on the config p
 ## Notes
 
 - The session log holds the real values: replies are restored before the log is written ([ADR-0003](docs/adr/0003-restore-before-session-log.md)). Session sync, backups and shares carry the real values.
-- Only traffic through the global `fetch()` is covered; direct `node:http`, worker threads and separate processes bypass the gateway ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)).
+- Only traffic through the global `fetch()` is covered; direct `node:http`, worker threads and separate processes bypass the gateway ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)). Only JSON model requests it recognizes are rewritten (array `messages`, array or string `input`, `contents`, string `prompt`); multipart, forms and non-JSON bodies go as written and leave no record ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)).
 - Compressed requests and replies are decompressed before they are masked or restored; a `content-encoding` with no decoder fails the request ([ADR-0025](docs/adr/0025-compression-and-upgrades.md)). An upgrade (the WebSocket handshake) or a `CONNECT` tunnel inside a model call is refused as well: Codex falls back to SSE the first time and takes SSE from then on in that session. One opened by a plugin outside a model call (dsh-im-infoflow's inbound, say) is let through, its messages unmasked, with one warning per host ([ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)) — a fail-closed to fail-open trade whose cost the ADR records; a host that needs a transparent link can still go into `excludeHosts`.
 - The value table is in memory only ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)). After a restart, a value no rule finds, masked only because it was remembered, goes as written the first time it is sent again.
 - Replies are restored everywhere, tool call arguments included: a model led into writing a placeholder into a command such as `curl` runs the tool with the real value. The plugin counts these places (the tool-argument count on the card and in `/privacy status`) and does not block them ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)).
