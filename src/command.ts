@@ -11,8 +11,13 @@ export type Lang = 'zh' | 'en'
 
 /** What the command needs from the plugin. */
 export interface PrivacyFace {
-  /** Masking on or off for this run; the config is not written. */
+  /**
+   * Masking now: the run switch and the configuration both say on. Setting it
+   * turns the run switch only; the configuration is not written.
+   */
   active: boolean
+  /** Whether the configuration enables masking: `/privacy on` cannot override it. */
+  readonly configured: boolean
   readonly secrets: boolean
   readonly personal: boolean
   /** Values the table holds. */
@@ -27,6 +32,8 @@ const TEXT = {
   zh: {
     usage: '用法：/privacy [status | on | off | test <文本>]',
     on: '脱敏已开启。',
+    gated: '运行开关已打开，但配置里脱敏是关闭的：模型请求仍按原文发出。请在设置页打开「启用脱敏」。',
+    configOff: '配置：脱敏关闭（设置页的「启用脱敏」）',
     off: '脱敏已关闭：模型请求按原文发出，直到 /privacy on 或重启。配置未改动。',
     already: (on: boolean) => (on ? '脱敏本来就是开启的。' : '脱敏本来就是关闭的。'),
     testEmpty: '用法：/privacy test <文本>',
@@ -52,6 +59,8 @@ const TEXT = {
   en: {
     usage: 'Usage: /privacy [status | on | off | test <text>]',
     on: 'Masking is on.',
+    gated: 'The run switch is on, but masking is disabled in the configuration: model requests still go as written. Turn on "Enable masking" in the settings.',
+    configOff: 'Config: masking off (the settings page\'s "Enable masking")',
     off: 'Masking is off: model requests go as written until /privacy on or a restart. The config is unchanged.',
     already: (on: boolean) => (on ? 'Masking was already on.' : 'Masking was already off.'),
     testEmpty: 'Usage: /privacy test <text>',
@@ -91,7 +100,9 @@ function hintOf(h: Hit, lang: Lang): string {
 function status(face: PrivacyFace, lang: Lang): string {
   const T = TEXT[lang]
   const s = face.stats()
-  const out = [T.state(face.active), T.covers(face.secrets, face.personal), T.table(face.values), '', T.line(T.today, s.today), T.line(T.week, s.week), T.line(T.month, s.month)]
+  const out = [T.state(face.active)]
+  if (!face.configured) out.push(T.configOff)
+  out.push(T.covers(face.secrets, face.personal), T.table(face.values), '', T.line(T.today, s.today), T.line(T.week, s.week), T.line(T.month, s.month))
   if (Object.keys(s.today.kinds).length > 0) out.push(T.kinds + counts(s.today.kinds))
   if (Object.keys(s.today.finders).length > 0) out.push(T.finders + counts(s.today.finders))
   if (s.today.warned > 0 || s.today.blocked > 0) out.push(T.actedToday(s.today.warned, s.today.blocked))
@@ -117,10 +128,15 @@ export function runPrivacyCommand(face: PrivacyFace, rawInput: string, lang: Lan
     case 'on':
     case 'off': {
       const on = sub === 'on'
-      if (face.active === on) return { kind: 'success', text: T.already(on) }
-      // `off` is a flag the masker never sees: it works while masking fails (design §6)
+      const was = face.active
+      // `off` is a flag the masker never sees: it works while masking fails (design §6).
+      // Setting it even when the effective state already matches clears the run flag,
+      // so a config that is off now does not come back on with the flag still set.
       face.active = on
-      return { kind: 'success', text: on ? T.on : T.off }
+      const now = face.active
+      if (now === on) return { kind: 'success', text: was === now ? T.already(on) : on ? T.on : T.off }
+      // `/privacy on` with masking disabled in the configuration: the run switch is on, the request is not masked
+      return { kind: 'success', text: T.gated }
     }
     case 'test': {
       if (rest.trim() === '') return { kind: 'error', text: T.testEmpty }

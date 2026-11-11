@@ -75,7 +75,7 @@ test('a value on the allow list is sent whatever its kind does', () => {
 
 test('/privacy test shows a warned or blocked value as its placeholder, with what would be done', () => {
   const e = engine({ EMAIL: 'warn', API_KEY: 'block' })
-  const face = { get active() { return e.active }, set active(v: boolean) { e.active = v }, secrets: true, personal: true, values: 0, stats: () => e.records.stats(), preview: (t: string) => e.preview(t) }
+  const face = { get active() { return e.active }, set active(v: boolean) { e.active = v }, configured: true, secrets: true, personal: true, values: 0, stats: () => e.records.stats(), preview: (t: string) => e.preview(t) }
   const r = runPrivacyCommand(face, `test ${MAIL} ${KEY}`, 'en')
   assert.ok(!r.text.includes(MAIL) && !r.text.includes(KEY), r.text)
   assert.match(r.text, /EMAIL .*\(warn: goes as written/)

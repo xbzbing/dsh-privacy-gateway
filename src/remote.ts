@@ -17,7 +17,7 @@ export interface OverviewRequest {
 }
 
 export interface Overview {
-  /** Masking on for this run (`/privacy on|off`). */
+  /** Masking is effectively on: the run switch (`/privacy on|off`) and the configuration both say so. */
   active: boolean
   secrets: boolean
   personal: boolean

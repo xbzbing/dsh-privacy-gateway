@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -148,5 +148,82 @@ test("stateDir is the instance's own directory, so two instances keep their own 
   } finally {
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
     else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+  }
+})
+
+test('/privacy on does not claim masking is on while the configuration keeps it off', () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-command-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const disposers: Array<() => void> = []
+  const logger = { info: () => {}, warn: () => {}, error: () => {} }
+  const config = { enabled: false }
+  let run: (invocation: { rawInput: string }) => { kind: string; text?: string } = () => ({ kind: 'error' })
+  try {
+    apply(
+      {
+        logger,
+        effect: (fn: () => () => void) => disposers.push(fn()),
+        inject: (_deps: string[], callback: (child: unknown) => void) =>
+          callback({
+            logger,
+            effect: (fn: () => () => void) => disposers.push(fn()),
+            commands: {
+              register: (definition: { handler: typeof run }) => {
+                run = definition.handler
+                return () => {}
+              },
+            },
+          } as never),
+      } as never,
+      config,
+    )
+    assert.match(run({ rawInput: 'on' }).text ?? '', /disabled in the configuration/)
+    assert.match(run({ rawInput: 'status' }).text ?? '', /Config: masking off/)
+    // off clears the run switch even though the effective state was already off:
+    // turning the config back on must not turn masking on behind the user's back
+    assert.match(run({ rawInput: 'off' }).text ?? '', /already off/)
+    config.enabled = true
+    assert.match(run({ rawInput: 'status' }).text ?? '', /State: off/)
+  } finally {
+    for (const d of disposers.splice(0)) d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('the card\'s reset clears the day files and the kept bodies', async () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-reset-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const disposers: Array<() => void> = []
+  const logger = { info: () => {}, warn: () => {}, error: () => {} }
+  let source: { reset(): Promise<{ files: number }> } | undefined
+  try {
+    apply(
+      {
+        logger,
+        effect: (fn: () => () => void) => disposers.push(fn()),
+        plugin: (_plugin: unknown, config: unknown) => {
+          source = config as { reset(): Promise<{ files: number }> }
+        },
+      } as never,
+      {},
+    )
+    // the Remote service is loaded with a dynamic import, after apply returns
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(source, 'the card\'s source was registered')
+    const day = join(home, 'masking', '2000-01-01.jsonl')
+    mkdirSync(dirname(day), { recursive: true })
+    writeFileSync(day, '{}\n')
+    const r = await source.reset()
+    assert.equal(r.files, 1)
+    assert.equal(existsSync(day), false)
+  } finally {
+    for (const d of disposers.splice(0)) d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
   }
 })

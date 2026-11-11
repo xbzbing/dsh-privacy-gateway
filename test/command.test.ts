@@ -24,6 +24,7 @@ function faceOf(engine: PrivacyEngine): PrivacyFace {
     set active(on: boolean) {
       engine.active = on
     },
+    configured: true,
     secrets: true,
     personal: false,
     get values() {
@@ -130,4 +131,31 @@ test('apply registers /privacy once dsh-commands is there, with its input kept o
     rmSync(home, { recursive: true, force: true })
   }
   assert.equal(unregistered, 1)
+})
+
+test('/privacy on says the configuration is what keeps masking off', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const configured = false
+  let run = true
+  const face: PrivacyFace = {
+    get active() {
+      return run && configured
+    },
+    set active(on: boolean) {
+      run = on
+    },
+    configured: false,
+    secrets: true,
+    personal: false,
+    get values() {
+      return engine.values
+    },
+    stats: () => engine.records.stats(),
+    preview: (t) => engine.preview(t),
+  }
+  assert.match(runPrivacyCommand(face, 'on', 'en').text, /disabled in the configuration/)
+  assert.equal(run, true, 'the run switch is on, the config still gates it')
+  assert.match(runPrivacyCommand(face, 'status', 'en').text, /Config: masking off/)
+  assert.match(runPrivacyCommand(face, 'off', 'en').text, /already off/)
+  assert.equal(run, false, 'off clears the run switch even when the effective state was already off')
 })

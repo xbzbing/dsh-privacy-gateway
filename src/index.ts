@@ -206,6 +206,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       engine.active = on
       ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} by /privacy`)
     },
+    get configured() {
+      return current().enabled
+    },
     get secrets() {
       return current().secrets
     },
