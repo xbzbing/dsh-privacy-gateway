@@ -72,8 +72,11 @@ export function fetchOverview(ctx: ClientCtx, limit: number, signal?: AbortSigna
 /** The body kept for record `key` (docs/adr/0016): null when it is no longer kept. */
 export function fetchVendorView(ctx: ClientCtx, key: number, signal?: AbortSignal): Promise<Result<string | null>> {
   return call(ctx, 'vendorView', { key }, (v) => {
+    // null is the host's "no longer kept"; anything else must read as a body,
+    // or the call is malformed and the card can say so instead of "gone"
+    if (v === null) return null
     const body = (v as { body?: unknown } | null)?.body
-    return v !== null && typeof v === 'object' && typeof body === 'string' ? body : null
+    return typeof body === 'string' ? body : undefined
   }, signal)
 }
 

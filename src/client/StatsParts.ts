@@ -412,7 +412,7 @@ export function SessionSwitch(props: { ctx: ClientCtx; t: T; session: string; on
     h(
       'label',
       { className: 'pgw-session' },
-      h(Switch, { checked: on, disabled: busy, onChange: (next) => (next ? apply(true) : setAsking(true)) }),
+      h(Switch, { checked: on, label: t('session.mask'), disabled: busy, onChange: (next) => (next ? apply(true) : setAsking(true)) }),
       h('span', { className: 'pgw-session__label' }, t('session.mask')),
     ),
     h(RiskConfirmation, {

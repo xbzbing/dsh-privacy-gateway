@@ -67,7 +67,7 @@ function Card(props: CardProps): ReactNode {
   const cardClass = `pgw-card${props.panel ? ' pgw-card--panel' : ''}`
   const ready = state.status === 'ready' ? state.data : undefined
   // clearing is for every session's history, so it sits on the plugin's own card only
-  const resettable = !props.sessionId && ready !== undefined
+  const resettable = !props.panel && ready !== undefined
   const head = h(
     'div',
     { className: 'pgw-head' },
@@ -91,7 +91,7 @@ function Card(props: CardProps): ReactNode {
       ready && (!props.sessionId || !ready.active) ? h(Tag, { tone: ready.active ? 'success' : 'warning' }, t(ready.active ? 'card.on' : 'card.off')) : null,
       props.sessionId && ready && ready.sessionMasking === undefined ? h(Tag, { tone: 'outline' }, t('panel.session')) : null,
       // the value table is shared by every session, so it is told on the plugin's own card only
-      ready && !props.sessionId ? h('span', { className: 'pgw-meta', title: t('card.valuesHint') }, t('card.values', { n: ready.values })) : null,
+      ready && !props.panel ? h('span', { className: 'pgw-meta', title: t('card.valuesHint') }, t('card.values', { n: ready.values })) : null,
       ready && !ready.record ? h('span', { className: 'pgw-meta' }, t('card.memoryOnly')) : null,
     ),
     h(

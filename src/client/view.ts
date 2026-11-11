@@ -174,9 +174,6 @@ function readPlaces(v: unknown): Place[] {
  */
 const PLACES_SHOWN = 7
 
-/** The finders the table knows by name; a record of another version may say one it does not. */
-const FINDERS = ['rule', 'word', 'known', 'cookie'] as const satisfies readonly ValueRecord['finder'][]
-
 /** A count the card shows: a whole one, never below zero, an odd one as zero. */
 const whole = (v: unknown): number => Math.max(0, Math.floor(count(v)))
 
@@ -200,7 +197,8 @@ function readValue(v: MaskRecord['values'][number]): ValueRecord | undefined {
   return {
     placeholder: v.placeholder,
     kind: text(v.kind) ?? '',
-    finder: FINDERS.find((f) => f === v.finder) ?? 'rule',
+    // the name as it came: one this version does not know still shows, with no hint card (ADR-0035)
+    finder: text(v.finder) ?? '',
     head: text(v.head) ?? '',
     ...(tail !== undefined ? { tail } : {}),
     len: whole(v.len),
@@ -239,15 +237,59 @@ export function stepLabel(at: { turn: number; step: number }): string {
  * version cannot break the card.
  */
 function readRecord(r: MaskRecord): MaskRecord {
-  const { valuesOmitted, turn, step, ...rest } = r
+  const {
+    valuesOmitted,
+    turn,
+    step,
+    model: rawModel,
+    host: rawHost,
+    what: rawWhat,
+    tookMs: rawTook,
+    title: rawTitle,
+    workspace: rawWorkspace,
+    session: rawSession,
+    exfil: rawExfil,
+    exfilHosts: rawExfilHosts,
+    restoredInTools: rawInTools,
+    warned: rawWarned,
+    failed: rawFailed,
+    blocked: rawBlocked,
+    relay: rawRelay,
+    ...rest
+  } = r
+  const text = (x: unknown): string | undefined => (typeof x === 'string' ? x : undefined)
   const omitted = count(valuesOmitted)
   const at = stepOf({ turn, step })
+  const model = text(rawModel)
+  const title = text(rawTitle)
+  const workspace = text(rawWorkspace)
+  const session = text(rawSession)
+  const exfil = count(rawExfil)
+  const inTools = count(rawInTools)
+  const warned = count(rawWarned)
+  const hosts = Array.isArray(rawExfilHosts) ? rawExfilHosts.filter((x): x is string => typeof x === 'string') : undefined
+  // every field the card draws is checked here: a record from another version
+  // must not put an object where a name goes, or the whole card fails to render
   return {
     ...rest,
+    host: text(rawHost) ?? '',
+    what: rawWhat === 'chat' || rawWhat === 'embeddings' || rawWhat === 'count' || rawWhat === 'search' ? rawWhat : 'chat',
+    tookMs: count(rawTook),
     n: count(r.n),
     restored: count(r.restored),
     unmapped: count(r.unmapped),
     values: r.values.map(readValue).filter((v): v is ValueRecord => v !== undefined),
+    ...(model !== undefined ? { model } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(workspace !== undefined ? { workspace } : {}),
+    ...(session !== undefined ? { session } : {}),
+    ...(exfil > 0 ? { exfil } : {}),
+    ...(hosts !== undefined && hosts.length > 0 ? { exfilHosts: hosts } : {}),
+    ...(inTools > 0 ? { restoredInTools: inTools } : {}),
+    ...(warned > 0 ? { warned } : {}),
+    ...(rawFailed === true ? { failed: true } : {}),
+    ...(rawBlocked === true ? { blocked: true } : {}),
+    ...(rawRelay === true ? { relay: true } : {}),
     ...(omitted > 0 ? { valuesOmitted: omitted } : {}),
     ...(at ?? {}),
   }

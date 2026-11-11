@@ -3,7 +3,6 @@ import { chmod, mkdir, open, readdir, stat, unlink, type FileHandle } from 'node
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import type { Finder } from './redact/ids.ts'
 import type { Hit, Place } from './redact/mask.ts'
 import type { StepAt } from './steps.ts'
 
@@ -21,7 +20,12 @@ export type { Place, StepAt }
 export interface ValueRecord {
   placeholder: string
   kind: string
-  finder: Finder
+  /**
+   * Who found it (src/redact/ids.ts). A string, not the union: a record
+   * written by a newer host may name a finder this version does not know,
+   * and the card shows the name rather than inventing one (ADR-0035).
+   */
+  finder: string
   /** Its first characters: a key's prefix (sk-) and a few after it, or a cookie's name (docs/adr/0019). */
   head: string
   /** Its last characters, where it is long enough to spare them. */

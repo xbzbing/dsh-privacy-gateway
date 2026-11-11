@@ -113,7 +113,7 @@ export function Select(props: {
  * saved; the typed entry is cleared only then, so a refused or cancelled one
  * can be tried again.
  */
-export function ListEditor(props: { t: T; list: readonly string[]; anyCase: boolean; placeholder: string; disabled: boolean; onChange(next: string[]): Promise<boolean> }): ReactNode {
+export function ListEditor(props: { t: T; label: string; list: readonly string[]; anyCase: boolean; placeholder: string; disabled: boolean; onChange(next: string[]): Promise<boolean> }): ReactNode {
   const { t } = props
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
@@ -139,7 +139,7 @@ export function ListEditor(props: { t: T; list: readonly string[]; anyCase: bool
         type: 'text',
         value: draft,
         placeholder: props.placeholder,
-        'aria-label': props.placeholder,
+        'aria-label': props.label,
         disabled: props.disabled,
         onChange: (e) => setDraft(e.target.value),
         onKeyDown: (e) => {
@@ -181,7 +181,7 @@ export function ListEditor(props: { t: T; list: readonly string[]; anyCase: bool
 /**
  * A whole number, saved when the field loses focus or on Enter, and only when
  * valid and changed. A change that is not saved (refused, or not confirmed)
- * puts the saved number back.
+ * stays in the field, as ADR-0021 says, so it can be tried again.
  */
 export function CountField(props: { t: T; value: number; min: number; label: string; disabled: boolean; onChange(next: number): Promise<boolean> }): ReactNode {
   const [draft, setDraft] = useState(String(props.value))
@@ -191,11 +191,9 @@ export function CountField(props: { t: T; value: number; min: number; label: str
   const parsed = parseCount(draft, props.min)
   const commit = (): void => {
     if (parsed === undefined || parsed === props.value || parsed === sending.current) return
-    const saved = props.value
     sending.current = parsed
-    void props.onChange(parsed).then((ok) => {
+    void props.onChange(parsed).then(() => {
       sending.current = undefined
-      if (!ok) setDraft(String(saved))
     })
   }
   return h(

@@ -5,10 +5,10 @@ import type { ReactNode } from 'react'
 
 import type { MaskRecord, ValueRecord } from '../records.ts'
 import type { T } from './locales.ts'
-import { fetchVendorView, type ClientCtx } from './rpc.ts'
+import { failureText, fetchVendorView, type ClientCtx, type Failure } from './rpc.ts'
 import { bodyLines, hintOf, valuesKey, viewLines, type ViewLine } from './view.ts'
 
-type State = { status: 'loading' } | { status: 'gone' } | { status: 'error' } | { status: 'ready'; body: string }
+type State = { status: 'loading' } | { status: 'gone' } | { status: 'error'; failure: Failure } | { status: 'ready'; body: string }
 
 /** A value's marker on the agent's side: its kind, its hint and its length, never the value. */
 function marker(v: ValueRecord | undefined, t: T): string {
@@ -35,7 +35,7 @@ export function VendorView(props: { ctx: ClientCtx; t: T; record: MaskRecord; on
     setState({ status: 'loading' })
     void fetchVendorView(ctx, record.key, ac.signal).then((r) => {
       if (ac.signal.aborted) return
-      setState(!r.ok ? { status: 'error' } : r.value === null ? { status: 'gone' } : { status: 'ready', body: r.value })
+      setState(!r.ok ? { status: 'error', failure: r.failure } : r.value === null ? { status: 'gone' } : { status: 'ready', body: r.value })
     })
     return () => ac.abort()
   }, [ctx, record.key])
@@ -57,8 +57,15 @@ export function VendorView(props: { ctx: ClientCtx; t: T; record: MaskRecord; on
     h(Button, { variant: 'outline', size: 'sm', onClick: props.onClose }, t('view.close')),
   )
   if (!view) {
-    const msg = state.status === 'loading' ? 'view.loading' : state.status === 'gone' ? 'view.gone' : 'card.unavailable'
-    return h('div', { className: 'pgw-view' }, head, h('div', { className: 'pgw-empty' }, t(msg)))
+    const msg =
+      state.status === 'loading'
+        ? t('view.loading')
+        : state.status === 'gone'
+          ? t('view.gone')
+          : state.status === 'error'
+            ? t('view.failed', { reason: failureText(state.failure, t) })
+            : t('card.unavailable')
+    return h('div', { className: 'pgw-view' }, head, h('div', { className: 'pgw-empty' }, msg))
   }
   return h(
     'div',

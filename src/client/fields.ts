@@ -128,12 +128,12 @@ export interface SummaryPart {
 
 /** What a group's header says while it is folded, so the page can stay short without hiding the state. */
 export function groupSummary(g: GroupId, value: Record<string, unknown>): SummaryPart[] {
-  const on = (k: 'enabled' | 'secrets' | 'personal' | 'shape' | 'record' | 'vendorView' | 'showPanel'): boolean => switchValue(value[k], spec(k, 'switch').default)
+  const on = (k: 'enabled' | 'secrets' | 'personal' | 'shape' | 'maskKeys' | 'record' | 'vendorView' | 'showPanel'): boolean => switchValue(value[k], spec(k, 'switch').default)
   switch (g) {
     case 'mask': {
       if (!on('enabled')) return [{ key: 'cfg.s.maskOff', off: true }]
       const kinds = (['secrets', 'personal'] as const).filter(on)
-      const parts: SummaryPart[] = kinds.length === 0 ? [{ key: 'cfg.s.maskNothing', off: true }] : kinds.map((k) => ({ key: `cfg.s.${k}` }))
+      const parts: SummaryPart[] = kinds.length === 0 ? [{ key: on('maskKeys') ? 'cfg.s.maskKeysOnly' : 'cfg.s.maskNothing', off: true }] : kinds.map((k) => ({ key: `cfg.s.${k}` }))
       if (on('shape')) parts.push({ key: 'cfg.s.shape' })
       const guard = spec('toolGuard', 'choice')
       parts.push({ key: `cfg.s.toolGuard.${choiceValue(value.toolGuard, guard.choices, guard.default)}` })

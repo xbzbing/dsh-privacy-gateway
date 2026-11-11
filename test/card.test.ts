@@ -417,12 +417,24 @@ test('an overview from another host version is filled in, not trusted as it is',
   const firstOf = (i: number): unknown => sentFirst?.recent[0]?.values[i]?.first
   assert.deepEqual(firstOf(0), { turn: 3, step: 1 })
   for (const i of [1, 2, 3, 4]) assert.equal(firstOf(i), undefined, `value ${i}`)
-  const val = (placeholder: string, extra: Record<string, unknown> = {}) => ({ placeholder, kind: '', finder: 'rule', head: '', len: 0, n: 0, ...extra })
+  const val = (placeholder: string, extra: Record<string, unknown> = {}) => ({ placeholder, kind: '', finder: '', head: '', len: 0, n: 0, ...extra })
   assert.deepEqual(places?.recent[0]?.values[0], val('{{A}}', { at: { path: 'messages.3.content', role: 'user' }, elsewhere: [{ path: 'messages.7.content', role: 'user' }], elsewhereOmitted: 2 }))
   assert.deepEqual(places?.recent[0]?.values[1], val('{{B}}'))
   assert.deepEqual(places?.recent[0]?.values[2], val('{{C}}'))
   // a value the table cannot name at all is left out
   assert.equal(readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [{ kind: 'API_KEY' }, {}, { placeholder: 7 }] }] })?.recent[0]?.values.length, 0)
+  // a finder this version does not know keeps its name, with no hint card (ADR-0035)
+  const newer = readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [{ placeholder: '{{X}}', finder: 'header' }] }] })?.recent[0]?.values[0]
+  assert.equal(newer?.finder, 'header')
+  // a record's drawn fields are checked too: an object where a name goes would break the card
+  const skew = readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [], host: {}, model: [], title: {}, session: 7, exfil: 'yes', exfilHosts: 'x', failed: 1 }] })?.recent[0]
+  assert.equal(skew?.host, '')
+  assert.equal(skew?.model, undefined)
+  assert.equal(skew?.title, undefined)
+  assert.equal(skew?.session, undefined)
+  assert.equal(skew?.exfil, undefined)
+  assert.equal(skew?.exfilHosts, undefined)
+  assert.equal(skew?.failed, undefined)
   // more places than the card names are counted, and a path it was given twice is one place
   const many = readOverview({
     active: true,

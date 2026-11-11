@@ -15,7 +15,7 @@
  * Each group folds; a folded group's header says its state, and which groups
  * are open is kept in this browser.
  */
-import { RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createElement as h, Fragment, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 
@@ -141,6 +141,7 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   const ids = useId()
   const [providers, setProviders] = useState<ProviderEntry[] | null>(null)
   const [unavailable, setUnavailable] = useState(false)
+  const [tries, setTries] = useState(0)
   const [open, setOpen] = useState<GroupId[]>(readOpen)
   const toggle = (g: GroupId): void =>
     setOpen((was) => {
@@ -162,8 +163,11 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
       setProviders(r.ok ? r.value : [])
     })
     return () => abort.abort()
-  }, [ctx])
+  }, [ctx, tries])
   if (!form) return h('div', { className: 'pgw-empty' }, t('cfg.unavailable'))
+  // a form that is there but not ready (the settings service refused the value)
+  // shows defaults that are not the saved ones: say it is still being read
+  const loading = ready ? null : h('div', { className: 'pgw-cfg__desc', role: 'status' }, t('cfg.loading'))
   const disabled = !ready || !writable
   const providerName = (id: string): string => providers?.find((p) => p.id.toLowerCase() === id.toLowerCase())?.name ?? id
   /** Writes `next` to `f`, asking first when the change is a risky one; resolves with whether it was written. */
@@ -207,7 +211,7 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
         })
       }
       case 'list':
-        return h(ListEditor, { t, list: listValue(value(f.key), f.default), anyCase: f.anyCase, placeholder: t(key(`cfg.f.${f.key}.placeholder`)), disabled, onChange: (next) => write(f, next) })
+        return h(ListEditor, { t, label: title, list: listValue(value(f.key), f.default), anyCase: f.anyCase, placeholder: t(key(`cfg.f.${f.key}.placeholder`)), disabled, onChange: (next) => write(f, next) })
       case 'count':
         return h(CountField, { t, value: countValue(value(f.key), f.min, f.default), min: f.min, label: title, disabled, onChange: (next) => write(f, next) })
       case 'providers':
@@ -235,7 +239,14 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   const note = (f: FieldSpec): ReactNode => {
     // why the tab would not appear, said where the switch is (docs/adr/0017)
     if (f.key === 'showPanel' && failure) return h('div', { className: 'pgw-cfg__desc pgw-cfg__desc--error' }, t('cfg.sidebarFailed', { reason: panelFailureText(failure, t) }))
-    if (f.key === 'excludeProviders' && unavailable) return h('div', { className: 'pgw-cfg__desc pgw-cfg__desc--error' }, t('cfg.providerListUnavailable'))
+    if (f.key === 'excludeProviders' && unavailable)
+      return h(
+        'div',
+        { className: 'pgw-cfg__desc pgw-cfg__desc--error' },
+        t('cfg.providerListUnavailable'),
+        ' ',
+        h(Button, { variant: 'outline', size: 'sm', onClick: () => setTries((n) => n + 1) }, t('cfg.retry')),
+      )
     return undefined
   }
   const shown = Object.fromEntries(FIELDS.map((f) => [f.key, value(f.key)]))
@@ -269,6 +280,7 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
       // the row page carries its own heading; the inline section on the bundle page needs one
       props.form ? null : h('h3', { className: 'pgw-title' }, t('cfg.title')),
       queueState.failed ? h('div', { className: 'pgw-notice pgw-notice--error', role: 'alert' }, t('cfg.failed')) : null,
+      loading,
       h('div', { className: 'pgw-cfg__folds' }, GROUPS.map(group)),
       h('p', { className: 'pgw-cfg__desc pgw-cfg__foot' }, t('cfg.applies'), ' ', t('cfg.others')),
     ),
