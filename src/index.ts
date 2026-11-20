@@ -17,8 +17,9 @@ import { loadKey } from './redact/key.ts'
  * dsh-privacy-gateway cordis plugin entry: chains a masking dispatcher in
  * front of undici's global dispatcher (docs/adr/0001). Secrets in outgoing
  * model requests go as placeholders; the placeholders in the replies come
- * back as the values. Disposal (plugin reload, unload, shutdown) puts the
- * previous dispatcher back.
+ * back as the values while the log restore switch is on (docs/adr/0003) —
+ * off by default, so the session log holds no plaintext. Disposal (plugin
+ * reload, unload, shutdown) puts the previous dispatcher back.
  */
 
 /** The subject of a `session/event`: the plugin reads the session's id and nothing else. */

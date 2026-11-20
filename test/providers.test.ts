@@ -74,7 +74,8 @@ test('a request made inside an excluded provider goes out unmasked and its reply
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
   const before = getGlobalDispatcher()
-  const gateway = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, skip: makeSkip({ enabled: () => true, sessionOff: () => false }), logger: { warn: () => {} } })
+  // the reply comes back with its values: the log restore switch on (docs/adr/0003)
+  const gateway = installGateway(new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, restoreLog: true })), { checkIntervalMs: 0, skip: makeSkip({ enabled: () => true, sessionOff: () => false }), logger: { warn: () => {} } })
   const call = async () => {
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }) })
     return ((await res.json()) as { choices: Array<{ message: { content: string } }> }).choices[0]?.message.content

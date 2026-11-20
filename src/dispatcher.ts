@@ -369,14 +369,17 @@ function replyMode(type: string): ReplyMode {
 }
 
 /**
- * Passes a model reply on with the placeholders in it put back: a
- * `text/event-stream` line by line as it arrives, an `application/x-ndjson`
- * reply one line (one JSON document) at a time, a JSON body whole at its end.
- * Backpressure is the downstream handler's own, through the same controller.
- * The gateway asks for an unencoded reply (docs/adr/0025); one that comes
- * compressed all the same is decoded here and goes on unencoded. A coding
- * there is no decoder for goes on as it is, with a warning: the placeholders
- * reach the agent, the secrets never left.
+ * Passes a model reply on: with the placeholders in it put back while the
+ * exchange is restoring, untouched when it is not — the log restore switch is
+ * off then (docs/adr/0003), so the placeholders reach the agent and the
+ * session log as they are. A `text/event-stream` goes line by line as it
+ * arrives, an `application/x-ndjson` reply one line (one JSON document) at a
+ * time, a JSON body whole at its end. Backpressure is the downstream handler's
+ * own, through the same controller. While restoring, the gateway asks for an
+ * unencoded reply (docs/adr/0025); one that comes compressed all the same is
+ * decoded here and goes on unencoded. A coding there is no decoder for goes on
+ * as it is, with a warning: the placeholders reach the agent, the secrets
+ * never left.
  */
 class RestoringHandler implements Handler {
   readonly #next: Handler
@@ -634,7 +637,8 @@ const RANK: Record<LayerRole, number> = { route: 0, proxy: 1 }
 /**
  * The gateway: an undici dispatcher chained in front of whatever dispatcher
  * was global before it (docs/adr/0001). A POST whose body is a JSON model
- * request goes on masked, its reply restored; everything else goes on
+ * request goes on masked, its reply restored while the exchange is restoring
+ * (the log restore switch, docs/adr/0003); everything else goes on
  * untouched. An upgrade a model call opens (the Codex WebSocket) is refused
  * (docs/adr/0025); one a plugin opens outside a call — dsh-im-infoflow's
  * inbound, say — is let through unmasked, with one warn per host
@@ -908,8 +912,10 @@ export class MaskingDispatcher extends Dispatcher {
       const body = changed ? Buffer.from((exchange as Exchange).text, 'utf8') : raw
       const set: Record<string, string | null> = { 'content-length': String(body.length) }
       if (changed && codings.length > 0) set['content-encoding'] = null
-      // a reply with placeholders in it is restored as it comes: it is asked for unencoded
-      if (exchange !== null) set['accept-encoding'] = 'identity'
+      // a reply with placeholders in it is restored as it comes: it is asked for unencoded.
+      // Nothing is restored with the log restore switch off (docs/adr/0003), so then the reply
+      // may come compressed and goes on that way (docs/adr/0025)
+      if (exchange !== null && exchange.restoring()) set['accept-encoding'] = 'identity'
       const headers = editHeaders(opts.headers, set, ['accept-encoding'])
       to = this.downstream()
       next = { ...opts, body, headers, [kHop]: to } as Options

@@ -30,7 +30,7 @@ interface Base<K extends string> {
 }
 
 export type FieldSpec =
-  | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'maskKeys' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
+  | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'restoreLog' | 'maskKeys' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
   | (Base<'toolGuard'> & { kind: 'choice'; choices: readonly string[]; default: string })
   | (Base<'words' | 'allow'> & { kind: 'list'; default: readonly string[]; anyCase: boolean; risky: 'add' | 'remove' })
   | (Base<'keepDays'> & { kind: 'count'; min: number; default: number })
@@ -44,6 +44,8 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'personal', group: 'mask', kind: 'switch', default: false, half: true, risk: 'send' },
   { key: 'shape', group: 'mask', kind: 'switch', default: false, half: true },
   { key: 'toolGuard', group: 'mask', kind: 'choice', choices: ['off', 'warn', 'block'], default: 'off', half: true },
+  // off keeps the values out of the session log, and the agent sees placeholders too (docs/adr/0003)
+  { key: 'restoreLog', group: 'mask', kind: 'switch', default: false },
   // keys travel to the vendor too: off sends a secret used as a key as it is (docs/adr/0029)
   { key: 'maskKeys', group: 'mask', kind: 'switch', default: true, risk: 'send' },
   // words are matched as written, allow in any case (README, config.ts)
@@ -128,7 +130,7 @@ export interface SummaryPart {
 
 /** What a group's header says while it is folded, so the page can stay short without hiding the state. */
 export function groupSummary(g: GroupId, value: Record<string, unknown>): SummaryPart[] {
-  const on = (k: 'enabled' | 'secrets' | 'personal' | 'shape' | 'maskKeys' | 'record' | 'vendorView' | 'showPanel'): boolean => switchValue(value[k], spec(k, 'switch').default)
+  const on = (k: 'enabled' | 'secrets' | 'personal' | 'shape' | 'restoreLog' | 'maskKeys' | 'record' | 'vendorView' | 'showPanel'): boolean => switchValue(value[k], spec(k, 'switch').default)
   switch (g) {
     case 'mask': {
       if (!on('enabled')) return [{ key: 'cfg.s.maskOff', off: true }]
@@ -137,6 +139,7 @@ export function groupSummary(g: GroupId, value: Record<string, unknown>): Summar
       if (on('shape')) parts.push({ key: 'cfg.s.shape' })
       const guard = spec('toolGuard', 'choice')
       parts.push({ key: `cfg.s.toolGuard.${choiceValue(value.toolGuard, guard.choices, guard.default)}` })
+      if (on('restoreLog')) parts.push({ key: 'cfg.s.restoreLog' })
       return parts
     }
     case 'lists':

@@ -5,7 +5,7 @@
 
 ## Context
 
-目标是两件事同时成立：厂商看不到密钥明文；agent 无感，模型回复里的占位符在到达 agent 前换回真值。还要覆盖所有 provider，包括 oc2dsh 这类插件 adapter。
+目标是两件事同时成立：厂商看不到密钥明文；agent 无感，模型回复里的占位符在到达 agent 前换回真值（`restoreLog` 打开时；默认不换，占位符到达 agent 与会话日志，见 ADR-0003）。还要覆盖所有 provider，包括 oc2dsh 这类插件 adapter。
 
 宿主的 agent 事件层给不出这两件事：
 

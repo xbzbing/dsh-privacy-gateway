@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | [ADR-0001](0001-intercept-at-undici-global-dispatcher.md) | 拦截点：undici 全局 dispatcher | Accepted | 架构 |
 | [ADR-0002](0002-deterministic-placeholders-in-memory-values.md) | 确定性占位符，值只留内存 | Accepted | 脱敏 |
-| [ADR-0003](0003-restore-before-session-log.md) | 还原发生在会话日志之前，日志含真值 | Accepted | 脱敏 |
+| [ADR-0003](0003-restore-before-session-log.md) | 本地日志是否还原由开关决定，默认不还原 | Accepted | 脱敏 |
 | [ADR-0004](0004-protected-regions.md) | 受保护区域：`<env>` 块、工具定义与 keepIn 字段 | Accepted | 兼容 |
 | [ADR-0005](0005-fail-closed.md) | 脱敏失败时不发请求（fail-closed） | Accepted | 失败语义 |
 | [ADR-0006](0006-distribution-and-build-artifacts.md) | 分发渠道与构建产物：`lib/` 不入库 | Accepted | 分发 |

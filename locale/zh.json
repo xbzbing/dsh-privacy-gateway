@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "隐私网关",
-    "description": "出站把模型请求里的密钥换成占位符，回流时换回真值，覆盖所有 provider。",
+    "description": "出站把模型请求里的密钥换成占位符；回流的占位符默认原样进会话日志，打开 restoreLog 才换回真值，覆盖所有 provider。",
     "detail": "docs/details/DETAIL.md"
   }
 }

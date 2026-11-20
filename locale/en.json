@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Privacy Gateway",
-    "description": "Masks secrets in outgoing model requests and restores them in the replies, for every provider.",
+    "description": "Masks secrets in outgoing model requests; replies keep their placeholders in the session log by default, and restoreLog puts them back, for every provider.",
     "detail": "docs/details/DETAIL.en.md"
   }
 }

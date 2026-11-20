@@ -10,7 +10,7 @@
 - SSE 传输把请求 body 用 zstd 压缩，带 `content-encoding: zstd` 发出。压缩后的字节解不成 UTF-8，网关就把整段对话原样发给了厂商。
 - 默认传输 `auto` 先试 `globalThis.WebSocket`。Node 内置的 WebSocket 由 Node 自带的 undici 实现，握手是一个 `upgrade: 'websocket'` 的 GET，经过全局 dispatcher（`undici.globalDispatcher.1`，即网关的 `Dispatcher1Wrapper`）；握手之后的消息直接写 socket，不再经过 dispatcher，网关看不到也改不了。连接失败时（socket 触发 `error`，得到的是普通 Error，不是 `CodexApiError`），pi-ai 回落到 SSE，并记下这个会话以后直接走 SSE。
 
-回复方向也有同类问题：`fetch` 默认带 `accept-encoding`，厂商回压缩的回复时网关不还原，占位符进了会话日志（ADR-0003 的前提是回复被还原）。
+回复方向也有同类问题：`fetch` 默认带 `accept-encoding`，厂商可能回压缩的回复。要还原时（ADR-0003 的开关打开）网关必须先解码才还原得了；不还原时（默认）压缩的回复原样穿过网关即可。
 
 ## Decision
 
@@ -23,8 +23,8 @@
 
 ### 回复
 
-- 脱敏过的请求（有 exchange）一律把 `accept-encoding` 设成 `identity`，请求头是哪种形式都一样处理。
-- 厂商仍回压缩的回复时，`RestoringHandler` 用 `node:zlib` 流式解码（gzip、deflate、br、zstd），还原后以不压缩的形式交给调用方：去掉 `content-encoding` 与 `content-length`。解码出错时中止上游，并向调用方报错。没有解码器的编码照原样交出，打一条 warn。
+- 要还原的请求（有 exchange 且 `restoreLog` 打开）把 `accept-encoding` 设成 `identity`，请求头是哪种形式都一样处理；不还原时（默认）不改这个头，回复可以照常压缩。
+- 还原打开时厂商仍回压缩的回复，`RestoringHandler` 用 `node:zlib` 流式解码（gzip、deflate、br、zstd），还原后以不压缩的形式交给调用方：去掉 `content-encoding` 与 `content-length`。解码出错时中止上游，并向调用方报错。没有解码器的编码照原样交出，打一条 warn。还原关闭时压缩的回复原样交给调用方，网关不解码、不改头，由适配器自己解压。
 - `application/x-ndjson`（以及 jsonl、json-seq）按行流式还原，每行是一个 JSON 文档；不再整段缓存到结束。
 
 ### WebSocket 与其他升级
@@ -36,9 +36,13 @@
 
 - Codex 在本插件开启时总是走 SSE：第一次 WebSocket 失败后回落，之后同一会话直接用 SSE。SSE 请求以明文发出，比压缩的多一些字节。
 - 别的插件经全局 dispatcher 打开的 WebSocket 也会被拒；需要的话把它的 host 加进 `excludeHosts`。（已被 [ADR-0032](0032-upgrade-scoped-to-masked-calls.md) 收窄：调用外的升级放行，见文末更新。）
-- 回复以不压缩的形式传输，流量略大。
+- 还原打开时回复以不压缩的形式传输，流量略大；关闭时（默认）回复照常压缩。
 - 一个 bug 或少见的编码会让请求失败而不是外泄，止血路径与 ADR-0005 相同。
 
 ## 更新（2026-11-03）
 
 「带 `upgrade` 的请求一律不发」被 [ADR-0032](0032-upgrade-scoped-to-masked-calls.md) 收窄为「只在模型调用里不发」：模型调用之外的升级（别的插件自建的连接，如 dsh-im-infoflow 的入站）与 `CONNECT` 隧道放行，消息不脱敏，同一 host 打一条 warn。这是一次 fail-closed 到 fail-open 的取舍，代价见 ADR-0032。明确放行的情况（`enabled` 关、`/privacy off`、排除的 provider、关闭了脱敏的会话、`excludeHosts`）不变。
+
+## 更新（2026-11-20）
+
+回复方向的两条随 [ADR-0003](0003-restore-before-session-log.md) 改为开关、默认不还原而收窄：`accept-encoding` 只在要还原时设成 `identity`，压缩回复的解码与 warn 只发生在还原打开时；还原关闭时压缩的回复原样穿过网关。请求方向不变。

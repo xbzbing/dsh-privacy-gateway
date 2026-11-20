@@ -20,7 +20,7 @@ volatile 字段改了，cordis 不重新挂载插件，只把新值放进同一�
 - 开关、单选、天数的控件放在标题和说明右边，和设置页一致；词表和 provider 选择放在说明下方。页面宽度够时，短的项两两并排（`fields.ts` 里标 `half`），窄于 600px 时改为单列，按容器宽度判断，不按窗口宽度。
 - 这些字段在 schema 里都声明 `.volatile()`。`resolveConfig` 逐个字段读活引用的当前值。
 - 插件保存一个指纹（`liveMark`，即 `LIVE_FIELDS` 的 JSON）。每个请求进入 dispatcher 时、`/privacy` 和统计卡读状态时，重新解析配置；指纹变了才重建：
-  - `PrivacyEngine.reconfigure`：按新配置重建 Masker 和 Restorer，值表保留。已经发出的请求，回复照样还原，用的是发出时的 Restorer；新 Masker 的「已发送」缓存从空开始，因为旧缓存是按旧规则算的。
+  - `PrivacyEngine.reconfigure`：按新配置重建 Masker 和 Restorer，值表保留。已经发出的请求，`restoreLog` 打开时回复照样还原，用的是发出时的 Restorer；新 Masker 的「已发送」缓存从空开始，因为旧缓存是按旧规则算的。
   - `RecordStore.configure`：`record` 打开时开始写盘，第一次打开时把盘上已有的天数读进统计，只读一次；关掉时队列里还没写的也不写。`keepDays` 变小时，下次写盘就清理。
   - `vendorView`：`ViewStore` 一直创建，开着才存 body；关掉时清空已存的。
 - `enabled` 关掉时网关仍然安装，dispatcher 对每个请求都放行（不读 body、不还原、不记录），统计卡显示「已关闭」。以前关掉时插件直接不安装网关；现在关掉后再打开，下一次请求起就恢复，不用重启。要彻底卸下网关，在插件页停用本插件。
@@ -32,7 +32,7 @@ volatile 字段改了，cordis 不重新挂载插件，只把新值放进同一�
 
 - 改动从下一次模型调用起生效；正在进行的调用按发出时的配置跑完。
 - 每个请求多一次配置解析和一次 JSON 序列化，规模是十几个字段，开销可以忽略；重建只在指纹变化时发生。
-- 关掉 `secrets` 或 `personal` 后，之前换掉的值仍在值表里，回复里出现它们的占位符时照样还原。
+- 关掉 `secrets` 或 `personal` 后，之前换掉的值仍在值表里，`restoreLog` 打开时回复里出现它们的占位符照样还原。
 - 新加一个页面字段需要同时改三处：schema 标 volatile、`LIVE_FIELDS`（如果插件要据此重建）、`fields.ts`；测试会指出漏掉的那一处。
 
 ## 补充（2026-10-31）：写入排队，危险改动先确认

@@ -2,9 +2,9 @@
 
 [English](README.en.md) | 简体中文
 
-![模型只看见 {{占位符}}：密钥、凭据、个人信息发出前换成占位符，回复里再换回原值，一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
+![模型只看见 {{占位符}}：密钥、凭据、个人信息发出前换成占位符，回复里的占位符可换回原值（默认不换），一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
 
-在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符，入站把回流里的占位符换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
+在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符；入站默认让回流里的占位符原样进会话日志，明文不进日志，打开 `restoreLog` 才换回真值。对 agent、adapter、provider 都无感，一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
 如果你在用**中转站**或者在处理**敏感信息**、**线上数据**，请务必注意保护信息安全。
 
@@ -26,6 +26,7 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/rele
 
 - **脱敏范围**：密钥、token、密码、私钥、cookie、邮箱、手机号、身份证、银行卡、自定义敏感词，各有开关。
 - **动作可选**：按 kind 选 `mask` / `warn` / `block`，密钥可换成同形的假 key（`shape`）。
+- **日志不写真值**：默认不还原，回复里的占位符原样进会话日志，明文不进日志；打开 `restoreLog` 才把真值写回，agent 同时拿到真值。
 - **记录与统计**：按天落盘的脱敏记录、统计卡、会话「隐私保护」标签页；记录里只有占位符，没有真值。
 - **`/privacy` 命令**：查状态、临时开关、`test` 预览一段文本会怎样发出。
 - **配置热更新**：日常项在插件页上改，下一次调用即生效；脱敏出错时请求不发出。
@@ -69,7 +70,7 @@ someone@gmail.com                                                    → EMAIL
 - 短于 8 个字符的秘密（`abc123`、`666666`、`888888` 这类口令）不算值：照原样发出，也不进记录。它们随时能被爆破，遮住只是给人一种并不存在的保护；值表本来也不把这么短的值当作已知值（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)）。
 - 明显是占位写法的值不算值：8 个以上相同字符连排（`sk-proj-xxxx…`、`AKIA0000…`），或自带「这是占位」说明（`your_api_key`、`example`、`changeme`、`placeholder`、`dummy`、`***`）。随机 key 出现 8 连排的概率低于十亿分之一，`sk_test_…` 这种真测试 key 照旧脱敏（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)）。
 - 加密算法的名字不算值：`SCRAM-SHA-512`、`PBKDF2WithHmacSHA256` 这类名字写在规范里、人人可读，遮住什么都不保护，原样发出（[ADR-0033](docs/adr/0033-algorithm-names.md)）。
-- 键名和值一样脱敏：`{"metadata": {"sk-…": …}}` 里的键名也换成占位符，回复里再换回来；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名不动（[ADR-0029](docs/adr/0029-mask-json-keys.md)）。
+- 键名和值一样脱敏：`{"metadata": {"sk-…": …}}` 里的键名也换成占位符，`restoreLog` 打开时回复里再换回来；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名不动（[ADR-0029](docs/adr/0029-mask-json-keys.md)）。
 
 ## 界面
 
@@ -79,7 +80,7 @@ someone@gmail.com                                                    → EMAIL
 
 ## 配置
 
-插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`maskKeys`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 profile 的 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里改，写在 `id: dsh-privacy-gateway` 那一行的 `config` 下；插件包自带的 `cordis.patch.yml` 升级时会被覆盖，不要改它。
+插件页面里本插件那一行的「配置」页上可以直接改日常项：`enabled`、`secrets`、`personal`、`shape`、`toolGuard`、`restoreLog`、`maskKeys`、`words`、`allow`、`record`、`keepDays`、`recordContext`、`vendorView`、`showPanel`、`excludeProviders`。改了即时保存，从下一次模型调用起生效，不用重启（[ADR-0021](docs/adr/0021-live-settings.md)）。其余项在 profile 的 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里改，写在 `id: dsh-privacy-gateway` 那一行的 `config` 下；插件包自带的 `cordis.patch.yml` 升级时会被覆盖，不要改它。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -91,7 +92,8 @@ someone@gmail.com                                                    → EMAIL
 | `actions` | `{}` | 按 kind 选动作：`mask`（默认，换成占位符）、`warn`（照发并记一条）、`block`（整个请求不发）。例：`{ PRIVATE_KEY: block, EMAIL: warn }`（[ADR-0013](docs/adr/0013-actions.md)） |
 | `maskKeys` | `true` | 读起来像密钥或个人信息的 **JSON 键名**也换成占位符（`{"sk-…": …}`）；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名永不动，否则供应商读不懂请求。关闭后这类键名原样发出（[ADR-0029](docs/adr/0029-mask-json-keys.md)） |
 | `toolGuard` | `off` | 工具调用参数里还原出值、又指向本机以外的 host 时怎么办：`off` 只计数，`warn` 告警并记一条，`block` 这次调用的参数里不还原，工具拿到占位符（[ADR-0014](docs/adr/0014-tool-guard.md)） |
-| `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `{{…}}` 占位符；不足 8 个字符、或含字母数字与 `-` `_` `.` 以外字符的值仍用占位符；回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
+| `restoreLog` | `false` | 回复里的占位符在写入会话日志前是否换回真值。默认关闭：占位符原样进日志，明文不进日志，agent 拿到的也是占位符；打开后日志与 agent 都拿到真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)） |
+| `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `{{…}}` 占位符；不足 8 个字符、或含字母数字与 `-` `_` `.` 以外字符的值仍用占位符；`restoreLog` 打开时回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
 | `cookieNames` | `[]` | 追加要脱敏的 cookie 名 |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不脱敏的 cookie 名 |
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用；只保护宿主生成的文本（系统提示词、`system`、`instructions`、`systemInstruction`），用户消息和工具结果里的 `<env>` 不算（[ADR-0004](docs/adr/0004-protected-regions.md) 补充） |
@@ -132,11 +134,11 @@ someone@gmail.com                                                    → EMAIL
 
 ## 须知
 
-- 会话日志里是真值：还原发生在日志落盘之前（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。会话同步、备份、分享带走的是真值。
+- 会话日志默认是占位符：`restoreLog` 关闭（默认）时，回复里的占位符原样进日志，明文不进日志，agent 拿到的也是占位符；打开后还原发生在日志落盘之前，日志与 agent 都是真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
 - 覆盖面只有走全局 `fetch()` 的流量；`node:http` 直连、worker 线程、独立进程不经过网关（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。只改写识别得出的 JSON 模型请求（数组 `messages`、数组或字符串 `input`、`contents`、字符串 `prompt`）；multipart、表单、非 JSON body 原样发出，也不留记录（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。
-- 压缩的请求与回复先解压再脱敏、还原；认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的插件自己的连接，如 dsh-im-infoflow 的入站）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
+- 压缩的请求先解压再脱敏；`restoreLog` 打开时压缩的回复也先解码再还原，关闭时压缩的回复原样穿过网关、由适配器解压。请求里认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的插件自己的连接，如 dsh-im-infoflow 的入站）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
 - 值表只在内存里（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。重启后，规则命不中、只靠记忆兜住的值第一次出站会按原文发出。
-- 还原发生在回复里，包括工具调用参数：模型被诱导把占位符写进 `curl` 之类的命令时，工具执行时用的是真值。插件只记账（统计卡与 `/privacy status` 里的「工具参数」计数），不拦截（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。
+- `restoreLog` 打开时，还原发生在回复里，包括工具调用参数：模型被诱导把占位符写进 `curl` 之类的命令时，工具执行时用的是真值。插件只记账（统计卡与 `/privacy status` 里的「工具参数」计数），不拦截（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）；关闭时回复里没有真值，这条路径不存在。
 - 脱敏出错时请求不会发出，报错 `dsh-privacy-gateway: masking failed, request not sent`（[ADR-0005](docs/adr/0005-fail-closed.md)）。止血办法是 `/privacy off`，或在插件页停用本插件、把配置 `enabled` 设为 `false`。
 
 ## 开发

@@ -81,6 +81,12 @@ export interface PrivacyGatewayConfig {
   toolGuard?: ToolGuard
   /** A secret goes as a made-up key of its own form (same prefix, length, kinds of character) instead of a placeholder, where it can (docs/adr/0015). */
   shape?: boolean
+  /**
+   * Put a reply's placeholders back before the session log is written; off
+   * (the default) keeps the values out of the log, and the agent sees
+   * placeholders too (docs/adr/0003).
+   */
+  restoreLog?: boolean
   /** Cookie names masked wherever NAME=value is written, beside the built-in list (BDUSS, JSESSIONID, …). */
   cookieNames?: string[]
   /** Cookie names never masked. */
@@ -131,6 +137,7 @@ export const Config = Schema.object({
   actions: Schema.dict(Schema.union(['mask', 'warn', 'block'] as const)).default({}),
   toolGuard: Schema.union(['off', 'warn', 'block'] as const).default('off').volatile(),
   shape: Schema.boolean().default(false).volatile(),
+  restoreLog: Schema.boolean().default(false).volatile(),
   maskKeys: Schema.boolean().default(true).volatile(),
   cookieNames: Schema.array(Schema.string()).default([]),
   cookieKeep: Schema.array(Schema.string()).default(['lang', 'locale', 'theme', 'tz']),
@@ -152,7 +159,7 @@ export const Config = Schema.object({
 export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders'>> & { showPanel: boolean; excludeProviders: string[] }
 
 /** The volatile fields the gateway rebuilds its rules and stores from (showPanel and excludeProviders are read where they are used). */
-export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'maskKeys', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
+export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'restoreLog', 'maskKeys', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
 
 /** A string that changes when one of LIVE_FIELDS does. */
 export function liveMark(cfg: ResolvedConfig): string {
@@ -168,6 +175,7 @@ export const defaults: ResolvedConfig = {
   actions: {},
   toolGuard: 'off',
   shape: false,
+  restoreLog: false,
   maskKeys: true,
   cookieNames: [],
   cookieKeep: ['lang', 'locale', 'theme', 'tz'],
@@ -223,6 +231,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
     actions: actions(c.actions),
     toolGuard: c.toolGuard === 'warn' || c.toolGuard === 'block' ? c.toolGuard : 'off',
     shape: bool(c.shape, defaults.shape),
+    restoreLog: bool(c.restoreLog, defaults.restoreLog),
     maskKeys: bool(c.maskKeys, defaults.maskKeys),
     cookieNames: strings(c.cookieNames),
     cookieKeep: strings(c.cookieKeep, defaults.cookieKeep),

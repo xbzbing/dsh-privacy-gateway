@@ -2,9 +2,9 @@
 
 [简体中文](README.md) | English
 
-![The model only sees {{placeholder}}: secrets, credentials and personal data go out as placeholders and come back as real values — one interception point, every model request through the global fetch goes through it](docs/assets/screenshots/0-banner-en.png)
+![The model only sees {{placeholder}}: secrets, credentials and personal data go out as placeholders and can come back as real values (off by default) — one interception point, every model request through the global fetch goes through it](docs/assets/screenshots/0-banner-en.png)
 
-A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders, and placeholders in the replies are replaced back with the real values. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
+A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders; by default the placeholders in the replies go into the session log as they are, so no plaintext reaches it, and `restoreLog` puts them back with the real values on request. The agent, adapters and providers don't notice it, and one interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
 If you are using an **API relay**, or you are working with **sensitive information** or **production data**, please be sure to protect information security.
 
@@ -26,6 +26,7 @@ In the default web profile the first install works at once, with no restart of t
 
 - **What is masked**: keys, tokens, passwords, private keys, cookies, email addresses, phone numbers, ID card and bank card numbers, and your own words — each with its own switch.
 - **Actions**: pick `mask` / `warn` / `block` per kind; a key can be sent as a made-up key of its own form (`shape`).
+- **No plaintext in the session log**: restore is off by default, so a reply's placeholders go into the session log as they are; turn `restoreLog` on to put the real values back, and the agent gets them too.
 - **Records and statistics**: records written to disk by the day, a statistics card, and the session's 「隐私保护」 (Privacy) tab; a record holds placeholders, never a value.
 - **The `/privacy` command**: status, a temporary on / off, and `test` to preview how a text would go out.
 - **Live configuration**: everyday items are changed on the plugin page and apply from the next call; when masking fails, the request is not sent.
@@ -69,7 +70,7 @@ someone@gmail.com                                                    → EMAIL
 - A secret shorter than 8 characters (`abc123`, `666666`, `888888`: a short password) is no value: it goes as written and makes no record. It is guessed in no time, so masking it only promises a protection that is not there — and the value table never matched anything that short as known anyway ([ADR-0031](docs/adr/0031-no-short-or-template-values.md)).
 - A value typed to stand for a key is no value: eight or more of one character in a row (`sk-proj-xxxx…`, `AKIA0000…`), or one that says what it is (`your_api_key`, `example`, `changeme`, `placeholder`, `dummy`, `***`). A random key has such a run with a chance below one in a billion, and a vendor's real test key (`sk_test_…`) is still masked ([ADR-0031](docs/adr/0031-no-short-or-template-values.md)).
 - The name of a cryptographic algorithm is no value: names like `SCRAM-SHA-512` and `PBKDF2WithHmacSHA256` are published in a spec for anyone to read, so masking one hides nothing; they go as they are ([ADR-0033](docs/adr/0033-algorithm-names.md)).
-- A key is masked the way a value is: the key in `{"metadata": {"sk-…": …}}` goes as a placeholder and comes back in the reply. The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched ([ADR-0029](docs/adr/0029-mask-json-keys.md)).
+- A key is masked the way a value is: the key in `{"metadata": {"sk-…": …}}` goes as a placeholder and comes back in the reply when `restoreLog` is on. The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched ([ADR-0029](docs/adr/0029-mask-json-keys.md)).
 
 ## Screens
 
@@ -81,7 +82,7 @@ The screenshots show the Chinese interface.
 
 ## Configuration
 
-The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `maskKeys`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in the profile's `~/.dsh/profiles/<profile>/cordis.patch.yml`, under `config` of the `id: dsh-privacy-gateway` row; the `cordis.patch.yml` shipped in the package is replaced on upgrade, so do not edit it.
+The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `restoreLog`, `maskKeys`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in the profile's `~/.dsh/profiles/<profile>/cordis.patch.yml`, under `config` of the `id: dsh-privacy-gateway` row; the `cordis.patch.yml` shipped in the package is replaced on upgrade, so do not edit it.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -93,7 +94,8 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `actions` | `{}` | An action per kind: `mask` (the default, a placeholder), `warn` (sent as written and recorded) or `block` (the whole request is not sent). For example `{ PRIVATE_KEY: block, EMAIL: warn }` ([ADR-0013](docs/adr/0013-actions.md)) |
 | `maskKeys` | `true` | A **JSON key** that reads like a secret or personal data goes as a placeholder too (`{"sk-…": …}`). The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched, or the vendor could not read the request. When off, such keys go as they are ([ADR-0029](docs/adr/0029-mask-json-keys.md)) |
 | `toolGuard` | `off` | When a tool call's arguments would have a value restored and name a host off this machine: `off` only counts it, `warn` logs and records it, `block` leaves the placeholders in that call's arguments, so the tool gets the placeholder ([ADR-0014](docs/adr/0014-tool-guard.md)) |
-| `shape` | `false` | Send a key as a made-up key of its own form (same prefix, length and kinds of character) instead of a `{{…}}` placeholder; a value under 8 characters, or holding anything but letters, digits, `-`, `_` and `.`, keeps the placeholder; replies put it back the same way ([ADR-0015](docs/adr/0015-shape.md)) |
+| `restoreLog` | `false` | Whether a reply's placeholders are put back before the session log is written. Off (the default): the placeholders go into the log as they are, no plaintext reaches it, and the agent sees placeholders too; on, the log and the agent both hold the real values, and session sync, backups, shares and exports carry them too ([ADR-0003](docs/adr/0003-restore-before-session-log.md)) |
+| `shape` | `false` | Send a key as a made-up key of its own form (same prefix, length and kinds of character) instead of a `{{…}}` placeholder; a value under 8 characters, or holding anything but letters, digits, `-`, `_` and `.`, keeps the placeholder; with `restoreLog` on, replies put it back the same way ([ADR-0015](docs/adr/0015-shape.md)) |
 | `cookieNames` | `[]` | More cookie names to mask |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | Cookie names never masked |
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them; only in text the host writes (the system prompt, `system`, `instructions`, `systemInstruction`), never in a user message or a tool result ([ADR-0004](docs/adr/0004-protected-regions.md) supplement) |
@@ -134,11 +136,11 @@ With `vendorView` on (「保留发出内容，供对照查看」 on the config p
 
 ## Notes
 
-- The session log holds the real values: replies are restored before the log is written ([ADR-0003](docs/adr/0003-restore-before-session-log.md)). Session sync, backups and shares carry the real values.
+- By default the session log holds placeholders: with `restoreLog` off (the default), a reply's placeholders go into the log as they are, no plaintext reaches it, and the agent sees placeholders too; with it on, replies are restored before the log is written, so the log and the agent both hold the real values, and session sync, backups, shares and exports carry them too ([ADR-0003](docs/adr/0003-restore-before-session-log.md)).
 - Only traffic through the global `fetch()` is covered; direct `node:http`, worker threads and separate processes bypass the gateway ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)). Only JSON model requests it recognizes are rewritten (array `messages`, array or string `input`, `contents`, string `prompt`); multipart, forms and non-JSON bodies go as written and leave no record ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)).
-- Compressed requests and replies are decompressed before they are masked or restored; a `content-encoding` with no decoder fails the request ([ADR-0025](docs/adr/0025-compression-and-upgrades.md)). An upgrade (the WebSocket handshake) or a `CONNECT` tunnel inside a model call is refused as well: Codex falls back to SSE the first time and takes SSE from then on in that session. One opened by a plugin outside a model call (dsh-im-infoflow's inbound, say) is let through, its messages unmasked, with one warning per host ([ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)) — a fail-closed to fail-open trade whose cost the ADR records; a host that needs a transparent link can still go into `excludeHosts`.
+- Compressed requests are decompressed before they are masked; with `restoreLog` on, a compressed reply is decoded before it is restored, and with it off the reply passes through the gateway compressed and the adapter decompresses it. A request's `content-encoding` with no decoder fails the request ([ADR-0025](docs/adr/0025-compression-and-upgrades.md)). An upgrade (the WebSocket handshake) or a `CONNECT` tunnel inside a model call is refused as well: Codex falls back to SSE the first time and takes SSE from then on in that session. One opened by a plugin outside a model call (dsh-im-infoflow's inbound, say) is let through, its messages unmasked, with one warning per host ([ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)) — a fail-closed to fail-open trade whose cost the ADR records; a host that needs a transparent link can still go into `excludeHosts`.
 - The value table is in memory only ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)). After a restart, a value no rule finds, masked only because it was remembered, goes as written the first time it is sent again.
-- Replies are restored everywhere, tool call arguments included: a model led into writing a placeholder into a command such as `curl` runs the tool with the real value. The plugin counts these places (the tool-argument count on the card and in `/privacy status`) and does not block them ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)).
+- With `restoreLog` on, replies are restored everywhere, tool call arguments included: a model led into writing a placeholder into a command such as `curl` runs the tool with the real value. The plugin counts these places (the tool-argument count on the card and in `/privacy status`) and does not block them ([ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)); with it off, no reply holds a real value and this path does not exist.
 - When masking fails, the request is not sent and fails with `dsh-privacy-gateway: masking failed, request not sent` ([ADR-0005](docs/adr/0005-fail-closed.md)). To recover, run `/privacy off`, or disable the plugin on the Plugins page or set `enabled` to `false`.
 
 ## Development

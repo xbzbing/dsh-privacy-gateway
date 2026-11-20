@@ -8,7 +8,7 @@ import zlib, { gzipSync } from 'node:zlib'
 
 import { Agent, Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, request, setGlobalDispatcher } from 'undici'
 
-import { defaults } from '../src/config.ts'
+import { defaults, resolveConfig } from '../src/config.ts'
 import { installGateway, MaskingDispatcher, type InstalledGateway } from '../src/dispatcher.ts'
 import { PrivacyEngine, type Exchange, type RedactionEngine, type RequestInfo } from '../src/engine.ts'
 import { routeStream, makeSkip } from '../src/providers.ts'
@@ -64,6 +64,11 @@ async function withGateway(run: (g: InstalledGateway) => Promise<void>, engine: 
 
 const chat = (content: string) => JSON.stringify({ model: 'm', stream: false, messages: [{ role: 'user', content }] })
 
+/** An engine that puts a reply's placeholders back: the log restore switch on (docs/adr/0003). */
+function restoring(): RedactionEngine {
+  return new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, restoreLog: true }))
+}
+
 test("Node's built-in fetch goes through the gateway: body masked, headers untouched, JSON reply restored", async () => {
   const o = await origin((s, res) => {
     const echoed = (JSON.parse(s.body) as { messages: Array<{ content: string }> }).messages[0]?.content ?? ''
@@ -80,7 +85,7 @@ test("Node's built-in fetch goes through the gateway: body masked, headers untou
       })
       const reply = (await res.json()) as { choices: Array<{ message: { content: string } }> }
       assert.equal(reply.choices[0]?.message.content, `you said: my key is ${OPENAI}`)
-    })
+    }, restoring())
     const s = o.seen[0]
     assert.ok(s)
     assert.ok(!s.body.includes(OPENAI))
@@ -88,6 +93,38 @@ test("Node's built-in fetch goes through the gateway: body masked, headers untou
     assert.equal(s.headers.authorization, 'Bearer upstream-token')
     assert.equal(s.headers['x-opencode-session'], 's1')
     assert.equal(Number(s.headers['content-length']), Buffer.byteLength(s.body))
+  } finally {
+    await o.close()
+  }
+})
+
+test('a reply keeps its placeholders by default, and the log restore switch puts them back from the next call (docs/adr/0003)', async () => {
+  let placeholder = ''
+  const o = await origin((s, res) => {
+    placeholder = PLACEHOLDER.exec(s.body)?.[0] ?? ''
+    const body = JSON.stringify({ choices: [{ message: { content: `key ${placeholder}` } }] })
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
+    res.end(body)
+  })
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  try {
+    await withGateway(async () => {
+      const call = async (): Promise<string> => {
+        const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(`key ${OPENAI}`) })
+        return ((await res.json()) as { choices: Array<{ message: { content: string } }> }).choices[0]?.message.content ?? ''
+      }
+      // off by default: the placeholder reaches the caller, and nothing is asked of the origin's coding
+      assert.equal(await call(), `key ${placeholder}`)
+      assert.ok(placeholder)
+      assert.notEqual(o.seen[0]?.headers['accept-encoding'], 'identity')
+      // on, from the next call: the value is put back and the reply is asked for unencoded
+      engine.reconfigure(resolveConfig({ ...defaults, restoreLog: true }))
+      assert.equal(await call(), `key ${OPENAI}`)
+      assert.equal(o.seen[1]?.headers['accept-encoding'], 'identity')
+      // and off again: the next reply keeps its placeholders
+      engine.reconfigure(defaults)
+      assert.equal(await call(), `key ${placeholder}`)
+    }, engine)
   } finally {
     await o.close()
   }
@@ -124,7 +161,7 @@ test('an event-stream reply is restored line by line while it streams', async ()
       assert.ok(text.includes(': keep-alive\n'))
       assert.ok(text.endsWith('data: [DONE]\n\n'))
       assert.ok(!text.includes(placeholder))
-    })
+    }, restoring())
   } finally {
     release()
     await o.close()
@@ -201,7 +238,7 @@ test('a masked request asks for an unencoded reply; one compressed all the same 
       const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
       assert.deepEqual(await res.json(), { content: OPENAI })
       assert.equal(res.headers.get('content-encoding'), null)
-    })
+    }, restoring())
     assert.ok(placeholder)
     assert.equal(o.seen[0]?.headers['accept-encoding'], 'identity')
     assert.deepEqual(warnings, [])
@@ -227,7 +264,7 @@ test('a compressed event-stream reply is decoded and restored as it streams', as
       assert.ok(text.includes(`"content":"key ${OPENAI}"`), text)
       assert.ok(!text.includes(placeholder))
       assert.ok(text.endsWith('data: [DONE]\n\n'))
-    })
+    }, restoring())
   } finally {
     await o.close()
   }
@@ -242,7 +279,7 @@ test('a reply that names gzip but is not gzip fails downstream, not silently thr
     await withGateway(async () => {
       const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
       await assert.rejects(res.body.text())
-    })
+    }, restoring())
   } finally {
     await o.close()
   }
@@ -257,7 +294,7 @@ test('a reply in a coding there is no decoder for goes on as it is, with a warni
     const warnings = await withGateway(async () => {
       const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
       assert.equal(await res.body.text(), '{"content":"{{API_KEY_abcdefgh}}"}')
-    })
+    }, restoring())
     assert.equal(warnings.length, 1)
     assert.match(String(warnings[0]?.[0]), /x-unknown-encoded/)
   } finally {
@@ -299,7 +336,7 @@ test('an x-ndjson reply is restored line by line as it streams', async () => {
       assert.equal(lines[1]?.message?.content, `key ${OPENAI}`)
       assert.ok(!text.includes(placeholder))
       assert.ok(early, 'the first line came before the reply ended')
-    })
+    }, restoring())
   } finally {
     release()
     await o.close()

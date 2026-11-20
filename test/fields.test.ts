@@ -80,7 +80,7 @@ test('a folded group says its state in words both languages have', () => {
   const all = [
     {},
     { enabled: false },
-    { secrets: false, personal: false, shape: true, toolGuard: 'block' },
+    { secrets: false, personal: false, shape: true, toolGuard: 'block', restoreLog: true },
     { personal: true, toolGuard: 'warn', words: ['a', 'b'], allow: ['c'] },
     { record: false, vendorView: true, showPanel: true, excludeProviders: ['x', 'y'] },
   ]
@@ -98,7 +98,7 @@ test('a folded group’s summary follows the settings, falling back to the defau
   assert.deepEqual(groupSummary('mask', { enabled: false }), [{ key: 'cfg.s.maskOff', off: true }])
   assert.deepEqual(keys('mask', { secrets: false }), ['cfg.s.maskKeysOnly', 'cfg.s.toolGuard.off'])
   assert.deepEqual(keys('mask', { secrets: false, maskKeys: false }), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
-  assert.deepEqual(keys('mask', { personal: true, shape: true, toolGuard: 'warn' }), ['cfg.s.secrets', 'cfg.s.personal', 'cfg.s.shape', 'cfg.s.toolGuard.warn'])
+  assert.deepEqual(keys('mask', { personal: true, shape: true, toolGuard: 'warn', restoreLog: true }), ['cfg.s.secrets', 'cfg.s.personal', 'cfg.s.shape', 'cfg.s.toolGuard.warn', 'cfg.s.restoreLog'])
   assert.deepEqual(groupSummary('lists', { words: ['a', 'b'] }), [
     { key: 'cfg.s.words', params: { n: 2 } },
     { key: 'cfg.s.allow', params: { n: 0 } },

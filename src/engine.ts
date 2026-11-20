@@ -20,7 +20,7 @@ export interface RequestInfo {
 export interface Exchange {
   /** The body as it goes. */
   readonly text: string
-  /** Whether the reply can hold a placeholder to put back. */
+  /** Whether the reply can hold a placeholder to put back: the log restore switch is on and the table holds values (docs/adr/0003). */
   restoring(): boolean
   /** Restores a whole JSON (or text) reply body. */
   restoreBody(text: string): string
@@ -90,6 +90,8 @@ export class PrivacyEngine implements RedactionEngine {
   #restorer: Restorer
   /** Keep the bodies for the vendor view (config vendorView); `reconfigure` changes it. */
   #keepViews: boolean
+  /** Put a reply's placeholders back before the session log gets it (config restoreLog, docs/adr/0003); `reconfigure` changes it. */
+  #restoreLog: boolean
   readonly records: RecordStore
   readonly #logger: EngineLogger | undefined
   readonly views: ViewStore | undefined
@@ -106,6 +108,7 @@ export class PrivacyEngine implements RedactionEngine {
     this.#masker = this.#maskerFor(config)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#keepViews = config.vendorView
+    this.#restoreLog = config.restoreLog
     this.#logger = options.logger
     this.#names = options.names
     this.#steps = options.steps
@@ -132,13 +135,15 @@ export class PrivacyEngine implements RedactionEngine {
   /**
    * The rules from `config` from the next request on (docs/adr/0021): the
    * finders and the reply guard are rebuilt, the value table stays, so a reply
-   * to a request already sent is still restored. The masker starts with an
-   * empty memo of what was sent, which was keyed to the old rules.
+   * to a request already sent is still restored. The log restore switch
+   * (docs/adr/0003) applies from the next response on. The masker starts with
+   * an empty memo of what was sent, which was keyed to the old rules.
    */
   reconfigure(config: ResolvedConfig): void {
     this.#masker = this.#maskerFor(config)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#keepViews = config.vendorView
+    this.#restoreLog = config.restoreLog
     // off drops the bodies kept: they are not to stay in memory once it is turned off
     if (!config.vendorView) this.views?.clear()
   }
@@ -205,7 +210,8 @@ export class PrivacyEngine implements RedactionEngine {
     let done = false
     return {
       text: r.text,
-      restoring: () => this.#table.size > 0,
+      // off, the placeholders in the reply are left alone: they reach the agent and the session log as they are (docs/adr/0003)
+      restoring: () => this.#restoreLog && this.#table.size > 0,
       restoreBody: (text) => restorer.restoreJSON(text, tally),
       streamRestorer: () => restorer.stream(tally),
       finish: () => {
