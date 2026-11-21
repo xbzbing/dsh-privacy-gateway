@@ -331,6 +331,16 @@ export function afterRefresh(prev: CardState, next: Result<Overview>): CardState
   return prev.status === 'ready' ? { status: 'ready', data: prev.data, stale: next.failure } : { status: 'error', failure: next.failure }
 }
 
+/**
+ * A record with nothing to say on its row: no place replaced, no unknown
+ * placeholder in the reply and no failure. Such a row is dimmed; one that is
+ * only there for its unknown placeholders is not, or it would read as if
+ * nothing had happened.
+ */
+export function quiet(r: { n: number; failed?: boolean; unmapped?: number }): boolean {
+  return r.n === 0 && r.failed !== true && (r.unmapped ?? 0) === 0
+}
+
 /** One line of the side-by-side view: its number, and its pieces, each plain or a replaced place. */
 export interface ViewLine {
   n: number

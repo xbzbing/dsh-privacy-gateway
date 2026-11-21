@@ -94,6 +94,7 @@ export const en: Record<Key, string> = {
   'col.len': 'Length',
   'col.n': 'Times',
   'recent.noValues': 'Nothing was masked in this request.',
+  'recent.unmapped': 'The reply has {n} placeholders the value table has no value for: a model may have changed them, or be repeating an example or a value from before the restart.',
   'recent.omitted': '{n} more values are past the limit of one record and not listed.',
   'stat.warned': 'Warned',
   'stat.blocked': 'Blocked',

@@ -20,6 +20,7 @@ import {
   namesOf,
   placeKey,
   placeLabel,
+  quiet,
   readOverview,
   stepLabel,
   stepOf,
@@ -350,6 +351,19 @@ test('with a settings mirror, off needs the host and the mirror both', async () 
   } finally {
     mock.timers.reset()
   }
+})
+
+test('a record whose only mark is an unknown placeholder is not dimmed as if nothing happened', () => {
+  // the row is dimmed only when it really has nothing to say (docs/adr/0008)
+  assert.equal(quiet({ n: 0 }), true)
+  assert.equal(quiet({ n: 3 }), false)
+  assert.equal(quiet({ n: 0, failed: true }), false)
+  assert.equal(quiet({ n: 0, unmapped: 2 }), false)
+  assert.equal(quiet({ n: 0, unmapped: 0 }), true)
+  // the count survives the read: a record from another host version keeps its unknown placeholders
+  const o = readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [{ key: 1, time: 't', values: [], unmapped: 2, restored: 0 }] })
+  assert.equal(o?.recent[0]?.unmapped, 2)
+  assert.equal(quiet(o?.recent[0] as { n: number; unmapped?: number }), false)
 })
 
 test('a refresh that fails keeps what was shown, marked stale; with nothing shown it is an error', () => {

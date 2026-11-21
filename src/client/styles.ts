@@ -70,6 +70,7 @@ const CSS = `
 .pgw-rec__num{min-width:0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .pgw-rec__dim{color:var(--dsw-alias-label-secondary)}
 .pgw-rec__bad{color:var(--dsw-alias-state-error-primary);font-weight:600}
+.pgw-rec__unknown{color:var(--dsw-alias-state-warn-primary);font-weight:500}
 .pgw-detail{display:flex;flex-direction:column;gap:8px;padding:8px 12px 12px 36px;background:var(--dsw-alias-bg-layer-2);font-size:12px;overflow-x:auto;border-top:.5px solid var(--dsw-alias-border-l1)}
 .pgw-values{border-collapse:collapse;width:100%}
 .pgw-values th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:4px 12px 4px 0;border-bottom:.5px solid var(--dsw-alias-border-l2);white-space:nowrap}

@@ -92,6 +92,7 @@ export const zh = {
   'col.len': '长度',
   'col.n': '次数',
   'recent.noValues': '这次请求没有脱敏。',
+  'recent.unmapped': '回复里有 {n} 个值表里没有的占位符：可能是模型把占位符改坏了，也可能它在复述示例或重启前的值。',
   'recent.omitted': '另有 {n} 个值超出单条记录的上限，没有列出。',
   'stat.warned': 'warn 照发',
   'stat.blocked': 'block 拦下',

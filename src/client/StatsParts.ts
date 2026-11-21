@@ -19,7 +19,7 @@ import type { ReactNode } from 'react'
 import type { MaskRecord, Totals } from '../records.ts'
 import type { Key, T } from './locales.ts'
 import { failureText, resetData, setSessionMasking, type ClientCtx } from './rpc.ts'
-import { bars, elsewhereText, filterValues, finderHintKey, hintOf, kindHintKey, namesOf, placeKey, placeLabel, stepLabel, stepOf, timeLabel, took, type WarningKey } from './view.ts'
+import { bars, elsewhereText, filterValues, finderHintKey, hintOf, kindHintKey, namesOf, placeKey, placeLabel, quiet, stepLabel, stepOf, timeLabel, took, type WarningKey } from './view.ts'
 import { VendorView } from './VendorView.ts'
 
 /** The signals worth a line of their own, one tinted line each with a warning icon. */
@@ -226,7 +226,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
     [t('recent.col.where'), [r.model ?? r.what, r.host].filter(Boolean).join(' · ')],
     [t('recent.col.from'), from],
     [t('recent.col.places'), placesWords],
-    [t('recent.col.restored'), r.restored.toLocaleString()],
+    [t('recent.col.restored'), r.unmapped > 0 ? `${r.restored.toLocaleString()} (+${r.unmapped})` : r.restored.toLocaleString()],
   ]
     .filter(([, v]) => v !== '')
     .map(([k, v]) => t('recent.cell', { name: k as string, value: v as string }))
@@ -238,7 +238,7 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
       'button',
       {
         type: 'button',
-        className: `pgw-rec${r.n === 0 && !r.failed ? ' pgw-rec--zero' : ''}${props.open ? ' pgw-rec--open' : ''}`,
+        className: `pgw-rec${quiet(r) ? ' pgw-rec--zero' : ''}${props.open ? ' pgw-rec--open' : ''}`,
         'aria-expanded': props.open,
         'aria-controls': props.open ? detailId : undefined,
         'aria-label': name,
@@ -250,13 +250,21 @@ export function RecordRow(props: { ctx: ClientCtx; r: MaskRecord; open: boolean;
       h('span', { className: 'pgw-rec__where', title: [r.model, r.host].filter(Boolean).join(' · ') }, h('span', { className: 'pgw-rec__model' }, r.model ?? r.what), h('span', { className: 'pgw-rec__host' }, r.host)),
       h('span', { className: 'pgw-rec__from', title: from }, from),
       h('span', { className: 'pgw-rec__num' }, places),
-      h('span', { className: 'pgw-rec__num pgw-rec__dim' }, r.restored.toLocaleString()),
+      h(
+        'span',
+        { className: 'pgw-rec__num pgw-rec__dim' },
+        r.restored.toLocaleString(),
+        r.unmapped > 0 ? h('span', { className: 'pgw-rec__unknown', title: t('recent.unmapped', { n: r.unmapped }) }, ` ?${r.unmapped}`) : null,
+      ),
     ),
     props.open
       ? h(
           'div',
           { className: 'pgw-detail', id: detailId },
           r.exfil ? h('div', { className: 'pgw-notice pgw-notice--error' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), t('recent.exfil', { hosts: (r.exfilHosts ?? []).join(', ') })) : null,
+          r.unmapped > 0
+            ? h('div', { className: 'pgw-notice pgw-notice--warn' }, h(IconWarningOutlineRegular, { size: 14, className: 'pgw-notice__icon' }), h('span', null, t('recent.unmapped', { n: r.unmapped })))
+            : null,
           at ? h('div', { className: 'pgw-meta' }, stepLine) : null,
           r.values.length === 0
             ? h('div', { className: 'pgw-empty' }, t('recent.noValues'))
