@@ -31,6 +31,25 @@ In the default web profile the first install works at once, with no restart of t
 - **The `/privacy` command**: status, a temporary on / off, and `test` to preview how a text would go out.
 - **Live configuration**: everyday items are changed on the plugin page and apply from the next call; when masking fails, the request is not sent.
 
+## How it works
+
+The gateway has this one interception point, and both directions happen at the HTTP layer:
+
+```mermaid
+flowchart LR
+  A["agent / adapter<br/>(through the global fetch)"] -->|"① model request"| G["privacy gateway<br/>undici dispatcher"]
+  G -->|"② secrets, credentials, personal data<br/>and your own words become placeholders"| M["model service"]
+  M -->|"③ reply (with placeholders)"| G
+  G -->|"④ default: placeholders as they are"| L["agent and session log"]
+  G -->|"④ restoreLog on: the real values"| L
+  G -.->|"metadata only, never a value"| R["records / statistics"]
+  G -.->|"placeholder ↔ value"| T["value table (memory only)"]
+```
+
+- **Outbound (①②)**: a value a rule finds becomes a placeholder, so the model service only ever gets placeholders; the values stay in the in-memory table, which is what makes the same value the same placeholder every turn.
+- **Inbound (③④)**: with `restoreLog` off (the default) the placeholders reach the agent and the session log as they are; with it on they become the real values before the log is written, so the agent and the log agree — the reply has this one restore point.
+- **Sideways**: a request records metadata only (placeholder, kind, head, length); the records, the statistics and the Remote answers never hold a value.
+
 ## What is masked
 
 | Kind | What | Switch |
