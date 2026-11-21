@@ -11,6 +11,7 @@ import type { Key, T } from './locales.ts'
 import { failureText, fetchOverview, type ClientCtx } from './rpc.ts'
 import { Dist, Kpis, Notices, RecordHead, RecordRow, ResetButton, SessionSwitch } from './StatsParts.ts'
 import { afterRefresh, pageOf, warnings, type CardState, type Range } from './view.ts'
+import { PrincipleDiagram } from './PrincipleDiagram.ts'
 
 const REFRESH_MS = 15_000
 /** Records asked for: the most the host sends, shown a page at a time. */
@@ -136,7 +137,7 @@ function Card(props: CardProps): ReactNode {
     return h('section', { className: cardClass }, head, h('div', { className: 'pgw-empty pgw-empty--block' }, words))
   }
   if (props.sessionId && ready.recent.length === 0) {
-    return h('section', { className: cardClass }, head, stale, flash, sessionOff, h('div', { className: 'pgw-empty pgw-empty--block' }, t('panel.empty')))
+    return h('section', { className: cardClass }, head, stale, flash, sessionOff, h('div', { className: 'pgw-empty pgw-empty--block pgw-empty--diagram' }, h(PrincipleDiagram, { t })))
   }
   const o = ready
   const totals = o.stats[range]

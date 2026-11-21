@@ -24,6 +24,22 @@ const CSS = `
 @media (hover:hover){.pgw-reset:hover:not(:disabled){color:var(--dsw-alias-state-error-primary)}}
 .pgw-empty{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .pgw-empty--block{padding:24px 0;text-align:center}
+.pgw-empty--diagram{display:flex;align-items:center;justify-content:center;min-height:clamp(280px,45vh,520px)}
+.pgw-diagram{--pgw-diagram-accent:#686af5;display:flex;flex-direction:column;align-items:center;gap:10px;padding:8px 0 4px}
+.pgw-diagram__svg{display:block;width:100%;max-width:520px;height:auto}
+.pgw-diagram__box{fill:var(--dsw-alias-bg-layer-2);stroke:var(--dsw-alias-border-l1);stroke-width:1}
+.pgw-diagram__gateway{fill:color-mix(in srgb,var(--pgw-diagram-accent) 10%,transparent);stroke:color-mix(in srgb,var(--pgw-diagram-accent) 55%,transparent);stroke-width:1}
+.pgw-diagram__vendor{fill:color-mix(in srgb,var(--dsw-alias-state-success-primary) 9%,transparent);stroke:color-mix(in srgb,var(--dsw-alias-state-success-primary) 40%,transparent);stroke-width:1}
+.pgw-diagram__title{fill:var(--dsw-alias-label-primary);font-size:12px;font-weight:500}
+.pgw-diagram__sub{fill:color-mix(in srgb,var(--pgw-diagram-accent) 70%,var(--dsw-alias-label-secondary));font-size:10px}
+.pgw-diagram__label{fill:var(--dsw-alias-label-tertiary);font-size:10px}
+.pgw-diagram__chip{fill:var(--dsw-alias-state-warn-primary);font-size:10px;font-weight:600}
+.pgw-diagram__out{fill:none;stroke:var(--pgw-diagram-accent);stroke-width:1.4}
+.pgw-diagram__in{fill:none;stroke:var(--dsw-alias-label-tertiary);stroke-width:1.2}
+.pgw-diagram__head-out{fill:var(--pgw-diagram-accent)}
+.pgw-diagram__head-in{fill:var(--dsw-alias-label-tertiary)}
+.pgw-diagram__note{max-width:520px;margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);text-align:center}
+.pgw-diagram__hint{max-width:520px;margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);text-align:center}
 .pgw-flash{font-size:12px;line-height:18px;padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-label-primary)}
 .pgw-flash--error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}
 .pgw-notices{display:flex;flex-direction:column;gap:6px}
