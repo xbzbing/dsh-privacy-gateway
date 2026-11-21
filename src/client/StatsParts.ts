@@ -41,17 +41,23 @@ interface Kpi {
   tone?: 'warn' | 'error'
 }
 
-/** The counts of the range, one tile each in a single hairline-divided strip. */
-export function Kpis(props: { totals: Totals; t: T }): ReactNode {
+/**
+ * The counts of the range, one tile each in a single hairline-divided strip.
+ * `restoreLog` off (the default) makes the restored count a constant 0: the
+ * tile says the feature is off instead of passing the 0 off as a fact
+ * (docs/adr/0003). An absent value (a host too old to say) keeps the count.
+ */
+export function Kpis(props: { totals: Totals; t: T; restoreLog?: boolean }): ReactNode {
   const { totals: s, t } = props
   const n = (v: number | undefined): string => (v ?? 0).toLocaleString()
   const time = took(s)
+  const restoreOff = props.restoreLog === false
   const tiles: Kpi[] = [
     { label: t('stat.requests'), value: n(s.requests) },
     { label: t('stat.masked'), value: n(s.masked) },
     { label: t('stat.n'), value: n(s.n) },
-    { label: t('stat.restored'), value: n(s.restored), ...(s.restoredInTools > 0 ? { sub: t('stat.inTools', { n: s.restoredInTools }) } : {}) },
-    { label: t('stat.unmapped'), value: n(s.unmapped), ...(s.unmapped > 0 ? { tone: 'warn' as const } : {}) },
+    { label: t('stat.restored'), value: restoreOff ? t('stat.restoreOff') : n(s.restored), ...(!restoreOff && s.restoredInTools > 0 ? { sub: t('stat.inTools', { n: s.restoredInTools }) } : {}) },
+    { label: t('stat.unmapped'), value: restoreOff ? t('stat.restoreOff') : n(s.unmapped), ...(!restoreOff && s.unmapped > 0 ? { tone: 'warn' as const } : {}) },
     { label: t('stat.failed'), value: n(s.failed), ...(s.failed > 0 ? { tone: 'error' as const } : {}) },
   ]
   if ((s.warned ?? 0) > 0) tiles.push({ label: t('stat.warned'), value: n(s.warned), tone: 'warn' })

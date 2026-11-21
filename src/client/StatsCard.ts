@@ -154,7 +154,7 @@ function Card(props: CardProps): ReactNode {
     flash,
     sessionOff,
     h(Notices, { t, items: warnings(o, totals) }),
-    h(Kpis, { totals, t }),
+    h(Kpis, { totals, t, ...(typeof o.restoreLog === 'boolean' ? { restoreLog: o.restoreLog } : {}) }),
     h(
       'div',
       { className: 'pgw-dists' },

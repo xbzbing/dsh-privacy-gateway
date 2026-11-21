@@ -16,10 +16,12 @@ export type GroupId = 'mask' | 'lists' | 'record' | 'view'
 /**
  * What a change to a field can cost, asked about before it is written (as the
  * session switch asks, docs/adr/0023): `send`, content goes to the model
- * service as it is; `delete`, kept data is thrown away. Which way of changing
- * the field is the risky one follows from its kind (`riskOf`).
+ * service as it is; `delete`, kept data is thrown away; `log`, the real values
+ * are written into the session log, and travel with its sync, backups, shares
+ * and exports (docs/adr/0003). Which way of changing a switch is the risky one
+ * follows from its kind and `riskWhen` (`riskOf`).
  */
-export type Risk = 'send' | 'delete'
+export type Risk = 'send' | 'delete' | 'log'
 
 interface Base<K extends string> {
   key: K
@@ -27,6 +29,8 @@ interface Base<K extends string> {
   /** Takes one of the group's two columns when the page is wide enough; otherwise the whole width. */
   half?: true
   risk?: Risk
+  /** For a switch: the direction that needs confirming, `off` (the default: protection removed) or `on` (real values now kept). */
+  riskWhen?: 'on' | 'off'
 }
 
 export type FieldSpec =
@@ -44,8 +48,9 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'personal', group: 'mask', kind: 'switch', default: false, half: true, risk: 'send' },
   { key: 'shape', group: 'mask', kind: 'switch', default: false, half: true },
   { key: 'toolGuard', group: 'mask', kind: 'choice', choices: ['off', 'warn', 'block'], default: 'off', half: true },
-  // off keeps the values out of the session log, and the agent sees placeholders too (docs/adr/0003)
-  { key: 'restoreLog', group: 'mask', kind: 'switch', default: false },
+  // off keeps the values out of the session log, and the agent sees placeholders too (docs/adr/0003).
+  // On is the direction that costs: the real values go into the log, which sync, backups and exports carry
+  { key: 'restoreLog', group: 'mask', kind: 'switch', default: false, risk: 'log', riskWhen: 'on' },
   // keys travel to the vendor too: off sends a secret used as a key as it is (docs/adr/0029)
   { key: 'maskKeys', group: 'mask', kind: 'switch', default: true, risk: 'send' },
   // words are matched as written, allow in any case (README, config.ts)
@@ -79,8 +84,13 @@ export interface RiskyChange {
 export function riskOf(f: FieldSpec, before: unknown, after: unknown): RiskyChange | undefined {
   if (!f.risk) return undefined
   switch (f.kind) {
-    case 'switch':
-      return switchValue(before, f.default) && !switchValue(after, f.default) ? { risk: f.risk } : undefined
+    case 'switch': {
+      // a switch is normally risky when turned off; restoreLog is the other way round (docs/adr/0003)
+      const was = switchValue(before, f.default)
+      const now = switchValue(after, f.default)
+      const changed = f.riskWhen === 'on' ? !was && now : was && !now
+      return changed ? { risk: f.risk } : undefined
+    }
     case 'list':
     case 'providers': {
       // provider ids, like allow values, match in any case

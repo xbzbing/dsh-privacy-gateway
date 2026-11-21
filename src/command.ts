@@ -20,6 +20,8 @@ export interface PrivacyFace {
   readonly configured: boolean
   readonly secrets: boolean
   readonly personal: boolean
+  /** Whether a reply's placeholders are put back before the session log is written (config restoreLog, docs/adr/0003). */
+  readonly restoreLog: boolean
   /** Values the table holds. */
   readonly values: number
   stats(): Stats
@@ -42,6 +44,7 @@ const TEXT = {
     values: (n: number) => `${n} 个值：`,
     state: (on: boolean) => `状态：${on ? '开启' : '已关闭（/privacy on 恢复）'}`,
     covers: (secrets: boolean, personal: boolean) => `范围：密钥 ${secrets ? '开' : '关'}，个人信息 ${personal ? '开' : '关'}`,
+    log: (on: boolean) => `日志：${on ? '还原（回复里的占位符换回真值，写进会话日志）' : '不还原（回复里的占位符原样进会话日志）'}`,
     table: (n: number) => `值表：${n} 个值`,
     line: (label: string, t: Totals) => `${label}：记录 ${t.requests} 次请求，${t.masked} 次有脱敏，替换 ${t.n} 处，还原 ${t.restored} 处${t.restoredInTools > 0 ? `（工具参数里 ${t.restoredInTools} 处）` : ''}`,
     today: '今日',
@@ -69,6 +72,7 @@ const TEXT = {
     values: (n: number) => `${n} value${n === 1 ? '' : 's'}:`,
     state: (on: boolean) => `State: ${on ? 'on' : 'off (/privacy on turns it back on)'}`,
     covers: (secrets: boolean, personal: boolean) => `Masks: secrets ${secrets ? 'on' : 'off'}, personal data ${personal ? 'on' : 'off'}`,
+    log: (on: boolean) => `Log: ${on ? 'restored (a reply’s placeholders become the real values in the session log)' : 'not restored (a reply’s placeholders go into the session log as they are)'}`,
     table: (n: number) => `Value table: ${n} values`,
     line: (label: string, t: Totals) => `${label}: ${t.requests} requests recorded, ${t.masked} masked, ${t.n} places replaced, ${t.restored} restored${t.restoredInTools > 0 ? ` (${t.restoredInTools} in tool arguments)` : ''}`,
     today: 'Today',
@@ -102,7 +106,7 @@ function status(face: PrivacyFace, lang: Lang): string {
   const s = face.stats()
   const out = [T.state(face.active)]
   if (!face.configured) out.push(T.configOff)
-  out.push(T.covers(face.secrets, face.personal), T.table(face.values), '', T.line(T.today, s.today), T.line(T.week, s.week), T.line(T.month, s.month))
+  out.push(T.covers(face.secrets, face.personal), T.log(face.restoreLog), T.table(face.values), '', T.line(T.today, s.today), T.line(T.week, s.week), T.line(T.month, s.month))
   if (Object.keys(s.today.kinds).length > 0) out.push(T.kinds + counts(s.today.kinds))
   if (Object.keys(s.today.finders).length > 0) out.push(T.finders + counts(s.today.finders))
   if (s.today.warned > 0 || s.today.blocked > 0) out.push(T.actedToday(s.today.warned, s.today.blocked))

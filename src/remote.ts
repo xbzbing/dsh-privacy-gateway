@@ -32,6 +32,8 @@ export interface Overview {
   session?: string
   /** The vendor view is on (config vendorView). */
   vendorView?: boolean
+  /** Replies are restored before the session log is written (config restoreLog, docs/adr/0003); absent on a host too old to say. */
+  restoreLog?: boolean
   /** The keys of the records whose body as it went is kept. */
   views?: number[]
   /** The sidebar tab is offered (config showPanel). */

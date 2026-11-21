@@ -216,6 +216,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
     get personal() {
       return current().personal
     },
+    get restoreLog() {
+      return current().restoreLog
+    },
     get values() {
       return engine.values
     },
@@ -252,6 +255,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           stats: records.stats(session),
           recent: records.recent(limit, session),
           vendorView: c.vendorView,
+          restoreLog: c.restoreLog,
           views: c.vendorView ? views.keys() : [],
           // read now: the detail page's switch changes it without remounting the plugin
           showPanel: liveBool(config.showPanel, c.showPanel),

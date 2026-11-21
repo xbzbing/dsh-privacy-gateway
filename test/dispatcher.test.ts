@@ -109,25 +109,123 @@ test('a reply keeps its placeholders by default, and the log restore switch puts
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   try {
     await withGateway(async () => {
+      // the caller's own coding is kept while nothing is restored, and replaced only when it is
       const call = async (): Promise<string> => {
-        const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(`key ${OPENAI}`) })
+        const res = await fetch(`${o.url}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'accept-encoding': 'br' },
+          body: chat(`key ${OPENAI}`),
+        })
         return ((await res.json()) as { choices: Array<{ message: { content: string } }> }).choices[0]?.message.content ?? ''
       }
-      // off by default: the placeholder reaches the caller, and nothing is asked of the origin's coding
+      // off by default: the placeholder reaches the caller, and the caller's coding goes as it was
       assert.equal(await call(), `key ${placeholder}`)
       assert.ok(placeholder)
-      assert.notEqual(o.seen[0]?.headers['accept-encoding'], 'identity')
+      assert.equal(o.seen[0]?.headers['accept-encoding'], 'br')
       // on, from the next call: the value is put back and the reply is asked for unencoded
       engine.reconfigure(resolveConfig({ ...defaults, restoreLog: true }))
       assert.equal(await call(), `key ${OPENAI}`)
       assert.equal(o.seen[1]?.headers['accept-encoding'], 'identity')
-      // and off again: the next reply keeps its placeholders
+      // and off again: the next reply keeps its placeholders, and the caller's coding is kept again
       engine.reconfigure(defaults)
       assert.equal(await call(), `key ${placeholder}`)
+      assert.equal(o.seen[2]?.headers['accept-encoding'], 'br')
     }, engine)
   } finally {
     await o.close()
   }
+})
+
+test('nothing of a reply is read, decoded or put back while restore is off (docs/adr/0003)', async () => {
+  // an engine whose restorer would throw: if the dispatcher touched the reply while restore is off, the call would fail
+  const untouched: RedactionEngine = {
+    maskRequest(body) {
+      return {
+        text: body.replace(OPENAI, '{{API_KEY_abcdefgh}}'),
+        restoring: () => false,
+        restoreBody: () => {
+          throw new Error('restoreBody ran while restore is off')
+        },
+        streamRestorer: () => ({
+          push: () => {
+            throw new Error('the stream restorer ran while restore is off')
+          },
+          end: () => {
+            throw new Error('the stream restorer ran while restore is off')
+          },
+        }),
+        finish() {},
+      } as Exchange
+    },
+  }
+  const json = await origin((_s, res) => {
+    const body = '{"choices":[{"message":{"content":"{{API_KEY_abcdefgh}}"}}]}'
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
+    res.end(body)
+  })
+  const sse = await origin((_s, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.end('data: {"choices":[{"delta":{"content":"{{API_KEY_abcdefgh}}"}}]}\n\ndata: [DONE]\n\n')
+  })
+  try {
+    const warnings = await withGateway(async () => {
+      for (const o of [json, sse]) {
+        const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(`key ${OPENAI}`) })
+        assert.equal(res.status, 200)
+        const text = await res.text()
+        assert.ok(text.includes('{{API_KEY_abcdefgh}}'), text)
+      }
+    }, untouched)
+    assert.deepEqual(warnings, [])
+  } finally {
+    await json.close()
+    await sse.close()
+  }
+})
+
+test('a compressed reply goes through byte for byte while restore is off (docs/adr/0025)', async () => {
+  let compressed = Buffer.alloc(0)
+  const o = await origin((s, res) => {
+    const placeholder = PLACEHOLDER.exec(s.body)?.[0] ?? ''
+    compressed = gzipSync(JSON.stringify({ content: placeholder }))
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip', 'content-length': compressed.length, 'x-keep': 'yes' })
+    res.end(compressed)
+  })
+  try {
+    await withGateway(async () => {
+      // undici's request does not decode for the caller: what it gets is what the origin sent
+      const res = await request(`${o.url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'accept-encoding': 'gzip' },
+        body: chat(`key ${OPENAI}`),
+      })
+      const body = Buffer.from(await res.body.arrayBuffer())
+      assert.equal(res.headers['content-encoding'], 'gzip')
+      assert.equal(res.headers['x-keep'], 'yes')
+      assert.deepEqual(body, compressed, 'the reply was not decoded or rewritten')
+    })
+  } finally {
+    await o.close()
+  }
+})
+
+test('a reply is handled under the log restore switch its request went out with (docs/adr/0003, 0021)', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const call = () => engine.maskRequest(chat(`key ${OPENAI}`), { host: 'api.example.com', path: '/v1/chat/completions' })
+  const off = call()
+  assert.ok(off)
+  assert.equal(off.restoring(), false)
+  // turned on while the call is in flight: this reply still goes by the setting it went out with
+  engine.reconfigure(resolveConfig({ ...defaults, restoreLog: true }))
+  assert.equal(off.restoring(), false)
+  const on = call()
+  assert.ok(on)
+  assert.equal(on.restoring(), true)
+  // and off again while it is in flight
+  engine.reconfigure(defaults)
+  assert.equal(on.restoring(), true)
+  off.finish()
+  on.finish()
 })
 
 test('an event-stream reply is restored line by line while it streams', async () => {

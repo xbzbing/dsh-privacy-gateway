@@ -127,13 +127,18 @@ const field = (k: FieldSpec['key']): FieldSpec => FIELDS.find((f) => f.key === k
 
 test('the changes that send content as it is or delete kept data are the ones confirmed', () => {
   const risky = FIELDS.filter((f) => f.risk).map((f) => `${f.key}:${f.risk}`)
-  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'secrets:send', 'vendorView:delete', 'words:send'])
+  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'restoreLog:log', 'secrets:send', 'vendorView:delete', 'words:send'])
   // a switch only when turned off, from its default too
   assert.deepEqual(riskOf(field('enabled'), undefined, false), { risk: 'send' })
   assert.equal(riskOf(field('enabled'), false, true), undefined)
   assert.equal(riskOf(field('personal'), undefined, true), undefined)
   assert.deepEqual(riskOf(field('vendorView'), true, false), { risk: 'delete' })
   assert.equal(riskOf(field('shape'), true, false), undefined)
+  // restoreLog costs when turned on: the real values go into the session log (docs/adr/0003)
+  assert.deepEqual(riskOf(field('restoreLog'), undefined, true), { risk: 'log' })
+  assert.deepEqual(riskOf(field('restoreLog'), false, true), { risk: 'log' })
+  assert.equal(riskOf(field('restoreLog'), undefined, false), undefined)
+  assert.equal(riskOf(field('restoreLog'), true, false), undefined)
   // a list or the provider choice only when it gains an entry, compared in any case
   assert.deepEqual(riskOf(field('allow'), ['a'], ['a', 'B']), { risk: 'send', added: ['B'] })
   assert.equal(riskOf(field('allow'), ['a', 'b'], ['a']), undefined)

@@ -1,7 +1,7 @@
 import { zh, type Key } from './locales/zh.ts'
 import { en } from './locales/en.ts'
 
-/** `privacyGateway` namespace dictionaries; zh is the key set's source, kept one file per language under `locales/`. */
+/** `privacyGateway` namespace dictionaries; zh is the key set's source. The dictionaries live one file per language under `locales/`. */
 export const NS = 'privacyGateway'
 
 export { zh, en }

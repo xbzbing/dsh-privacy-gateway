@@ -103,6 +103,21 @@ test('a request that is no model request, or goes while masking is off, makes no
   assert.equal(engine.records.recent().length, 0)
 })
 
+test('with restore off, a record keeps its masked counts and its restored and unmapped counts at 0 (docs/adr/0003)', () => {
+  const engine = new PrivacyEngine(randomBytes(32), defaults)
+  const ex = engine.maskRequest(chat(`key ${SENTINEL}`), info)
+  assert.ok(ex)
+  assert.equal(ex.restoring(), false, 'a reply is not put back while restore is off')
+  ex.finish()
+  const [r] = engine.records.recent()
+  assert.ok(r)
+  assert.equal(r.n, 1)
+  assert.equal(r.values.length, 1)
+  assert.equal(r.restored, 0)
+  assert.equal(r.unmapped, 0)
+  assert.equal(r.restoredInTools, undefined)
+})
+
 test('a model request with nothing masked and nothing put back makes no record; one whose reply puts a value back does', () => {
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   const first = engine.maskRequest(chat(`key ${SENTINEL}`), info)

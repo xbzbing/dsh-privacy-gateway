@@ -23,7 +23,7 @@
 
 ### 回复
 
-- 要还原的请求（有 exchange 且 `restoreLog` 打开）把 `accept-encoding` 设成 `identity`，请求头是哪种形式都一样处理；不还原时（默认）不改这个头，回复可以照常压缩。
+- 要还原的请求（有 exchange，`restoreLog` 打开且值表里有值）把 `accept-encoding` 设成 `identity`，请求头是哪种形式都一样处理；不还原时（默认）不改这个头，回复可以照常压缩。
 - 还原打开时厂商仍回压缩的回复，`RestoringHandler` 用 `node:zlib` 流式解码（gzip、deflate、br、zstd），还原后以不压缩的形式交给调用方：去掉 `content-encoding` 与 `content-length`。解码出错时中止上游，并向调用方报错。没有解码器的编码照原样交出，打一条 warn。还原关闭时压缩的回复原样交给调用方，网关不解码、不改头，由适配器自己解压。
 - `application/x-ndjson`（以及 jsonl、json-seq）按行流式还原，每行是一个 JSON 文档；不再整段缓存到结束。
 

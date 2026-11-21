@@ -136,8 +136,9 @@ export class PrivacyEngine implements RedactionEngine {
    * The rules from `config` from the next request on (docs/adr/0021): the
    * finders and the reply guard are rebuilt, the value table stays, so a reply
    * to a request already sent is still restored. The log restore switch
-   * (docs/adr/0003) applies from the next response on. The masker starts with
-   * an empty memo of what was sent, which was keyed to the old rules.
+   * (docs/adr/0003) is read when a request goes and held for its reply, so a
+   * call in flight runs under the settings it went out with. The masker starts
+   * with an empty memo of what was sent, which was keyed to the old rules.
    */
   reconfigure(config: ResolvedConfig): void {
     this.#masker = this.#maskerFor(config)
@@ -206,12 +207,15 @@ export class PrivacyEngine implements RedactionEngine {
     const tally: Tally = newTally()
     // the reply goes through the guard this request was sent under, whatever reconfigure does meanwhile
     const restorer = this.#restorer
+    // and through the log restore switch it was sent under too: a reply on its way keeps the setting it
+    // went out with, so the request header and the reply's handling never disagree (docs/adr/0003, 0021)
+    const restoreLog = this.#restoreLog
     const sentText = r.text
     let done = false
     return {
       text: r.text,
       // off, the placeholders in the reply are left alone: they reach the agent and the session log as they are (docs/adr/0003)
-      restoring: () => this.#restoreLog && this.#table.size > 0,
+      restoring: () => restoreLog && this.#table.size > 0,
       restoreBody: (text) => restorer.restoreJSON(text, tally),
       streamRestorer: () => restorer.stream(tally),
       finish: () => {

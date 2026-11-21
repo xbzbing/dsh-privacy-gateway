@@ -914,7 +914,8 @@ export class MaskingDispatcher extends Dispatcher {
       if (changed && codings.length > 0) set['content-encoding'] = null
       // a reply with placeholders in it is restored as it comes: it is asked for unencoded.
       // Nothing is restored with the log restore switch off (docs/adr/0003), so then the reply
-      // may come compressed and goes on that way (docs/adr/0025)
+      // may come compressed and goes on that way (docs/adr/0025). `restoring()` answers for this
+      // request as it went out, so the reply is handled as its own request header said
       if (exchange !== null && exchange.restoring()) set['accept-encoding'] = 'identity'
       const headers = editHeaders(opts.headers, set, ['accept-encoding'])
       to = this.downstream()

@@ -27,6 +27,7 @@ function faceOf(engine: PrivacyEngine): PrivacyFace {
     configured: true,
     secrets: true,
     personal: false,
+    restoreLog: false,
     get values() {
       return engine.values
     },
@@ -49,6 +50,7 @@ test('status gives the counts of today, 7 and 30 days, and never a value', () =>
     assert.ok(!r.text.includes(SENTINEL.slice(3)))
     assert.match(r.text, lang === 'zh' ? /今日：记录 1 次请求，1 次有脱敏，替换 1 处，还原 1 处（工具参数里 1 处）/ : /Today: 1 requests recorded, 1 masked, 1 places replaced, 1 restored \(1 in tool arguments\)/)
     assert.match(r.text, /API_KEY 1/)
+    assert.match(r.text, lang === 'zh' ? /日志：不还原/ : /Log: not restored/)
   }
   assert.deepEqual(runPrivacyCommand(faceOf(engine), ' status ', 'en'), runPrivacyCommand(faceOf(engine), '', 'en'))
 })
@@ -147,6 +149,7 @@ test('/privacy on says the configuration is what keeps masking off', () => {
     configured: false,
     secrets: true,
     personal: false,
+    restoreLog: false,
     get values() {
       return engine.values
     },

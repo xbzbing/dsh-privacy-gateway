@@ -250,7 +250,7 @@ test('a hint keeps a key\'s prefix and its next characters, plus a couple at the
   assert.deepEqual(hint('TERM', 'project-x', false), { head: 'p', len: 9 })
 })
 
-test('reconfigure: new words mask from the next request, and a value masked before is still restored', async () => {
+test('reconfigure: new words mask from the next request, and a value masked before is still put back by the restorer', async () => {
   const { randomBytes } = await import('node:crypto')
   const { PrivacyEngine } = await import('../src/engine.ts')
   const { defaults: base } = await import('../src/config.ts')

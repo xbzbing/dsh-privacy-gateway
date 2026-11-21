@@ -309,8 +309,8 @@ function riskWords(a: Asking, t: T, name: (entry: string) => string): { title: s
   if (change.from !== undefined) params.from = change.from
   if (change.to !== undefined) params.to = change.to
   return {
-    title: t(change.risk === 'send' ? 'cfg.risk.send.title' : 'cfg.risk.delete.title'),
+    title: t(change.risk === 'send' ? 'cfg.risk.send.title' : change.risk === 'delete' ? 'cfg.risk.delete.title' : 'cfg.risk.log.title'),
     body: t(key(`cfg.r.${a.f.key}`), params),
-    ack: t(change.risk === 'send' ? 'cfg.risk.send.ack' : 'cfg.risk.delete.ack'),
+    ack: t(change.risk === 'send' ? 'cfg.risk.send.ack' : change.risk === 'delete' ? 'cfg.risk.delete.ack' : 'cfg.risk.log.ack'),
   }
 }

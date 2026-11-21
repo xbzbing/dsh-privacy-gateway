@@ -306,8 +306,11 @@ export function readOverview(o: unknown): Overview | undefined {
   const week = readTotals(o.stats.week)
   const month = readTotals(o.stats.month)
   if (!today || !week || !month) return undefined
+  const { restoreLog: rawRestoreLog, ...rest } = o
   return {
-    ...(o as unknown as Overview),
+    ...(rest as unknown as Overview),
+    // a host of this version says; an older one has no such field, and the card shows the count as it is
+    ...(typeof rawRestoreLog === 'boolean' ? { restoreLog: rawRestoreLog } : {}),
     values: count(o.values),
     stats: { today, week, month, failStreak: count(o.stats.failStreak) },
     recent: o.recent.filter(isRecord).map(readRecord),

@@ -2,7 +2,7 @@
   "name": "dsh-privacy-gateway",
   "version": "0.1.9",
   "type": "module",
-  "description": "Process-wide HTTP redaction gateway for DSH: masks secrets in outgoing model requests and restores placeholders in the replies, for every provider.",
+  "description": "Process-wide HTTP redaction gateway for DSH: masks secrets in outgoing model requests; replies keep placeholders in the session log by default, and restoreLog writes the real values back before it is written, for every provider.",
   "icon": "./assets/icon.svg",
   "license": "MIT",
   "author": "xbzbing <xbzbing@gmail.com>",
