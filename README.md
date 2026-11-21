@@ -15,7 +15,7 @@
 dsh plugin --profile web add dsh-privacy-gateway@latest
 
 # 同一版本的 GitHub Release 附件（预发布也发在这里）
-dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.1.4/dsh-privacy-gateway-0.1.4.tgz
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.2.0/dsh-privacy-gateway-0.2.0.tgz
 ```
 
 预发布版本号带 `-`，只发 GitHub Release、不发 npm。仓库不提交 `lib/`，`dsh plugin add github:…` 拿到的树加载不了（[ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)）。
