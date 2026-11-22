@@ -15,6 +15,7 @@
 - key 是 32 字节随机数，存在状态目录的 `redact.key`（文件 0600、目录 0700，`DSH_PRIVACY_GATEWAY_HOME` 可改；2026-11-01 起状态目录按实例隔离，见 ADR-0027）。存不下时用内存 key，并告警。
 - 值表 `placeholder → value` 只在内存里，上限 `maxValues`（默认 5000），满了淘汰最老的一半。
 - 已是占位符的位置不再脱敏：重复脱敏幂等。
+- 2026-11-23 起外壳换成 `⟦DSH_REDACTED:KIND_xxxxxxxx⟧`；HMAC 输入、hash 与确定性不变，见 [ADR-0037](0037-namespaced-placeholder-protocol.md)。本 ADR 正文里的 `{{KIND_xxxxxxxx}}` 是当时的形式。
 
 ## Consequences
 
