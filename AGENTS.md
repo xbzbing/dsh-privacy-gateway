@@ -20,7 +20,7 @@ src/
   command.ts      /privacy 命令
   protect.ts      必须原样发出的区域（<env> 块、工具定义）
   paths.ts        状态目录：当前实例自己的目录，DSH_PRIVACY_GATEWAY_HOME 可改（ADR-0027）
-  redact/         查找、脱敏、还原：rules/checks/personal/cookie/find/mask/restore/known/shape/guard/json/key
+  redact/         查找、脱敏、还原：placeholder（占位符协议）/rules/checks/personal/cookie/find/mask/restore/known/shape/guard/json/key
   client/         Web 端：配置页（ConfigSection、configControls、fields）、统计卡（StatsCard、StatsParts）、
                   会话「隐私保护」标签页（sidebar）、发出内容对照（VendorView）、locales/（zh.ts、en.ts）
                   与其门面 locales.ts、styles、rpc

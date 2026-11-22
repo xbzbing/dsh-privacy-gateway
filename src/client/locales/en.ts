@@ -163,7 +163,7 @@ export const en: Record<Key, string> = {
   'cfg.f.personal': 'Mask personal data',
   'cfg.f.personal.hint': 'Emails, mainland phone numbers, ID card and bank card numbers.',
   'cfg.f.shape': 'Same-shape fake keys',
-  'cfg.f.shape.hint': 'A secret goes as a made-up key with the same prefix, length and kinds of character instead of a {{…}} placeholder; a value under 8 characters, or with unusual characters, keeps the placeholder. With restoreLog on, replies put the made-up key back the same way.',
+  'cfg.f.shape.hint': 'A secret goes as a made-up key with the same prefix, length and kinds of character instead of a ⟦DSH_REDACTED:…⟧ placeholder; a value under 8 characters, or with unusual characters, keeps the placeholder. With restoreLog on, replies put the made-up key back the same way.',
   'cfg.f.maskKeys': 'Mask JSON keys too',
   'cfg.f.maskKeys.hint': 'A key in a request body that reads like a secret or personal data ({"sk-…": …}) goes as a placeholder the way a value does, and comes back in the reply with restoreLog on. The protocol’s own keys (model, role, type, name and so on), the tool definitions and the argument names of a tool call are left alone, or the vendor could not read the request.',
   'cfg.f.toolGuard': 'Tool call guard',

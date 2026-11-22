@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 简体中文
 
-![模型只看见 {{占位符}}：密钥、凭据、个人信息发出前换成占位符，回复里的占位符可换回原值（默认不换），一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
+![模型只看见 ⟦DSH_REDACTED:…⟧：密钥、凭据、个人信息发出前换成占位符，回复里的占位符可换回原值（默认不换），一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
 
 在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符；入站默认让回流里的占位符原样进会话日志，明文不进日志，打开 `restoreLog` 才换回真值。对 adapter、provider 无感；agent 在默认关闭时拿到的是占位符，打开 `restoreLog` 后与以前一样拿到真值。一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
@@ -79,7 +79,7 @@ someone@gmail.com                                                    → EMAIL
 11010519491231002X                                                   → ID_CARD
 ```
 
-- 中文写法「密码：…」「密钥是 …」和 URL 里的密码记为 `{{PASSWORD_p7gqwtns}}`，和 `SECRET` 分开记。
+- 中文写法「密码：…」「密钥是 …」和 URL 里的密码记为 `⟦DSH_REDACTED:PASSWORD_p7gqwtns⟧`，和 `SECRET` 分开记。
 - `EMAIL`、`PHONE`、`ID_CARD`、`BANK_CARD` 默认不换，打开「脱敏个人信息」才生效。
 - 「自定义敏感词」里的词按词替换，记为 `TERM`；「永不脱敏的值」和 `allow` 里的原样发出。
 - 私钥整段一起换：`-----BEGIN` 到 `-----END`，或只有开头一段 base64 的截断私钥。
@@ -112,7 +112,7 @@ someone@gmail.com                                                    → EMAIL
 | `maskKeys` | `true` | 读起来像密钥或个人信息的 **JSON 键名**也换成占位符（`{"sk-…": …}`）；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名永不动，否则供应商读不懂请求。关闭后这类键名原样发出（[ADR-0029](docs/adr/0029-mask-json-keys.md)） |
 | `toolGuard` | `off` | 工具调用参数里还原出值、又指向本机以外的 host 时怎么办：`off` 只计数，`warn` 告警并记一条，`block` 这次调用的参数里不还原，工具拿到占位符。只有 `restoreLog` 打开时回复里才会有还原值，关闭时这一项不会生效（[ADR-0014](docs/adr/0014-tool-guard.md)） |
 | `restoreLog` | `false` | 回复里的占位符在写入会话日志前是否换回真值。默认关闭：占位符原样进日志，明文不进日志，agent 拿到的也是占位符；打开后日志与 agent 都拿到真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)） |
-| `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `{{…}}` 占位符；不足 8 个字符、或含字母数字与 `-` `_` `.` 以外字符的值仍用占位符；`restoreLog` 打开时回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
+| `shape` | `false` | 密钥换成同形的假 key（前缀、长度、字符类别不变），而不是 `⟦DSH_REDACTED:…⟧` 占位符；不足 8 个字符、或含字母数字与 `-` `_` `.` 以外字符的值仍用占位符；`restoreLog` 打开时回复里照样还原（[ADR-0015](docs/adr/0015-shape.md)） |
 | `cookieNames` | `[]` | 追加要脱敏的 cookie 名 |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | 永不脱敏的 cookie 名 |
 | `protectEnvBlock` | `true` | `<env>` … `</env>` 块原样发出，供会校验它的 provider 使用；只保护宿主生成的文本（系统提示词、`system`、`instructions`、`systemInstruction`），用户消息和工具结果里的 `<env>` 不算（[ADR-0004](docs/adr/0004-protected-regions.md) 补充） |
