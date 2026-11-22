@@ -167,16 +167,16 @@ test('the manifest ships the client half for the web platform', () => {
 
 test('the side-by-side view pretty-prints JSON, picks out each replaced place, and keeps the changed lines only when asked', async () => {
   const { viewLines } = await import('../src/client/view.ts')
-  const body = JSON.stringify({ messages: [{ role: 'user', content: 'key {{API_KEY_aaaabbbb}} and sk-proj-FAKEfake1234' }, { role: 'assistant', content: 'ok' }] })
-  const all = viewLines(bodyLines(body), ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], false)
+  const body = JSON.stringify({ messages: [{ role: 'user', content: 'key ⟦DSH_REDACTED:API_KEY_aaaabbbb⟧ and sk-proj-FAKEfake1234' }, { role: 'assistant', content: 'ok' }] })
+  const all = viewLines(bodyLines(body), ['⟦DSH_REDACTED:API_KEY_aaaabbbb⟧', 'sk-proj-FAKEfake1234'], false)
   assert.ok(all.lines.length > 3)
-  const only = viewLines(bodyLines(body), ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'], true)
+  const only = viewLines(bodyLines(body), ['⟦DSH_REDACTED:API_KEY_aaaabbbb⟧', 'sk-proj-FAKEfake1234'], true)
   assert.equal(only.lines.length, 1)
   assert.deepEqual(
     only.lines[0]?.parts.filter((p) => p.id).map((p) => p.id),
-    ['{{API_KEY_aaaabbbb}}', 'sk-proj-FAKEfake1234'],
+    ['⟦DSH_REDACTED:API_KEY_aaaabbbb⟧', 'sk-proj-FAKEfake1234'],
   )
-  assert.equal(only.lines[0]?.parts.map((p) => p.text).join('').trim(), '"content": "key {{API_KEY_aaaabbbb}} and sk-proj-FAKEfake1234"')
+  assert.equal(only.lines[0]?.parts.map((p) => p.text).join('').trim(), '"content": "key ⟦DSH_REDACTED:API_KEY_aaaabbbb⟧ and sk-proj-FAKEfake1234"')
   assert.equal(viewLines(bodyLines(body), [], false, 2).truncated, true)
   assert.deepEqual(bodyLines('not json\nat all'), ['not json', 'at all'])
   // the view's memo key: the same placeholders give the same key, a different set another

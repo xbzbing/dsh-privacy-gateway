@@ -40,7 +40,7 @@ test('status gives the counts of today, 7 and 30 days, and never a value', () =>
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   const ex = engine.maskRequest(chat(`key ${SENTINEL}`), info)
   assert.ok(ex)
-  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(ex.text)?.[0] ?? ''
+  const p = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/.exec(ex.text)?.[0] ?? ''
   ex.restoreBody(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { arguments: JSON.stringify({ cmd: `curl -H ${p}` }) } }] } }] }))
   ex.finish()
   for (const lang of ['zh', 'en'] as const) {
@@ -71,7 +71,7 @@ test('test shows the text as it would go, a hint per value, and remembers nothin
   const r = runPrivacyCommand(faceOf(engine), `test token ${SENTINEL} twice ${SENTINEL}`, 'en')
   assert.equal(r.kind, 'success')
   assert.ok(!r.text.includes(SENTINEL))
-  assert.match(r.text, /^Would go as:\ntoken \{\{API_KEY_[a-z2-7]{8}\}\} twice \{\{API_KEY_[a-z2-7]{8}\}\}\n\n1 value:\n\{\{API_KEY_[a-z2-7]{8}\}\} {2}API_KEY · rule · sk-proj-SENT… 38$/)
+  assert.match(r.text, /^Would go as:\ntoken ⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧ twice ⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧\n\n1 value:\n⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧ {2}API_KEY · rule · sk-proj-SENT… 38$/)
   assert.equal(engine.values, 0)
   assert.equal(engine.records.recent().length, 0)
   assert.match(runPrivacyCommand(faceOf(engine), 'test nothing secret here', 'en').text, /Nothing in this text/)

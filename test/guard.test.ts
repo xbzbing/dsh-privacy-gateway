@@ -15,7 +15,7 @@ function setup(toolGuard: ToolGuard) {
   const e = new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, toolGuard }), { logger: { warn: (m: unknown) => warnings.push(String(m)) } })
   const ex = e.maskRequest(chat(`my key is ${KEY}`), info)
   assert.ok(ex)
-  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(ex.text)?.[0] ?? ''
+  const p = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/.exec(ex.text)?.[0] ?? ''
   assert.ok(p)
   return { e, ex, p, warnings }
 }

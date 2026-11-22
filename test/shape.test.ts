@@ -57,7 +57,7 @@ test('shape sends a key as a made-up one, the same every turn, and puts it back 
   const a = e.maskRequest(chat(`key ${KEY}`), info)
   assert.ok(a)
   const f = sent(a).slice(4)
-  assert.ok(!a.text.includes(KEY) && !a.text.includes('{{'))
+  assert.ok(!a.text.includes(KEY) && !a.text.includes('⟦'))
   assert.ok(sameForm(KEY, f))
   assert.equal(a.restoreBody(JSON.stringify({ choices: [{ message: { content: `use ${f}.` } }] })), JSON.stringify({ choices: [{ message: { content: `use ${KEY}.` } }] }))
   a.finish()
@@ -73,7 +73,7 @@ test('a name before the key stays; personal data still goes as a placeholder', (
   const ex = e.maskRequest(chat(`OPENAI_API_KEY=${KEY} mail rina.k@kowalczyk.pl`), info)
   assert.ok(ex)
   const s = sent(ex)
-  assert.match(s, /^OPENAI_API_KEY=sk-proj-[A-Za-z0-9]{24} mail \{\{EMAIL_[a-z2-7]{8}\}\}$/)
+  assert.match(s, /^OPENAI_API_KEY=sk-proj-[A-Za-z0-9]{24} mail ⟦DSH_REDACTED:EMAIL_[a-z2-7]{8}⟧$/)
 })
 
 test('a made-up key that comes back in the history is not masked again', () => {

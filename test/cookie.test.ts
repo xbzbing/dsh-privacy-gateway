@@ -18,7 +18,8 @@ function setup(options: Partial<MaskOptions> = {}) {
   return { table, masker: new Masker(randomBytes(32), table, { ...base, ...options }), restorer: new Restorer(table) }
 }
 
-const PH = /\{\{COOKIE_[a-z2-7]{8}\}\}/g
+const PHX = '\u27e6DSH_REDACTED:COOKIE_[a-z2-7]{8}\u27e7'
+const PH = new RegExp(PHX, 'g')
 
 function check(text: string, values: string[], options: Partial<MaskOptions> = {}) {
   const { masker, restorer } = setup(options)
@@ -31,7 +32,7 @@ function check(text: string, values: string[], options: Partial<MaskOptions> = {
 
 test('a Cookie: header masks each value and keeps each name', () => {
   const out = check(`Cookie: BDUSS=${BDUSS}; lang=zh-CN; STOKEN=${STOKEN}`, [BDUSS, STOKEN])
-  assert.match(out.text, /^Cookie: BDUSS=\{\{COOKIE_[a-z2-7]{8}\}\}; lang=zh-CN; STOKEN=\{\{COOKIE_/)
+  assert.match(out.text, new RegExp('^Cookie: BDUSS=' + PHX + '; lang=zh-CN; STOKEN=' + PHX))
   assert.deepEqual(out.hits.map((h) => h.head), ['BDUSS', 'STOKEN'])
   check(`curl -H 'cookie: a_session=${STOKEN}' https://x.cn`, [STOKEN])
 })
@@ -50,7 +51,7 @@ test('curl -b masks pairs; a cookie file’s name is left', () => {
 test('cookies.txt masks the seventh column', () => {
   const txt = `# Netscape HTTP Cookie File\n.baidu.com\tTRUE\t/\tFALSE\t1924905600\tBDUSS\t${BDUSS}\n.x.cn\tTRUE\t/\tTRUE\t0\tlang\tzh-CN-long\n`
   const out = check(txt, [BDUSS])
-  assert.ok(out.text.includes('\t1924905600\tBDUSS\t{{COOKIE_'))
+  assert.ok(out.text.includes('\t1924905600\tBDUSS\t⟦DSH_REDACTED:COOKIE_'))
 })
 
 test('a cookie object written as a dict masks its value; its own fields stay', () => {
@@ -100,7 +101,7 @@ test('a JWT cookie value is one COOKIE placeholder, not a TOKEN inside it', () =
   const { masker } = setup()
   const out = masker.maskText(`Cookie: auth=${JWT}`)
   assert.equal(out.n, 1)
-  assert.match(out.text, /^Cookie: auth=\{\{COOKIE_[a-z2-7]{8}\}\}$/)
+  assert.match(out.text, new RegExp('^Cookie: auth=' + PHX))
 })
 
 test('a masked cookie value becomes known', () => {
@@ -119,6 +120,6 @@ test('a value with a JSON escape the text kept is masked whole, not cut at the b
   const text = 'Cookie: BDUSS=abc\\u003cdefghijklmnop; lang=zh-CN'
   const { masker, restorer } = setup()
   const out = masker.maskText(text)
-  assert.match(out.text, /BDUSS=\{\{COOKIE_[a-z2-7]{8}\}\}; lang=zh-CN/)
+  assert.match(out.text, new RegExp('BDUSS=' + PHX + '; lang=zh-CN'))
   assert.equal(restorer.restoreText(out.text), text)
 })

@@ -14,7 +14,7 @@ import { PrivacyEngine, type Exchange, type RedactionEngine, type RequestInfo } 
 import { routeStream, makeSkip } from '../src/providers.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
-const PLACEHOLDER = /\{\{API_KEY_[a-z2-7]{8}\}\}/
+const PLACEHOLDER = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/
 
 interface Seen {
   method: string
@@ -141,7 +141,7 @@ test('nothing of a reply is read, decoded or put back while restore is off (docs
   const untouched: RedactionEngine = {
     maskRequest(body) {
       return {
-        text: body.replace(OPENAI, '{{API_KEY_abcdefgh}}'),
+        text: body.replace(OPENAI, '⟦DSH_REDACTED:API_KEY_abcdefgh⟧'),
         restoring: () => false,
         restoreBody: () => {
           throw new Error('restoreBody ran while restore is off')
@@ -159,13 +159,13 @@ test('nothing of a reply is read, decoded or put back while restore is off (docs
     },
   }
   const json = await origin((_s, res) => {
-    const body = '{"choices":[{"message":{"content":"{{API_KEY_abcdefgh}}"}}]}'
+    const body = '{"choices":[{"message":{"content":"⟦DSH_REDACTED:API_KEY_abcdefgh⟧"}}]}'
     res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) })
     res.end(body)
   })
   const sse = await origin((_s, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' })
-    res.end('data: {"choices":[{"delta":{"content":"{{API_KEY_abcdefgh}}"}}]}\n\ndata: [DONE]\n\n')
+    res.end('data: {"choices":[{"delta":{"content":"⟦DSH_REDACTED:API_KEY_abcdefgh⟧"}}]}\n\ndata: [DONE]\n\n')
   })
   try {
     const warnings = await withGateway(async () => {
@@ -173,7 +173,7 @@ test('nothing of a reply is read, decoded or put back while restore is off (docs
         const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(`key ${OPENAI}`) })
         assert.equal(res.status, 200)
         const text = await res.text()
-        assert.ok(text.includes('{{API_KEY_abcdefgh}}'), text)
+        assert.ok(text.includes('⟦DSH_REDACTED:API_KEY_abcdefgh⟧'), text)
       }
     }, untouched)
     assert.deepEqual(warnings, [])
@@ -277,9 +277,9 @@ test('requests that are not model requests pass byte for byte', async () => {
     })
     assert.equal(o.seen[0]?.url, `/search?q=${OPENAI}`)
     assert.ok(!o.seen[1]?.body.includes(OPENAI), 'a string `input` is a model request')
-    assert.match(o.seen[1]?.body ?? '', /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+    assert.match(o.seen[1]?.body ?? '', /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/)
     assert.ok(!o.seen[2]?.body.includes(OPENAI), 'a `prompt` is a model request')
-    assert.match(o.seen[2]?.body ?? '', /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+    assert.match(o.seen[2]?.body ?? '', /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/)
     assert.equal(o.seen[3]?.body, chat(OPENAI), 'a non-JSON content type is not read')
   } finally {
     await o.close()
@@ -386,12 +386,12 @@ test('a reply that names gzip but is not gzip fails downstream, not silently thr
 test('a reply in a coding there is no decoder for goes on as it is, with a warning', async () => {
   const o = await origin((_s, res) => {
     res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'x-unknown' })
-    res.end('{"content":"{{API_KEY_abcdefgh}}"}')
+    res.end('{"content":"⟦DSH_REDACTED:API_KEY_abcdefgh⟧"}')
   })
   try {
     const warnings = await withGateway(async () => {
       const res = await request(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
-      assert.equal(await res.body.text(), '{"content":"{{API_KEY_abcdefgh}}"}')
+      assert.equal(await res.body.text(), '{"content":"⟦DSH_REDACTED:API_KEY_abcdefgh⟧"}')
     }, restoring())
     assert.equal(warnings.length, 1)
     assert.match(String(warnings[0]?.[0]), /x-unknown-encoded/)
@@ -913,12 +913,12 @@ test('masking that fails, even past maskRequest, is never sent and nothing repor
 test('a JSON reply that cannot be restored goes on as it came, with one warning that has no value', async () => {
   const o = await origin((_s, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end('{"content":"{{API_KEY_abcdefgh}}"}')
+    res.end('{"content":"⟦DSH_REDACTED:API_KEY_abcdefgh⟧"}')
   })
   const failing: RedactionEngine = {
     maskRequest(body) {
       return {
-        text: body.replace(OPENAI, '{{API_KEY_abcdefgh}}'),
+        text: body.replace(OPENAI, '⟦DSH_REDACTED:API_KEY_abcdefgh⟧'),
         restoring: () => true,
         restoreBody: () => {
           throw new Error(`restore ${OPENAI}`)
@@ -931,7 +931,7 @@ test('a JSON reply that cannot be restored goes on as it came, with one warning 
   try {
     const warnings = await withGateway(async () => {
       const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
-      assert.equal(await res.text(), '{"content":"{{API_KEY_abcdefgh}}"}')
+      assert.equal(await res.text(), '{"content":"⟦DSH_REDACTED:API_KEY_abcdefgh⟧"}')
     }, failing)
     assert.equal(warnings.length, 1)
     assert.match(String(warnings[0]?.[0]), /could not be restored/)

@@ -33,7 +33,7 @@ function setup(options: Partial<MaskOptions> = {}) {
 function masked(text: string, options: Partial<MaskOptions> = {}): string[] {
   const { masker, table } = setup(options)
   const out = masker.maskText(text)
-  return [...out.text.matchAll(/\{\{[A-Z_]+_[a-z2-7]{8}\}\}/g)].map((m) => table.get(m[0]) ?? '?')
+  return [...out.text.matchAll(/⟦DSH_REDACTED:[A-Z_]+_[a-z2-7]{8}⟧/g)].map((m) => table.get(m[0]) ?? "?")
 }
 
 test('the key prefixes of §5.1 are masked as API_KEY', () => {
@@ -59,7 +59,7 @@ test('a private key block is one value', () => {
 
 test('a JWT is a TOKEN', () => {
   const { masker } = setup()
-  assert.match(masker.maskText(`Authorization: Bearer ${JWT}`).text, /Bearer \{\{TOKEN_[a-z2-7]{8}\}\}$/)
+  assert.match(masker.maskText(`Authorization: Bearer ${JWT}`).text, /Bearer ⟦DSH_REDACTED:TOKEN_[a-z2-7]{8}⟧$/)
 })
 
 test('a URL password is masked, unless it is the URL’s user name or host too', () => {
@@ -264,7 +264,7 @@ test('reconfigure: new words mask from the next request, and a value masked befo
   const second = e.maskRequest(chat('Bluebird again'), info)
   assert.ok(second && !second.text.includes('Bluebird'))
   // the reply to the first request still has its key put back
-  const placeholder = /\{\{API_KEY_[^}]+\}\}/.exec(first.text)?.[0] ?? ''
+  const placeholder = /⟦DSH_REDACTED:API_KEY_[^⟧]+⟧/.exec(first.text)?.[0] ?? ''
   assert.ok(placeholder)
   const reply = JSON.stringify({ choices: [{ message: { role: 'assistant', content: `use ${placeholder}` } }] })
   assert.ok(first.restoreBody(reply).includes(key))
@@ -304,7 +304,7 @@ test('an Authorization header\'s Bearer token and Basic credential are masked; s
   for (const s of [
     'Authorization: Bearer $TOKEN',
     'Authorization: Bearer ${TOKEN}',
-    'Authorization: Bearer {{TOKEN_abcdefgh}}',
+    'Authorization: Bearer ⟦DSH_REDACTED:TOKEN_abcdefgh⟧',
     'Authorization: Bearer YOUR_ACCESS_TOKEN',
     'Authorization: Bearer <token>',
     'The Authorization: Bearer token header is required',

@@ -63,7 +63,7 @@ test('a full table fills and matches in linear time, even when every value share
   const table = new ValueTable(4999)
   const values = Array.from({ length: 4999 }, (_, i) => `sk-proj-${i.toString(36).padStart(5, '0')}${'aB3xY9'.repeat(4)}`)
   const fill = ms(() => {
-    for (let i = 0; i < values.length; i++) table.put(`{{API_KEY_${i.toString(16).padStart(8, '0')}}}`, 'API_KEY', values[i] as string)
+    for (let i = 0; i < values.length; i++) table.put(`k${i.toString(16).padStart(8, '0')}`, 'API_KEY', values[i] as string)
   })
   assert.equal(table.size, 4999)
   assert.ok(fill < 200, `fill took ${fill} ms`)

@@ -15,7 +15,7 @@ import { notASlug } from '../src/redact/rules.ts'
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
 const GITHUB = 'gh' + 'p_0123456789abcdefghijABCDEFGHIJ0123'
 const AWS = 'AK' + 'IA47TIRLA73LFEDL7E'
-const PLACEHOLDER = /\{\{API_KEY_[a-z2-7]{8}\}\}/g
+const PLACEHOLDER = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/g
 
 const all: MaskOptions = { secrets: true, protectEnvBlock: true, protectTools: true }
 
@@ -106,7 +106,7 @@ test('maskJSON keeps every byte it does not mask', () => {
   assert.ok(out)
   assert.equal(out.n, 1)
   // model is kept; only the content string is rewritten
-  assert.ok(out.text.startsWith(`{ "model" : "${OPENAI}",\n  "messages":[{"role":"user","content":"key {{API_KEY_`))
+  assert.ok(out.text.startsWith(`{ "model" : "${OPENAI}",\n  "messages":[{"role":"user","content":"key ⟦DSH_REDACTED:API_KEY_`))
   // the escape beside the masked value stays as it was written
   assert.ok(out.text.endsWith(` \\u00e9"}], "stream":true }`))
   const p = PLACEHOLDER.exec(out.text)?.[0] ?? ''
@@ -176,12 +176,14 @@ test('tool call arguments are masked as escaped JSON and restored escaped', () =
 test('restore takes a placeholder back with its braces changed, dropped, spaced or in another case', () => {
   const { masker, restorer } = setup()
   const p = masker.placeholder('API_KEY', OPENAI)
-  const body = p.slice(2, -2)
-  for (const form of [p, `{{ ${body} }}`, `{${body}}`, `{{${body}}`, body, body.toLowerCase(), body.toUpperCase()]) {
+  // ⟦DSH_REDACTED:API_KEY_xxxxxxxx⟧: its body is the namespace with the kind's hash
+  const body = p.slice(1, -1)
+  for (const form of [p, `⟦ ${body} ⟧`, `⟦${body}`, `${body}⟧`, body, body.toLowerCase(), body.toUpperCase()]) {
     assert.equal(restorer.restoreText(`use ${form} now`), `use ${OPENAI} now`, form)
   }
   assert.equal(restorer.restoreText(`x${body}`), `x${body}`, 'inside a longer word')
-  assert.equal(restorer.restoreText('{{API_KEY_aaaaaaaa}}'), '{{API_KEY_aaaaaaaa}}', 'unknown placeholder')
+  assert.equal(restorer.restoreText('⟦DSH_REDACTED:API_KEY_aaaaaaaa⟧'), '⟦DSH_REDACTED:API_KEY_aaaaaaaa⟧', 'unknown placeholder')
+  assert.equal(restorer.restoreText('⟦DSH_REDACTED:API_KEY_aaaabbbb⟧'), '⟦DSH_REDACTED:API_KEY_aaaabbbb⟧', 'the old braces are text a template writes')
 })
 
 test('the stream restorer restores data lines split across chunks and passes the rest through', () => {
@@ -201,12 +203,12 @@ test('the stream restorer restores data lines split across chunks and passes the
 
 test('the value table drops its oldest half when full', () => {
   const table = new ValueTable(100)
-  for (let i = 0; i < 100; i++) table.put(`{{K_${i}}}`, 'K', `v${i}`)
-  table.put('{{K_new}}', 'K', 'new')
+  for (let i = 0; i < 100; i++) table.put(`k${i}`, 'K', `v${i}`)
+  table.put('k-new', 'K', 'new')
   assert.equal(table.size, 51)
-  assert.equal(table.get('{{K_0}}'), undefined)
-  assert.equal(table.get('{{K_99}}'), 'v99')
-  assert.equal(table.get('{{K_new}}'), 'new')
+  assert.equal(table.get('k0'), undefined)
+  assert.equal(table.get('k99'), 'v99')
+  assert.equal(table.get('k-new'), 'new')
 })
 
 test('a placeholder split across two SSE deltas is put back whole, at every split point', () => {
@@ -225,7 +227,7 @@ test('a placeholder split across two SSE deltas is put back whole, at every spli
 
 test('a lowercase body split across two SSE deltas is held and put back whole', () => {
   const { masker, restorer } = setup()
-  const body = masker.placeholder('API_KEY', OPENAI).slice(2, -2).toLowerCase()
+  const body = masker.placeholder('API_KEY', OPENAI).slice(1, -1).toLowerCase()
   const ev = (text: string) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text } }] })}\n\n`
   for (let cut = 1; cut < body.length; cut++) {
     const sse = `${ev(`key ${body.slice(0, cut)}`)}${ev(`${body.slice(cut)} done`)}data: [DONE]\n\n`
@@ -239,7 +241,7 @@ test('a lowercase body split across two SSE deltas is held and put back whole', 
 test('a held tail goes out as it came when the next event is another text', () => {
   const { masker, restorer } = setup()
   masker.placeholder('API_KEY', OPENAI)
-  const a = `data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'see {{API_' } })}\n\n`
+  const a = `data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'see ⟦DSH_REDACTED:API_' } })}\n\n`
   const b = `data: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`
   const s = restorer.stream()
   assert.equal(s.push(Buffer.from(a + b)) + s.end(), a + b)
@@ -249,7 +251,7 @@ test('the tally counts places restored and placeholders no value is known for', 
   const { masker, restorer } = setup()
   const p = masker.placeholder('API_KEY', OPENAI)
   const tally = newTally()
-  restorer.restoreJSON(JSON.stringify({ content: `${p} and ${p} and {{API_KEY_aaaaaaaa}}` }), tally)
+  restorer.restoreJSON(JSON.stringify({ content: `${p} and ${p} and ⟦DSH_REDACTED:API_KEY_aaaaaaaa⟧` }), tally)
   assert.equal(tally.restored.get(p), 2)
   assert.equal(tally.unmapped, 1)
 })
@@ -290,14 +292,14 @@ test('in tool arguments a value written with JSON escapes is masked whole, and c
     const out = masker.maskText(args, true)
     assert.equal(out.n, 1, args)
     assert.ok(JSON.parse(out.text), out.text)
-    const p = /\{\{[A-Z_]+_[a-z2-7]{8}\}\}/.exec(out.text)?.[0] ?? ''
+    const p = /⟦DSH_REDACTED:[A-Z_]+_[a-z2-7]{8}⟧/.exec(out.text)?.[0] ?? ''
     assert.equal(table.get(p), value, args)
     assert.ok(!out.text.includes('xyz') && !out.text.includes('ue99') && !out.text.includes('bird') && !out.text.includes('wo/rd'), out.text)
     assert.deepEqual(JSON.parse(restorer.restoreText(out.text, true)), JSON.parse(args))
   }
   // the quote that closes a quoted value stays outside it
   const quoted = masker.maskText('{"cmd":"PASSWORD=\\"abc12345x\\" next"}', true)
-  assert.match(quoted.text, /=\\"\{\{SECRET_[a-z2-7]{8}\}\}\\" next/)
+  assert.match(quoted.text, /=\\"⟦DSH_REDACTED:SECRET_[a-z2-7]{8}⟧\\" next/)
 })
 
 test('a secret used as a JSON key goes as a placeholder, and comes back in the reply', () => {
@@ -365,7 +367,7 @@ test('a key sent as written is recorded by its placeholder, never by its own tex
   const hit = r.hits[0]
   assert.ok(hit)
   assert.equal(hit.action, 'warn')
-  assert.ok(hit.at?.path.startsWith('{{API_KEY_'), hit.at?.path)
+  assert.ok(hit.at?.path.startsWith('⟦DSH_REDACTED:API_KEY_'), hit.at?.path)
   assert.ok(!JSON.stringify(r.hits).includes(OPENAI), JSON.stringify(r.hits))
 })
 
@@ -376,7 +378,7 @@ test('personal data used as a key is masked as a value is', () => {
   const r = masker.maskJSON(body)
   assert.ok(r)
   assert.ok(!r.text.includes(mail), r.text)
-  const p = r.text.match(/\{\{EMAIL_[a-z2-7]{8}\}\}/)?.[0] ?? ''
+  const p = r.text.match(/⟦DSH_REDACTED:EMAIL_[a-z2-7]{8}⟧/)?.[0] ?? ''
   assert.ok(p !== '')
   assert.equal(restorer.restoreText(r.text), body)
 })
@@ -399,7 +401,7 @@ test('a value already masked is masked again inside a URL, but a signed URL goes
   const { masker } = setup()
   const first = masker.maskJSON(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${OPENAI}` }] }))
   assert.ok(first)
-  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(first.text)?.[0] ?? ''
+  const p = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/.exec(first.text)?.[0] ?? ''
   assert.ok(p !== '')
   const body = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'see the image' }], image_url: { url: `https://cdn.example/i.png?k=${OPENAI}` } })
   const out = masker.maskJSON(body)

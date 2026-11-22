@@ -3,6 +3,7 @@ import { decodedView, hint, inRaw, inStrings, lowerASCII, ruleSpans, SentMemo, w
 import { noIDs, noNumbers, PERSONAL_KINDS, type Finder, type Found } from './ids.ts'
 import { tagOf } from './key.ts'
 import type { KnownSpan, ValueTable } from './known.ts'
+import { bodies, NAMESPACE, OPEN } from './placeholder.ts'
 import { rules } from './rules.ts'
 import { shapeOf, splitName } from './shape.ts'
 import { asJSON, KEPT, walkJSON, type Edit } from './json.ts'
@@ -93,9 +94,6 @@ export interface MaskResult {
   /** Each warned value as written in its string, with its placeholder: for the vendor view only, never kept (docs/adr/0016). */
   warned?: Array<[written: string, placeholder: string]>
 }
-
-/** A placeholder as the masker writes it. */
-const PLACEHOLDER_RE = /\{\{[A-Z][A-Z0-9_]*_[a-z2-7]{8}\}\}/g
 
 /** A key holding an identifier the vendor matches against another (tool_call_id against its call's id). */
 function isID(key: string): boolean {
@@ -372,11 +370,17 @@ export class Masker {
     const view = escaped && raw.includes('\\') ? decodedView(raw) : undefined
     let found = this.#find(raw, view, escaped, pass, knownOnly)
     if (found.length === 0) return none
-    // nothing inside a placeholder already there: masking again changes nothing
+    // nothing inside a placeholder already there: masking again changes nothing.
+    // A placeholder the model wrote back with a bracket dropped or in another
+    // case is one of these too: its body is a `kind_hash`, which no rule reads,
+    // so this is about keeping a value's mapping, not about a secret (ADR-0037).
+    // The brackets may go as JSON escapes (`\u27e6`), so the decoded view is
+    // read first and its places mapped back onto the text as it came.
     const fixed: Range[] = [...keep]
-    if (raw.includes('{{')) {
-      for (const m of raw.matchAll(PLACEHOLDER_RE)) fixed.push({ start: m.index, end: m.index + m[0].length })
-    }
+    if (view !== undefined) {
+      const seen = bodies(view.text)
+      if (seen.length > 0) fixed.push(...inRaw(raw, view, seen.map((b) => ({ ...b, by: 'known' as const }))))
+    } else if (raw.includes(NAMESPACE) || raw.includes(OPEN)) fixed.push(...bodies(raw))
     // nor inside a made-up key already there: one that came back unrestored is not a key of its own
     if (this.#table.shapes > 0) fixed.push(...this.#table.shapeSpans(raw))
     if (fixed.length > 0) found = found.filter((f) => !fixed.some((r) => overlaps(f, r)))

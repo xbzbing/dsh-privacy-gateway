@@ -14,7 +14,7 @@ import { excludeChoices, toggleExcluded } from '../src/client/providerChoice.ts'
 import { Config } from '../src/index.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
-const PLACEHOLDER = /\{\{API_KEY_[a-z2-7]{8}\}\}/
+const PLACEHOLDER = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/
 
 test('isExcluded matches a provider id in any case, and nothing else', () => {
   assert.equal(isExcluded('DeepSeek', ['deepseek']), true)

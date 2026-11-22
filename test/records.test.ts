@@ -32,15 +32,15 @@ function store(dir: string | undefined, now = atNoon, extra: Partial<Constructor
 }
 
 function record(time: Date, over: Partial<MaskRecord> = {}): Omit<MaskRecord, 'key'> {
-  return { time: time.toISOString(), tookMs: 1, what: 'chat', host: 'h', n: 1, values: [{ placeholder: '{{API_KEY_aaaabbbb}}', kind: 'API_KEY', finder: 'rule', head: 'sk-', len: 40, n: 1 }], restored: 0, unmapped: 0, ...over }
+  return { time: time.toISOString(), tookMs: 1, what: 'chat', host: 'h', n: 1, values: [{ placeholder: '⟦DSH_REDACTED:API_KEY_aaaabbbb⟧', kind: 'API_KEY', finder: 'rule', head: 'sk-', len: 40, n: 1 }], restored: 0, unmapped: 0, ...over }
 }
 
 test('one request makes one record: its values, the places restored and the placeholders unmapped, never the value', () => {
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   const ex = engine.maskRequest(chat(`key ${SENTINEL} and again ${SENTINEL}`), { ...info, session: 's1' })
   assert.ok(ex)
-  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(ex.text)?.[0] ?? ''
-  const reply = JSON.stringify({ choices: [{ message: { content: `${p} ${p} {{API_KEY_zzzzzzzz}}` } }] })
+  const p = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/.exec(ex.text)?.[0] ?? ''
+  const reply = JSON.stringify({ choices: [{ message: { content: `${p} ${p} ⟦DSH_REDACTED:API_KEY_zzzzzzzz⟧` } }] })
   assert.ok(ex.restoreBody(reply).includes(SENTINEL))
   ex.finish()
   ex.finish()
@@ -122,7 +122,7 @@ test('a model request with nothing masked and nothing put back makes no record; 
   const engine = new PrivacyEngine(randomBytes(32), defaults)
   const first = engine.maskRequest(chat(`key ${SENTINEL}`), info)
   assert.ok(first)
-  const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(first.text)?.[0] ?? ''
+  const p = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/.exec(first.text)?.[0] ?? ''
   first.finish()
   const plain = engine.maskRequest(chat('hello'), info)
   assert.ok(plain)
@@ -356,7 +356,7 @@ test('the context around a value is short, flat, and never holds a value, a warn
   assert.ok([...before].length <= CONTEXT_CHARS + 1)
   assert.deepEqual(key.at, { path: 'messages.1.content', role: 'user' })
   // the warned email went as written, but the context shows its placeholder
-  assert.ok(after.includes('{{EMAIL_'), after)
+  assert.ok(after.includes('⟦DSH_REDACTED:EMAIL_'), after)
   assert.ok(!JSON.stringify(r).includes('zhang.wei.private'), JSON.stringify(r.values))
   assert.ok(!JSON.stringify(r).includes(SENTINEL))
 })
@@ -544,7 +544,7 @@ test('a record added while a reset runs is in memory exactly when it is on disk'
 })
 
 test('a record keeps at most MAX_RECORD_VALUES values and counts the ones left out', () => {
-  const values: ValueRecord[] = Array.from({ length: MAX_RECORD_VALUES + 50 }, (_, i) => ({ placeholder: `{{API_KEY_${String(i).padStart(8, 'a')}}}`, kind: 'API_KEY', finder: 'rule', head: 'sk-', len: 40, n: 1 }))
+  const values: ValueRecord[] = Array.from({ length: MAX_RECORD_VALUES + 50 }, (_, i) => ({ placeholder: `⟦DSH_REDACTED:API_KEY_${String(i).padStart(8, 'a')}⟧`, kind: 'API_KEY', finder: 'rule', head: 'sk-', len: 40, n: 1 }))
   const r = store(undefined).add(record(NOON, { n: values.length, values }))
   assert.equal(r.values.length, MAX_RECORD_VALUES)
   assert.equal(r.valuesOmitted, 50)

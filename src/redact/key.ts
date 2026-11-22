@@ -2,6 +2,8 @@ import { createHmac, randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { format } from './placeholder.ts'
+
 export const KEY_BYTES = 32
 
 export interface LoadedKey {
@@ -55,12 +57,13 @@ function base32Head(bytes: Uint8Array): string {
 }
 
 /**
- * The placeholder a value of `kind` goes as: `{{KIND_xxxxxxxx}}`, the hash
- * part the first 8 base32 characters of HMAC-SHA256(key, kind NUL value).
- * The same value is the same placeholder every time, so a conversation's
- * history reads the same turn after turn and masking it again changes nothing.
+ * The placeholder a value of `kind` goes as: `⟦DSH_REDACTED:KIND_xxxxxxxx⟧`,
+ * the hash part the first 8 base32 characters of HMAC-SHA256(key, kind NUL
+ * value). The same value is the same placeholder every time, so a
+ * conversation's history reads the same turn after turn and masking it again
+ * changes nothing. The protocol is `placeholder.ts`'s (docs/adr/0037).
  */
 export function tagOf(key: Uint8Array, kind: string, value: string): string {
   const mac = createHmac('sha256', key).update(`${kind}\0${value}`, 'utf8').digest()
-  return `{{${kind}_${base32Head(mac)}}}`
+  return format(kind, base32Head(mac))
 }
