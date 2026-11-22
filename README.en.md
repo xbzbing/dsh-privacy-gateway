@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-![The model only sees {{placeholder}}: secrets, credentials and personal data go out as placeholders and can come back as real values (off by default) — one interception point, every model request through the global fetch goes through it](docs/assets/screenshots/0-banner-en.png)
+![The model only sees ⟦DSH_REDACTED:…⟧: secrets, credentials and personal data go out as placeholders and can come back as real values (off by default) — one interception point, every model request through the global fetch goes through it](docs/assets/screenshots/0-banner-en.png)
 
 A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders; by default the placeholders in the replies go into the session log as they are, so no plaintext reaches it, and `restoreLog` puts them back with the real values on request. Adapters and providers don't notice it; by default the agent gets placeholders, and with `restoreLog` on it gets the real values as before. One interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
@@ -79,7 +79,7 @@ someone@gmail.com                                                    → EMAIL
 11010519491231002X                                                   → ID_CARD
 ```
 
-- The Chinese wordings 「密码：…」 and 「密钥是 …」, and a password in a URL, are recorded as `{{PASSWORD_p7gqwtns}}`, apart from `SECRET`.
+- The Chinese wordings 「密码：…」 and 「密钥是 …」, and a password in a URL, are recorded as `⟦DSH_REDACTED:PASSWORD_p7gqwtns⟧`, apart from `SECRET`.
 - `EMAIL`, `PHONE`, `ID_CARD` and `BANK_CARD` are off until 「脱敏个人信息」 is on.
 - A word in 「自定义敏感词」 is replaced where it appears and recorded as `TERM`; a value in 「永不脱敏的值」 or `allow` goes out as it is.
 - A private key goes whole: `-----BEGIN` to `-----END`, or a truncated one with only the opening lines and base64.
@@ -114,7 +114,7 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `maskKeys` | `true` | A **JSON key** that reads like a secret or personal data goes as a placeholder too (`{"sk-…": …}`). The protocol's own keys (`model`, `role`, `type`, `name`, `id` and so on), the tool definitions and a tool call's argument names are never touched, or the vendor could not read the request. When off, such keys go as they are ([ADR-0029](docs/adr/0029-mask-json-keys.md)) |
 | `toolGuard` | `off` | When a tool call's arguments would have a value restored and name a host off this machine: `off` only counts it, `warn` logs and records it, `block` leaves the placeholders in that call's arguments, so the tool gets the placeholder. A reply holds a restored value only with `restoreLog` on; with it off this guard never runs ([ADR-0014](docs/adr/0014-tool-guard.md)) |
 | `restoreLog` | `false` | Whether a reply's placeholders are put back before the session log is written. Off (the default): the placeholders go into the log as they are, no plaintext reaches it, and the agent sees placeholders too; on, the log and the agent both hold the real values, and session sync, backups, shares and exports carry them too ([ADR-0003](docs/adr/0003-restore-before-session-log.md)) |
-| `shape` | `false` | Send a key as a made-up key of its own form (same prefix, length and kinds of character) instead of a `{{…}}` placeholder; a value under 8 characters, or holding anything but letters, digits, `-`, `_` and `.`, keeps the placeholder; with `restoreLog` on, replies put it back the same way ([ADR-0015](docs/adr/0015-shape.md)) |
+| `shape` | `false` | Send a key as a made-up key of its own form (same prefix, length and kinds of character) instead of a `⟦DSH_REDACTED:…⟧` placeholder; a value under 8 characters, or holding anything but letters, digits, `-`, `_` and `.`, keeps the placeholder; with `restoreLog` on, replies put it back the same way ([ADR-0015](docs/adr/0015-shape.md)) |
 | `cookieNames` | `[]` | More cookie names to mask |
 | `cookieKeep` | `['lang', 'locale', 'theme', 'tz']` | Cookie names never masked |
 | `protectEnvBlock` | `true` | Send `<env>` … `</env>` blocks as written, for providers that check them; only in text the host writes (the system prompt, `system`, `instructions`, `systemInstruction`), never in a user message or a tool result ([ADR-0004](docs/adr/0004-protected-regions.md) supplement) |

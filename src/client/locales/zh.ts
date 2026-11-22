@@ -161,7 +161,7 @@ export const zh = {
   'cfg.f.personal': '脱敏个人信息',
   'cfg.f.personal.hint': '邮箱、大陆手机号、身份证号、银行卡号。',
   'cfg.f.shape': '密钥换成同形假 key',
-  'cfg.f.shape.hint': '前缀、长度、字符类别不变，代替 {{…}} 占位符；不足 8 字符或含特殊字符的值仍用占位符。restoreLog 打开时，回复里的假 key 照样换回真值。',
+  'cfg.f.shape.hint': '前缀、长度、字符类别不变，代替 ⟦DSH_REDACTED:…⟧ 占位符；不足 8 字符或含特殊字符的值仍用占位符。restoreLog 打开时，回复里的假 key 照样换回真值。',
   'cfg.f.maskKeys': 'JSON 键也脱敏',
   'cfg.f.maskKeys.hint': '请求 body 里读起来像密钥或个人信息的键名（例如 {"sk-…": …}）和值一样换成占位符；restoreLog 打开时，回复里再换回来。协议自身的键（model、role、type、name 等）、工具定义以及工具调用的参数名不动，否则供应商读不懂这份请求。',
   'cfg.f.toolGuard': '工具调用外发保护',
