@@ -2,7 +2,7 @@
  * COOKIE (design §5.5; magpie has no such rule): a cookie's value has no
  * form of its own (BDUSS's and JSESSIONID's are any string), so it is found
  * by where it is and by its name. Only the value is masked and each value
- * on its own: Cookie: BDUSS={{COOKIE_…}}; lang=zh-CN keeps the names, so
+ * on its own: Cookie: BDUSS=⟦DSH_REDACTED:COOKIE_xxxxxxxx⟧; lang=zh-CN keeps the names, so
  * the model knows which cookies there are and can send just one.
  */
 import type { Found } from './ids.ts'

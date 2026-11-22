@@ -4,6 +4,8 @@
  * machine's.
  */
 
+import { hasPlaceholder } from './placeholder.ts'
+
 /**
  * A URL's host: after the scheme and any user:password@, up to a port, a
  * path, a query or the end. The user part has no ? or #: in
@@ -64,7 +66,8 @@ function hostsOf(text: string, out: Set<string>): void {
     for (const m of text.matchAll(URL_HOST)) {
       const scheme = (m[1] as string).toLowerCase()
       const host = (m[2] as string).toLowerCase()
-      if (LOCAL_SCHEMES.has(scheme) || isLocalHost(host) || host.includes('{{')) continue
+      // a host with a placeholder in it is no host: the URL is the tool's own text
+      if (LOCAL_SCHEMES.has(scheme) || isLocalHost(host) || hasPlaceholder(host)) continue
       out.add(host)
     }
   }

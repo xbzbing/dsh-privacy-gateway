@@ -43,7 +43,7 @@ test('protected regions reach the vendor byte for byte, and only the masked valu
     assert.ok(out, c.name)
     assert.ok(out.n >= 1, c.name)
     for (const k of c.kept) assert.ok(out.text.includes(k), `${c.name}: ${k.slice(0, 40)}…`)
-    const p = /\{\{API_KEY_[a-z2-7]{8}\}\}/.exec(out.text)?.[0] ?? ''
+    const p = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/.exec(out.text)?.[0] ?? ''
     // every key outside the regions became the placeholder; every other byte is the body's
     const kept = c.kept.map((k, i) => [k, `\u0000${i}\u0000`] as const)
     const strip = (t: string): string => kept.reduce((acc, [k, mark]) => acc.split(k).join(mark), t)
@@ -72,12 +72,12 @@ test('an <env> block is protected only in the text the host writes (ADR-0004 sup
   ]) {
     const out = one(body)
     assert.ok(!out.includes(KEY), out)
-    assert.match(out, /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+    assert.match(out, /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/)
   }
   // the Responses instructions stay whole; the user input beside them does not
   const responses = one(JSON.stringify({ model: 'm', instructions: `agent\n${env}`, input: [{ role: 'user', content: [{ type: 'input_text', text: `<env> ${KEY}` }] }] }))
   assert.equal(responses.split(KEY).length - 1, 1, responses)
-  assert.match(responses, /\{\{API_KEY_[a-z2-7]{8}\}\}/)
+  assert.match(responses, /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/)
   // Gemini: systemInstruction is the host's, contents are not
   const gemini = one(JSON.stringify({ model: 'm', systemInstruction: { parts: [{ text: `<env>${KEY}</env>` }] }, contents: [{ role: 'user', parts: [{ text: `<env>${KEY}</env>` }] }] }))
   assert.equal(gemini.split(KEY).length - 1, 1, gemini)

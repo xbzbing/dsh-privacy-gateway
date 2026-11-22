@@ -7,10 +7,11 @@
  * The known index (magpie known.go): a value masked once is masked again
  * wherever it shows up in a request, whatever is around it. The vendor
  * answers about a placeholder in words of its own ("the password is
- * {{SECRET_…}}"), the agent reads the value there, and on the next turn
+ * ⟦DSH_REDACTED:SECRET_…⟧"), the agent reads the value there, and on the next turn
  * that text comes back in the history where no rule matches it.
  */
 import { ALNUM } from './checks.ts'
+import { kindOf } from './placeholder.ts'
 import { shapeChar } from './shape.ts'
 
 /** The shortest value matched as known: shorter ones would turn up all over ordinary text. */
@@ -50,11 +51,6 @@ const BITS = 1 << 20
 function gram(s: string, i: number): number {
   const g = (s.charCodeAt(i) ^ (s.charCodeAt(i + 1) << 7) ^ (s.charCodeAt(i + 2) << 14) ^ (s.charCodeAt(i + 3) << 21)) >>> 0
   return Math.imul(g, 2654435761) >>> 12
-}
-
-function kindOf(p: string): string {
-  const i = p.lastIndexOf('_')
-  return i > 2 ? p.slice(2, i) : ''
 }
 
 /**

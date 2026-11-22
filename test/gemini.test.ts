@@ -6,7 +6,7 @@ import { defaults } from '../src/config.ts'
 import { PrivacyEngine } from '../src/engine.ts'
 
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
-const PLACEHOLDER = /\{\{API_KEY_[a-z2-7]{8}\}\}/
+const PLACEHOLDER = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/
 
 test('a Gemini request is masked in contents; its env block and tool declarations go byte for byte', () => {
   const env = `<env>\n  token: ${OPENAI}\n</env>`

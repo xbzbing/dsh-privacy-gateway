@@ -1,21 +1,7 @@
-import { isWordChar } from './checks.ts'
 import { externalHosts } from './guard.ts'
 import type { ValueTable } from './known.ts'
 import { asJSON, jsonEscape, KEPT, SIGNATURE_KEYS, walkJSON } from './json.ts'
-
-/**
- * A placeholder's body, without its braces, as a model may write one back:
- * API_KEY_k3v9x2mq, api_key_k3v9x2mq, API_KEY_K3V9X2MQ. A whole word, with a
- * kind of 24 characters at most: tried from every place in a long word, an
- * unbounded kind read the rest of it each time.
- */
-const PLACEHOLDER_BODY = /(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_]{0,23}_[A-Za-z2-7]{8}(?![A-Za-z0-9_])/g
-
-/** A placeholder as the masker writes it: one the table lacks is counted as unmapped (design §13 R11). */
-const STRICT = /\{\{[A-Z][A-Z0-9_]*_[a-z2-7]{8}\}\}/g
-
-/** The longest placeholder the masker writes: {{, a kind of up to 24, _, the 8 of the hash, }}. */
-const MAX_PLACEHOLDER = 2 + 24 + 1 + 8 + 2
+import { bodies, format, tailLen } from './placeholder.ts'
 
 /**
  * What a reply had put back, for the record: places per placeholder, the
@@ -60,38 +46,6 @@ const TOOL_PATH = /(?:^|\.)(?:tool_calls|function_call|functionCall|tool_use|arg
  */
 export function inToolCall(path: string, key: string, type: string): boolean {
   return asJSON(key, type) || TOOL_PATH.test(path) || (key === 'delta' && type.includes('custom_tool_call_input'))
-}
-
-/** The placeholder the masker wrote for `body`, whatever its case. */
-function canonical(body: string): string {
-  const cut = body.length - 8
-  return `{{${body.slice(0, cut).toUpperCase()}${body.slice(cut).toLowerCase()}}}`
-}
-
-/**
- * Widens s[a:z], a placeholder's body, over the braces the model wrote around
- * it and the spaces inside them: both of {{ and }}, one of them dropped
- * ({{X} or {X}}), or just {{ or just }}. A single brace on one side alone is
- * the text's own ({X as in code) and stays (magpie `braces`).
- */
-function braces(s: string, a: number, z: number): [number, number] {
-  let la = a
-  let l = 0
-  while (la > 0 && (s[la - 1] === ' ' || s[la - 1] === '\t')) la--
-  while (l < 2 && la > 0 && s[la - 1] === '{') {
-    la--
-    l++
-  }
-  let rz = z
-  let r = 0
-  while (rz < s.length && (s[rz] === ' ' || s[rz] === '\t')) rz++
-  while (r < 2 && rz < s.length && s[rz] === '}') {
-    rz++
-    r++
-  }
-  if (l === 2 || (l === 1 && r >= 1)) a = la
-  if (r === 2 || (r === 1 && l >= 1)) z = rz
-  return [a, z]
 }
 
 /** A restorer for one `text/event-stream` body. */
@@ -214,9 +168,9 @@ function sealedText(key: string, s: string): boolean {
 
 /**
  * Puts the values back in what the vendor says (magpie `Restore`): any
- * placeholder this gateway made, also with its braces changed, dropped or
- * spaced, or in another case, as long as its kind and the 8 of its hash
- * name one in the table.
+ * placeholder this gateway made, also with a bracket changed, dropped or
+ * spaced, or in another case, as long as its kind and the 8 of its hash name
+ * one in the table (docs/adr/0037).
  */
 export class Restorer {
   readonly #table: ValueTable
@@ -273,26 +227,27 @@ export class Restorer {
   }
 
   #placeholders(s: string, escaped: boolean, tally: Tally | undefined, tool: boolean, plain: boolean): string {
-    if (tally && s.includes('{{')) {
-      for (const m of s.matchAll(STRICT)) if (this.#table.get(m[0]) === undefined) tally.unmapped++
-    }
+    const found = bodies(s)
+    if (found.length === 0) return s
     const out: string[] = []
     let last = 0
-    for (const m of s.matchAll(PLACEHOLDER_BODY)) {
-      let a = m.index
-      let z = a + m[0].length
-      if (a < last) continue
-      const p = canonical(m[0])
+    for (const f of found) {
+      if (f.start < last) continue
+      const p = format(f.kind, f.hash)
       const v = this.#table.get(p)
-      if (v === undefined || (plain && jsonEscape(v) !== v)) continue
-      ;[a, z] = braces(s, a, z)
-      if (a < last) continue
+      if (v === undefined) {
+        // only a placeholder written exactly as the masker writes one counts:
+        // a text a model changed is no sign of one this gateway made
+        if (tally && s.slice(f.start, f.end) === p) tally.unmapped++
+        continue
+      }
+      if (plain && jsonEscape(v) !== v) continue
       if (tally) {
         tally.restored.set(p, (tally.restored.get(p) ?? 0) + 1)
         if (tool) tally.inTools++
       }
-      out.push(s.slice(last, a), escaped ? jsonEscape(v) : v)
-      last = z
+      out.push(s.slice(last, f.start), escaped ? jsonEscape(v) : v)
+      last = f.end
     }
     if (last === 0) return s
     out.push(s.slice(last))
@@ -342,34 +297,18 @@ export class Restorer {
   }
 
   /**
-   * How much of the end of s may be the start of a placeholder the next
-   * event finishes (magpie `partialTail`): from a { or {{ on, or a last word
-   * that starts as a kind this table has, up to the 8 of its hash.
+   * How much of the end of s may be the start of a placeholder the next event
+   * finishes (magpie `partialTail`): from a ⟦ or a namespace on, up to a body
+   * that is not whole yet.
    */
   #partialTail(s: string): number {
-    const n = braceTail(s)
-    return Math.max(n > 0 ? n : this.#wordTail(s), this.#table.shapeTail(s))
-  }
-
-  #wordTail(s: string): number {
-    let i = s.length
-    while (i > 0 && isWordChar(s[i - 1])) i--
-    const w = s.slice(i)
-    // any case: a body typed back as api_key_… is still a placeholder, and a stream may split it
-    if (w === '' || w.length > 24 + 9 || !/[A-Za-z]/.test(w[0] as string)) return 0
-    const u = w.toUpperCase()
-    for (const kind of this.#table.kinds()) {
-      const k = `${kind}_`
-      if (k.startsWith(u)) return w.length
-      if (u.startsWith(k) && u.length - k.length <= 8 && /^[a-z2-7]*$/.test(u.slice(k.length).toLowerCase())) return w.length
-    }
-    return 0
+    return Math.max(tailLen(s), this.#table.shapeTail(s))
   }
 
   /**
    * A restorer for one `text/event-stream` reply, event by event as it comes
    * (magpie writer.go). A placeholder a stream splits between two events,
-   * {{API_ in one text delta and KEY_k3v9x2mq}} in the next, is put back
+   * ⟦DSH_REDACTED:API_ in one text delta and KEY_k3v9x2mq⟧ in the next, is put back
    * whole: an event whose text ends in what may be the start of one is held
    * until the next, and if that one goes on with the same text the start
    * moves over to it. Nothing is added or dropped. Comment lines go on as
@@ -526,24 +465,3 @@ function eventToolText(ev: string): string | undefined {
   return toolText(e.data, typeOf(e.data) || e.name, '')
 }
 
-/** A tail from { or {{ on: then spaces, a placeholder's body or the start of one, then spaces and one } at most. */
-function braceTail(s: string): number {
-  let i = s.lastIndexOf('{')
-  if (i < 0) return 0
-  if (i > 0 && s[i - 1] === '{') i--
-  const t = s.slice(i)
-  if (t.length >= MAX_PLACEHOLDER + 4 || t.includes('}}')) return 0
-  const body = t.replace(/^\{+/, '').replace(/^[ \t]+/, '')
-  if (body === '') return t.length
-  if (!/[A-Za-z]/.test(body[0] as string)) return 0
-  let j = 0
-  while (j < body.length && isWordChar(body[j])) j++
-  const rest = body.slice(j).replace(/^[ \t]+/, '')
-  if (rest !== '' && rest !== '}') return 0
-  if (j < body.length) {
-    const word = body.slice(0, j)
-    const m = word.match(PLACEHOLDER_BODY)
-    if (!m || m[0] !== word) return 0
-  }
-  return t.length
-}

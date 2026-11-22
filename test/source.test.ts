@@ -102,8 +102,8 @@ test('a session title or workspace name with a masked value keeps it out of the 
     const overview = JSON.stringify(h.source.overview(50))
     const [rec] = h.source.overview(50).recent
     assert.ok(rec)
-    assert.match(rec.title ?? '', /^修复 \{\{API_KEY_[a-z2-7]{8}\}\} 和 \{\{PASSWORD_[a-z2-7]{8}\}\} 泄漏$/)
-    assert.match(rec.workspace ?? '', /^ws \{\{PASSWORD_[a-z2-7]{8}\}\}$/)
+    assert.match(rec.title ?? '', /^修复 ⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧ 和 ⟦DSH_REDACTED:PASSWORD_[a-z2-7]{8}⟧ 泄漏$/)
+    assert.match(rec.workspace ?? '', /^ws ⟦DSH_REDACTED:PASSWORD_[a-z2-7]{8}⟧$/)
     for (const v of [SENTINEL, PASSWORD]) assert.ok(!overview.includes(v), `overview holds ${v.slice(0, 4)}…`)
     const disk = await h.close()
     assert.ok(disk.includes('"title"'))
@@ -129,7 +129,7 @@ test('vendorView turned off serves no body and drops the ones kept, before any r
     const first = h.source.overview(50)
     const key = first.views?.[0]
     assert.ok(key !== undefined)
-    assert.ok(h.source.vendorView?.(key)?.body.includes('{{API_KEY_'))
+    assert.ok(h.source.vendorView?.(key)?.body.includes('⟦DSH_REDACTED:API_KEY_'))
     config.vendorView = false
     assert.equal(h.source.vendorView?.(key), null)
     assert.deepEqual(h.source.overview(50).views, [])
