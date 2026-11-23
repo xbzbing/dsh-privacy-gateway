@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { langOf, runPrivacyCommand, type PrivacyFace } from './command.ts'
@@ -93,6 +94,23 @@ const COMMAND_TEXT = {
   zh: { description: '隐私网关：状态、开关与脱敏预览', hint: 'status | on | off | test <文本>' },
   en: { description: 'Privacy gateway: status, on/off and a masking preview', hint: 'status | on | off | test <text>' },
 } as const
+
+/**
+ * The plugin's own version, from the `package.json` beside `lib/` (the package
+ * ships both, docs/adr/0006). Undefined where it cannot be read: a build that
+ * put the entry elsewhere still works, and the tab then shows no version.
+ */
+function readVersion(): string | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: unknown }
+    return typeof pkg.version === 'string' && pkg.version !== '' ? pkg.version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Read once: a running process's version does not change. */
+const currentVersion = readVersion()
 
 export const name = 'dsh-privacy-gateway'
 
@@ -261,6 +279,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           showPanel: liveBool(config.showPanel, c.showPanel),
           excludeProviders: excludedProviders(),
           ...(session ? { sessionMasking: !sessions.isOff(session) } : {}),
+          // what the running process is, for the tab to show: a page built against
+          // another version says so instead of looking like this one
+          ...(currentVersion !== undefined ? { version: currentVersion } : {}),
         }
       },
       setSessionMasking: (session, on) => {

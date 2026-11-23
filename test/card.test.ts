@@ -378,6 +378,10 @@ test('a refresh that fails keeps what was shown, marked stale; with nothing show
 test('an overview from another host version is filled in, not trusted as it is', () => {
   assert.equal(readOverview(null), undefined)
   assert.equal(readOverview({ active: true, stats: {}, recent: [] }), undefined)
+  // the tab shows the host half's version beside the switch, and no version on a host that does not say one
+  assert.equal(readOverview({ active: true, version: '0.2.1', stats: { today: {}, week: {}, month: {} }, recent: [] })?.version, '0.2.1')
+  assert.equal(readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [] })?.version, undefined)
+  assert.equal(readOverview({ active: true, version: 2, stats: { today: {}, week: {}, month: {} }, recent: [] })?.version, 2)
   const odd = readOverview({ active: true, stats: { today: {}, week: { requests: 'x' }, month: { requests: 3, kinds: { a: 1, b: 'x' } } }, recent: [{ key: 1, time: 't', values: [] }, { nope: true }] })
   assert.ok(odd)
   assert.equal(odd.stats.today.restoredInTools, 0)

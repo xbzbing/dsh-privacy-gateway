@@ -399,7 +399,7 @@ export function ResetButton(props: { ctx: ClientCtx; t: T; onDone(message: strin
  * first, since this session's requests then go out as they are; turning it
  * back on takes effect at once.
  */
-export function SessionSwitch(props: { ctx: ClientCtx; t: T; session: string; on: boolean; onDone(message: string | null): void }): ReactNode {
+export function SessionSwitch(props: { ctx: ClientCtx; t: T; session: string; on: boolean; version?: string; onDone(message: string | null): void }): ReactNode {
   const { t } = props
   const [on, setOn] = useState(props.on)
   const [asking, setAsking] = useState(false)
@@ -429,6 +429,9 @@ export function SessionSwitch(props: { ctx: ClientCtx; t: T; session: string; on
       h(Switch, { checked: on, label: t('session.mask'), disabled: busy, onChange: (next) => (next ? apply(true) : setAsking(true)) }),
       h('span', { className: 'pgw-session__label' }, t('session.mask')),
     ),
+    // the host half's version, beside the switch: a page refreshed onto a
+    // process that has not been restarted says which one it is talking to
+    props.version === undefined ? null : h('span', { className: 'pgw-version' }, `v${props.version}`),
     h(RiskConfirmation, {
       open: asking,
       title: t('session.offTitle'),
