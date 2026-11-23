@@ -1,7 +1,7 @@
 import { externalHosts } from './guard.ts'
 import type { ValueTable } from './known.ts'
 import { asJSON, jsonEscape, KEPT, SIGNATURE_KEYS, walkJSON } from './json.ts'
-import { bodies, format, tailLen } from './placeholder.ts'
+import { bodies, CLOSE, format, OPEN, tailLen } from './placeholder.ts'
 
 /**
  * What a reply had put back, for the record: places per placeholder, the
@@ -166,6 +166,38 @@ function sealedText(key: string, s: string): boolean {
   return SIGNATURE_KEYS.has(key) || s.startsWith('data:') || (key === 'data' && s.length >= 64 && !/[ \n]/.test(s))
 }
 
+/** `⟦` or `⟧` as JSON text may have escaped it: a nested JSON text keeps the escape. */
+const BRACKET_ESCAPE = '\\\\u27e([67])'
+
+/**
+ * `s` with a bracket escape read as the character it stands for, and where the
+ * character taken from `at[i]` in `s` sits: a tool call's arguments are JSON
+ * inside JSON, and a provider may write the brackets of a placeholder as
+ * `\u27e6`/`\u27e7` there. `at` has one entry more than `text`, so a span's end
+ * maps too.
+ */
+function readable(s: string): { text: string; at: number[] } | undefined {
+  const re = new RegExp(BRACKET_ESCAPE, 'gi')
+  let text = ''
+  const at: number[] = []
+  let last = 0
+  for (let m = re.exec(s); m !== null; m = re.exec(s)) {
+    for (let i = last; i < m.index; i++) {
+      text += s[i] as string
+      at.push(i)
+    }
+    text += m[1] === '6' ? OPEN : CLOSE
+    at.push(m.index)
+    last = m.index + m[0].length
+  }
+  for (let i = last; i < s.length; i++) {
+    text += s[i] as string
+    at.push(i)
+  }
+  at.push(s.length)
+  return { text, at }
+}
+
 /**
  * Puts the values back in what the vendor says (magpie `Restore`): any
  * placeholder this gateway made, also with a bracket changed, dropped or
@@ -227,18 +259,23 @@ export class Restorer {
   }
 
   #placeholders(s: string, escaped: boolean, tally: Tally | undefined, tool: boolean, plain: boolean): string {
-    const found = bodies(s)
+    // the masker reads a nested JSON text's escaped brackets too; so does this
+    const view = readable(s)
+    const text = view ? view.text : s
+    const found = bodies(text)
     if (found.length === 0) return s
     const out: string[] = []
     let last = 0
     for (const f of found) {
-      if (f.start < last) continue
+      const a = view ? (view.at[f.start] as number) : f.start
+      const z = view ? (view.at[f.end] as number) : f.end
+      if (a < last) continue
       const p = format(f.kind, f.hash)
       const v = this.#table.get(p)
       if (v === undefined) {
         // only a placeholder written exactly as the masker writes one counts:
         // a text a model changed is no sign of one this gateway made
-        if (tally && s.slice(f.start, f.end) === p) tally.unmapped++
+        if (tally && text.slice(f.start, f.end) === p) tally.unmapped++
         continue
       }
       if (plain && jsonEscape(v) !== v) continue
@@ -246,8 +283,8 @@ export class Restorer {
         tally.restored.set(p, (tally.restored.get(p) ?? 0) + 1)
         if (tool) tally.inTools++
       }
-      out.push(s.slice(last, f.start), escaped ? jsonEscape(v) : v)
-      last = f.end
+      out.push(s.slice(last, a), escaped ? jsonEscape(v) : v)
+      last = z
     }
     if (last === 0) return s
     out.push(s.slice(last))

@@ -30,8 +30,14 @@ export const MAX_KIND = 24
 /** The longest placeholder the masker writes: ⟦, the namespace, :, a kind, _, the 8 of the hash, ⟧. */
 export const MAX_PLACEHOLDER = OPEN.length + NAMESPACE.length + 1 + MAX_KIND + 1 + 8 + CLOSE.length
 
-/** A body, as the masker writes it and as a model may write it back in another case. */
-const BODY = new RegExp(`${NAMESPACE}[ \\t]*:[ \\t]*([A-Za-z][A-Za-z0-9_]{0,${MAX_KIND - 1}})[ \\t]*_[ \\t]*([A-Za-z2-7]{8})`, 'gi')
+/** A body's pattern, as the masker writes it and as a model may write it back in another case. */
+const BODY_SOURCE = `${NAMESPACE}[ \\t]*:[ \\t]*([A-Za-z][A-Za-z0-9_]{0,${MAX_KIND - 1}})[ \\t]*_[ \\t]*([A-Za-z2-7]{8})`
+
+/** A body of one text: no `g`, so reading one leaves no place for the next read to start. */
+const BODY_ONE = new RegExp(BODY_SOURCE, 'i')
+
+/** A body in a scan: `g`, and its `lastIndex` is reset before each scan by `bodies`. */
+const BODY = new RegExp(BODY_SOURCE, 'gi')
 
 /** Where a placeholder may start: its opening bracket, or the namespace with no bracket. */
 const START = new RegExp(`${OPEN}|${NAMESPACE}`, 'gi')
@@ -56,8 +62,7 @@ export function format(kind: string, hash: string): string {
 
 /** The kind `p`, a placeholder, names; `''` where it names none. */
 export function kindOf(p: string): string {
-  BODY.lastIndex = 0
-  const m = BODY.exec(p)
+  const m = BODY_ONE.exec(p)
   return m ? (m[1] as string).toUpperCase() : ''
 }
 
@@ -73,6 +78,10 @@ export function kindOf(p: string): string {
  * is only fails to put one back.
  */
 export function bodies(s: string): Found[] {
+  // `matchAll` starts a global pattern where its `lastIndex` stands, and a
+  // scan leaves it at the last match: without this, a scan that follows a read
+  // of another text would start inside that text's placeholder (ADR-0037)
+  BODY.lastIndex = 0
   const out: Found[] = []
   for (const m of s.matchAll(BODY)) {
     const a = m.index
