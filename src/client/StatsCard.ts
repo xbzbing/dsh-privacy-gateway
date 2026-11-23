@@ -83,6 +83,7 @@ function Card(props: CardProps): ReactNode {
             t,
             session: props.sessionId,
             on: ready.sessionMasking,
+            ...(ready.version !== undefined ? { version: ready.version } : {}),
             onDone: (message) => {
               setNotice(message === null ? null : { text: message, ok: false })
               reload()

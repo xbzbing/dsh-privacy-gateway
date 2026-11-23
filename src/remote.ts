@@ -42,6 +42,8 @@ export interface Overview {
   excludeProviders?: string[]
   /** With `session`: whether masking is on for that session (docs/adr/0023). */
   sessionMasking?: boolean
+  /** The host half's own version; absent on a host too old to say. */
+  version?: string
 }
 
 export interface SessionMaskingRequest {

@@ -18,6 +18,7 @@ const CSS = `
 .pgw-head__actions>:first-child{margin-right:8px}
 .pgw-title{font-size:15px;font-weight:600;line-height:22px;margin:0}
 .pgw-meta{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.pgw-version{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 .pgw-spacer{flex:1}
 .pgw-mono{font-family:${MONO}}
 .pgw-reset{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary)}
