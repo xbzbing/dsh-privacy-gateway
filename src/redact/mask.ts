@@ -3,7 +3,7 @@ import { decodedView, hint, inRaw, inStrings, lowerASCII, ruleSpans, SentMemo, w
 import { noIDs, noNumbers, PERSONAL_KINDS, type Finder, type Found } from './ids.ts'
 import { tagOf } from './key.ts'
 import type { KnownSpan, ValueTable } from './known.ts'
-import { bodies, NAMESPACE, OPEN } from './placeholder.ts'
+import { bodies, hasPlaceholder } from './placeholder.ts'
 import { rules } from './rules.ts'
 import { shapeOf, splitName } from './shape.ts'
 import { asJSON, KEPT, walkJSON, type Edit } from './json.ts'
@@ -380,7 +380,7 @@ export class Masker {
     if (view !== undefined) {
       const seen = bodies(view.text)
       if (seen.length > 0) fixed.push(...inRaw(raw, view, seen.map((b) => ({ ...b, by: 'known' as const }))))
-    } else if (raw.includes(NAMESPACE) || raw.includes(OPEN)) fixed.push(...bodies(raw))
+    } else if (hasPlaceholder(raw)) fixed.push(...bodies(raw))
     // nor inside a made-up key already there: one that came back unrestored is not a key of its own
     if (this.#table.shapes > 0) fixed.push(...this.#table.shapeSpans(raw))
     if (fixed.length > 0) found = found.filter((f) => !fixed.some((r) => overlaps(f, r)))
