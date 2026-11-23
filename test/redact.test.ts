@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { loadKey, tagOf } from '../src/redact/key.ts'
 import { ValueTable } from '../src/redact/known.ts'
+import { bodies, format } from '../src/redact/placeholder.ts'
 import { Masker, type MaskOptions } from '../src/redact/mask.ts'
 import { newTally, Restorer } from '../src/redact/restore.ts'
 import { notASlug } from '../src/redact/rules.ts'
@@ -15,6 +16,14 @@ import { notASlug } from '../src/redact/rules.ts'
 const OPENAI = 'sk-' + 'proj-abcdEFGH1234ijklMNOP5678qrst'
 const GITHUB = 'gh' + 'p_0123456789abcdefghijABCDEFGHIJ0123'
 const AWS = 'AK' + 'IA47TIRLA73LFEDL7E'
+/** The i-th of the hashes a fixture table uses: 8 base32 characters, all different. */
+function hash8(i: number): string {
+  const base32 = 'abcdefghijklmnopqrstuvwxyz234567'
+  let out = ''
+  for (let k = 0; k < 8; k++) out += base32[(i >> (k * 5)) & 31]
+  return out
+}
+
 const PLACEHOLDER = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/g
 
 const all: MaskOptions = { secrets: true, protectEnvBlock: true, protectTools: true }
@@ -183,7 +192,7 @@ test('restore takes a placeholder back with its braces changed, dropped, spaced 
   }
   assert.equal(restorer.restoreText(`x${body}`), `x${body}`, 'inside a longer word')
   assert.equal(restorer.restoreText('⟦DSH_REDACTED:API_KEY_aaaaaaaa⟧'), '⟦DSH_REDACTED:API_KEY_aaaaaaaa⟧', 'unknown placeholder')
-  assert.equal(restorer.restoreText('⟦DSH_REDACTED:API_KEY_aaaabbbb⟧'), '⟦DSH_REDACTED:API_KEY_aaaabbbb⟧', 'the old braces are text a template writes')
+  assert.equal(restorer.restoreText('{{API_KEY_aaaabbbb}}'), '{{API_KEY_aaaabbbb}}', 'the old braces are text a template writes')
 })
 
 test('the stream restorer restores data lines split across chunks and passes the rest through', () => {
@@ -203,12 +212,19 @@ test('the stream restorer restores data lines split across chunks and passes the
 
 test('the value table drops its oldest half when full', () => {
   const table = new ValueTable(100)
-  for (let i = 0; i < 100; i++) table.put(`k${i}`, 'K', `v${i}`)
-  table.put('k-new', 'K', 'new')
+  // real placeholders: as it rebuilds, the table reads each key's kind again (ADR-0037)
+  const key = (i: number): string => format('K', hash8(i))
+  for (let i = 0; i < 100; i++) table.put(key(i), 'K', `v${i}`)
+  table.put(key(100), 'K', 'new')
   assert.equal(table.size, 51)
-  assert.equal(table.get('k0'), undefined)
-  assert.equal(table.get('k99'), 'v99')
-  assert.equal(table.get('k-new'), 'new')
+  assert.equal(table.get(key(0)), undefined)
+  assert.equal(table.get(key(99)), 'v99')
+  assert.equal(table.get(key(100)), 'new')
+  // and after the rebuild they still read, by their kind
+  for (const i of [51, 99, 100]) {
+    assert.equal(bodies(key(i)).length, 1, key(i))
+    assert.equal(bodies(key(i))[0]?.kind, 'K', key(i))
+  }
 })
 
 test('a placeholder split across two SSE deltas is put back whole, at every split point', () => {

@@ -133,3 +133,29 @@ test('a value masked under the old braces is not put back: it is history text no
   const old = `{{API_KEY_${p.slice(p.lastIndexOf('_') + 1, -1)}}}`
   assert.equal(restorer.restoreText(old), old)
 })
+
+test('a placeholder still reads after the table rebuilds a key’s kind (review of PR #3)', () => {
+  const HASHES = ['aaaa' + 'aaaa', 'bbbb' + 'bbbb', 'cccc' + 'cccc', 'dddd' + 'dddd', 'eeee' + 'eeee']
+  const table = new ValueTable(2)
+  for (const h of HASHES) table.put(format('API_KEY', h), 'API_KEY', `v-${h}`)
+  // the rebuild read each key's kind: a scan after that must still find one
+  const last = format('API_KEY', HASHES[4] as string)
+  assert.equal(table.get(last), `v-${HASHES[4]}`)
+  assert.equal(bodies(last).length, 1)
+  assert.equal(new Restorer(table).restoreText(`key ${last}`), `key v-${HASHES[4]}`)
+  // reading one body leaves no place for the next scan to start
+  assert.equal(kindOf(last), 'API_KEY')
+  assert.equal(bodies(last).length, 1)
+})
+
+test('a nested JSON text with escaped brackets is put back too (review of PR #3)', () => {
+  const { masker, restorer } = setup()
+  const p = masker.placeholder('API_KEY', OPENAI)
+  // a tool call's arguments are JSON inside JSON: there a provider may write the
+  // brackets as \u27e6/\u27e7, and what the restorer reads has one layer decoded
+  const esc = JSON.parse('"\\u27e6"') + p.slice(1, -1) + JSON.parse('"\\u27e7"')
+  const args = `{"cmd":"curl -H ${esc} x"}`
+  const out = restorer.restoreText(args, true)
+  assert.ok(out.includes(OPENAI), out)
+  assert.deepEqual(JSON.parse(out), { cmd: `curl -H ${OPENAI} x` })
+})
