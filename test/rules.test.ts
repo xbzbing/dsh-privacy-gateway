@@ -329,11 +329,11 @@ test('a named field masks a long letters-only passphrase or a long number (ADR-0
   assert.deepEqual(masked(`the passphrase is ${passphrase}`), [])
 })
 
-// A header-name constant in a field whose name keeps a secret word in the middle
+// A header-name constant in a field whose name ends in a container word
 // (issue #4). Built from pieces, like the rest: it is a name, not a credential.
 const HEADER_NAME = ['x', 'dsh', 'auth', 'gateway'].join('-') + '-' + 'slgnamevle'
 
-test('a slug under a name that does not end in a secret word is a name, not a value (issue #4)', () => {
+test('a slug under a container field name is a name, not a value (issue #4)', () => {
   for (const s of [
     `export const GATEWAY_CREDENTIAL_HEADER = '${HEADER_NAME}'`,
     `{"GATEWAY_CREDENTIAL_HEADER": "${HEADER_NAME}"}`,
@@ -341,9 +341,11 @@ test('a slug under a name that does not end in a secret word is a name, not a va
   ]) {
     assert.deepEqual(masked(s), [], s)
   }
-  // the name ends in a secret word: the value goes, slug or not (docs/adr/0036)
-  assert.deepEqual(masked(`DB_PASSWORD=${HEADER_NAME}`), [HEADER_NAME])
-  assert.deepEqual(masked(`credential = ${HEADER_NAME}`), [HEADER_NAME])
+  // any other name keeps masking, closed container words apart (docs/adr/0038):
+  // a name ending in a secret word, a version suffix, a glued name, a hash
+  for (const name of ['DB_PASSWORD', 'credential', 'SECRET_V2', 'TOKEN2', 'token_v2', 'api_key_2', 'env.SECRET_V2', 'clientsecret', 'DB_PASSWORD_HASH', 'credential_phrase']) {
+    assert.deepEqual(masked(`${name}=${HEADER_NAME}`), [HEADER_NAME], name)
+  }
   // a digit or a capital makes it a value again under any name
   const withDigit = ['z', 'qvt', 'mqej', 'jqyqngd'].join('-') + '-' + '2c6x7q8m'
   assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${withDigit}'`), [withDigit])

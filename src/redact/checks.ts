@@ -133,7 +133,7 @@ export function secretValue(v: string): boolean {
  * counts as a slug too (docs/adr/0038).
  */
 export function slugValue(v: string): boolean {
-  if (!/^[a-z][a-z._-]*$/.test(v)) return false
+  if (!/^[a-z][a-z_-]*$/.test(v)) return false
   const parts = v.split(/[-_]/)
   return parts.length >= 2 && parts.every((w) => w.length > 0 && w.length < 16)
 }
@@ -353,6 +353,18 @@ export function fieldAt(s: string, a: number, b: number): boolean {
 }
 
 /**
+ * The words a field's name may end in for its value to be a name rather than
+ * a secret: a container the secret goes in or is called by (issue #4). A
+ * closed list, the way file names (ADR-0026) and algorithm names (ADR-0033)
+ * are kept out: any other last word keeps masking, so a version suffix
+ * (`SECRET_V2`), a glued name (`clientsecret`) or a hash (`DB_PASSWORD_HASH`)
+ * never lets a value go by accident (docs/adr/0038).
+ */
+const CONTAINER_WORDS = new Set(
+  'header headers id ids uuid guid file files path paths name names url urls uri uris label labels prefix suffix'.split(' '),
+)
+
+/**
  * Where a value of a field already named as a secret starts: `fieldAt`'s
  * places, plus a long run of digits. A bare number reads as a line reference
  * elsewhere (`token.go:L643`), but after `password=` it is the password
@@ -360,12 +372,12 @@ export function fieldAt(s: string, a: number, b: number): boolean {
  */
 export function namedAt(s: string, a: number, b: number): boolean {
   if (fieldAt(s, a, b)) {
-    // A name whose last word is not one for a secret names a container, not
-    // the secret itself (GATEWAY_CREDENTIAL_HEADER, issue #4): a value there
-    // shaped like a name is a name too and goes as written (docs/adr/0038).
+    // A field whose name ends in a container word names where the secret goes
+    // (GATEWAY_CREDENTIAL_HEADER, issue #4): a value there shaped like a name
+    // is a name too and goes as written (docs/adr/0038).
     const words = fieldWords(s, a)
     const last = words[words.length - 1]
-    if (last !== undefined && !SECRET_WORDS.has(last) && slugValue(s.slice(a, b))) return false
+    if (last !== undefined && CONTAINER_WORDS.has(last) && slugValue(s.slice(a, b))) return false
     return true
   }
   return /^\d{10,}$/.test(s.slice(a, b)) && !fileField(s, a)
