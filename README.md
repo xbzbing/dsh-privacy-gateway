@@ -4,9 +4,14 @@
 
 ![模型只看见 ⟦DSH_REDACTED:…⟧：密钥、凭据、个人信息发出前换成占位符，回复里的占位符可换回原值（默认不换），一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
 
-在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符；入站默认让回流里的占位符原样进会话日志，明文不进日志，打开 `restoreLog` 才换回真值。对 adapter、provider 无感；agent 在默认关闭时拿到的是占位符，打开 `restoreLog` 后与以前一样拿到真值。一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
+在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符；入站默认让回流里的占位符原样进会话日志，回复里的真值不进日志，打开 `restoreLog` 才换回真值。对 adapter、provider 无感；agent 在默认关闭时拿到的是占位符，打开 `restoreLog` 后与以前一样拿到真值。一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
 如果你在用**中转站**或者在处理**敏感信息**、**线上数据**，请务必注意保护信息安全。
+
+**[能力边界](#能力边界)**：
+
+- 这是一个轻量级实现，只对请求体与回复里的文本做脱敏。对话附件里的文件（Word、Excel、PPT 这类文档）、图片、压缩包等都不解析、不脱敏，原样发出。
+- 如果模型被诱导写出把数据外发的脚本，插件不拦：`restoreLog` 打开时 `toolGuard`（默认 `off`）也只覆盖「还原值 + 非本机 host」这一种外带，裸域名、先写文件再推送这些都拦不住。
 
 ## 安装
 
@@ -26,7 +31,7 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/rele
 
 - **脱敏范围**：密钥、token、密码、私钥、cookie、邮箱、手机号、身份证、银行卡、自定义敏感词，各有开关。
 - **动作可选**：按 kind 选 `mask` / `warn` / `block`，密钥可换成同形的假 key（`shape`）。
-- **日志不写真值**：默认不还原，回复里的占位符原样进会话日志，明文不进日志；打开 `restoreLog` 才把真值写回，agent 同时拿到真值。
+- **回复不写回真值**：默认不还原，回复里的占位符原样进会话日志，回复里的真值不进日志；打开 `restoreLog` 才把真值写回，agent 同时拿到真值。
 - **记录与统计**：按天落盘的脱敏记录、统计卡、会话「隐私保护」标签页；记录里只有占位符，没有真值。
 - **`/privacy` 命令**：查状态、临时开关、`test` 预览一段文本会怎样发出。
 - **配置热更新**：日常项在插件页上改，下一次调用即生效；脱敏出错时请求不发出。
@@ -91,6 +96,48 @@ someone@gmail.com                                                    → EMAIL
 - 加密算法的名字不算值：`SCRAM-SHA-512`、`PBKDF2WithHmacSHA256` 这类名字写在规范里、人人可读，遮住什么都不保护，原样发出（[ADR-0033](docs/adr/0033-algorithm-names.md)）。
 - 键名和值一样脱敏：`{"metadata": {"sk-…": …}}` 里的键名也换成占位符，`restoreLog` 打开时回复里再换回来；协议自身的键（`model`、`role`、`type`、`name`、`id` 等）、工具定义和工具调用的参数名不动（[ADR-0029](docs/adr/0029-mask-json-keys.md)）。
 
+## 能力边界
+
+网关只在一个位置动手：**模型请求出站的那一刻**。它不判断语义、不改宿主行为、不改已经落盘的内容。下面是它覆盖的与不覆盖的。
+
+### 能做的
+
+| 通道 | 现在 |
+| --- | --- |
+| 模型请求体 | 走全局 `fetch()` 的 POST JSON 请求（数组 `messages`、数组或字符串 `input`、`contents`、字符串 `prompt`）：命中规则的值换成占位符，压缩的先解压（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)、[ADR-0025](docs/adr/0025-compression-and-upgrades.md)） |
+| 模型回复 | 同一条连接的响应：SSE 流与整段 JSON，跨分片、压缩、`\u27e6` 转义都能还原；`restoreLog` 打开时才写回日志 |
+| 覆盖的 provider | 所有走 `fetch()` 的 adapter，包括插件提供的；`excludeHosts` / `excludeProviders` 可以放行 |
+| 出错时 | 脱敏出错、认不出的 `content-encoding`、模型调用上的 `upgrade` / `CONNECT` 一律不发（[ADR-0005](docs/adr/0005-fail-closed.md)） |
+| 旁路 | 记录、统计、Remote 返回值只有元信息，没有真值（[ADR-0008](docs/adr/0008-masking-records.md)） |
+
+### 做不到的
+
+按最容易被误以为做了的顺序排：
+
+| 场景 | 现在 | 后果 |
+| --- | --- | --- |
+| 你自己发的话 | 发送时就落盘，早于网关 | **会话日志里是你输入的原文**；只有出站那一刻才换成占位符（[ADR-0003](docs/adr/0003-restore-before-session-log.md)） |
+| 工具结果 | 工具返回后落盘 | **会话日志里是工具输出的原文**；下一次出站才脱敏 |
+| 图片、文件、base64 附件 | 没有规则认它，原样发出 | 截图、扫描件、附件内容会到模型服务；`multipart`、表单、非 JSON body 更是一律原样发出，也不留记录 |
+| `node:http` 直连、worker 线程、独立进程 | 不经过网关 | 这些路径上的请求没有占位符，也没有记录（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)） |
+| 请求头、URL、方法 | 只改 body，以及随之变化的长度与编码头 | `Authorization` 这类头里是 provider 自己的凭据，改了会认证失败；query 参数同样不动 |
+| 别的出站通道 | 不管 | 别的插件自己发消息、写文件、连自己的服务，都不经过它；走 `fetch()` 但不是模型请求的，原样放行 |
+| 已经落盘的历史 | 不改 | 升级前写进日志的内容保持原样 |
+
+### 认得出来的形态有限
+
+- 规则没命中的密钥不脱敏：自定义格式的令牌、加密或编码后的密文、拆成多段的片段。
+- 故意不脱敏的：短于 8 个字符的值、占位写法（`sk-…xxxx`、`changeme`）、算法名（`SCRAM-SHA-512`）、像文件名的值（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)、[ADR-0033](docs/adr/0033-algorithm-names.md)、[ADR-0026](docs/adr/0026-file-name-values.md)）。
+- 没有语义判断：只有规则和词表。客户名、项目代号、内部术语要自己加进 `words`；漏检和误伤都可能存在。
+- 图片不做 OCR，二进制内容原样发出。
+
+### 不负责的事
+
+- 不拦截工具拿到真值之后的动作（`restoreLog` 打开时）：模型被诱导把占位符写进 `curl` 之类的命令，工具执行时用的就是真值；插件只记账，`toolGuard` 可选告警或拦那一次调用（[ADR-0014](docs/adr/0014-tool-guard.md)、[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。
+- 不跨进程共享值表：每个进程自己的值表，重启清空；重启后规则命不中、只靠记忆兜住的值第一次出站按原文发出（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。
+- 不做合规认证、不做出口审计：记录只能说明「发生过替换」，不能说明「没有遗漏」。
+- 不做静态数据保护：它保护的是发往模型的那一份，不是磁盘上的会话日志、备份或导出的文件。
+
 ## 界面
 
 | 插件配置 | 会话「隐私保护」 |
@@ -154,11 +201,8 @@ someone@gmail.com                                                    → EMAIL
 ## 须知
 
 - 从 0.1.x 升级上来：默认不再还原，agent 拿到的是占位符。需要旧行为（agent 与日志都拿到真值）时，在配置页打开 `restoreLog`（「会话日志写入真值」）。
-- 会话日志默认是占位符：`restoreLog` 关闭（默认）时，回复里的占位符原样进日志，明文不进日志，agent 拿到的也是占位符；打开后还原发生在日志落盘之前，日志与 agent 都是真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
-- 覆盖面只有走全局 `fetch()` 的流量；`node:http` 直连、worker 线程、独立进程不经过网关（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。只改写识别得出的 JSON 模型请求（数组 `messages`、数组或字符串 `input`、`contents`、字符串 `prompt`）；multipart、表单、非 JSON body 原样发出，也不留记录（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)）。
-- 压缩的请求先解压再脱敏；`restoreLog` 打开时压缩的回复也先解码再还原，关闭时压缩的回复原样穿过网关、由适配器按 `content-encoding` 自己解压（用 `undici.request` 直连的 adapter 要自己解压，`fetch` 会自动解）。请求里认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的插件自己的连接，如 dsh-im-infoflow 的入站）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
-- 值表只在内存里（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）。重启后，规则命不中、只靠记忆兜住的值第一次出站会按原文发出。
-- `restoreLog` 打开时，还原发生在回复里，包括工具调用参数：模型被诱导把占位符写进 `curl` 之类的命令时，工具执行时用的是真值。插件只记账（统计卡与 `/privacy status` 里的「工具参数」计数），不拦截（[ADR-0009](docs/adr/0009-value-table-and-restore-exfiltration.md)）；关闭时回复里没有真值，这条路径不存在。
+- 会话日志默认是占位符：`restoreLog` 关闭（默认）时，回复里的占位符原样进日志，回复里的真值不进日志，agent 拿到的也是占位符；打开后还原发生在日志落盘之前，日志与 agent 都是真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
+- 压缩的请求先解压再脱敏；`restoreLog` 打开时压缩的回复也先解码再还原，关闭时压缩的回复原样穿过网关、由适配器按 `content-encoding` 自己解压（用 `undici.request` 直连的 adapter 要自己解压，`fetch` 会自动解）。请求里认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的组件自己的连接）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
 - 脱敏出错时请求不会发出，报错 `dsh-privacy-gateway: masking failed, request not sent`（[ADR-0005](docs/adr/0005-fail-closed.md)）。止血办法是 `/privacy off`，或在插件页停用本插件、把配置 `enabled` 设为 `false`。
 
 ## 开发
