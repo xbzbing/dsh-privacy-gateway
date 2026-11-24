@@ -20,7 +20,7 @@ If you are using an **API relay**, or you are working with **sensitive informati
 dsh plugin --profile web add dsh-privacy-gateway@latest
 
 # The same version as a GitHub Release asset (prereleases get one too)
-dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.3.0/dsh-privacy-gateway-0.3.0.tgz
+dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/releases/download/v0.3.1/dsh-privacy-gateway-0.3.1.tgz
 ```
 
 A prerelease version has a `-` in it and goes to GitHub Releases only, never to npm. The repository does not commit `lib/`, so `dsh plugin add github:…` cannot load the plugin ([ADR-0006](docs/adr/0006-distribution-and-build-artifacts.md)).

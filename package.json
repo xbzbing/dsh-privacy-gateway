@@ -1,6 +1,6 @@
 {
   "name": "dsh-privacy-gateway",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Process-wide HTTP redaction gateway for DSH: masks secrets in outgoing model requests; replies keep placeholders in the session log by default, and restoreLog writes the real values back before it is written, for every provider.",
   "icon": "./assets/icon.svg",
