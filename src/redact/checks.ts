@@ -125,6 +125,20 @@ export function secretValue(v: string): boolean {
 }
 
 /**
+ * A value shaped like a name rather than a key: all lower case, starting with
+ * a letter, joined by - or _ into segments none long enough to be a run of
+ * random characters (x-dsh-auth-gateway-…, a header's name, issue #4). A key
+ * keeps a digit, a capital or one long run of characters, so it is not let
+ * go. `notASlug` is the looser test the `sk-` rule needs, where a short word
+ * counts as a slug too (docs/adr/0038).
+ */
+export function slugValue(v: string): boolean {
+  if (!/^[a-z][a-z._-]*$/.test(v)) return false
+  const parts = v.split(/[-_]/)
+  return parts.length >= 2 && parts.every((w) => w.length > 0 && w.length < 16)
+}
+
+/**
  * A value of a field already named as a secret (`DB_PASSWORD=…`, `api_key: …`):
  * the name has done the proving, so a long passphrase of letters only and a
  * long number count too (ADR-0036). `secretValue` stays the test for a value
@@ -345,7 +359,15 @@ export function fieldAt(s: string, a: number, b: number): boolean {
  * (ADR-0036).
  */
 export function namedAt(s: string, a: number, b: number): boolean {
-  if (fieldAt(s, a, b)) return true
+  if (fieldAt(s, a, b)) {
+    // A name whose last word is not one for a secret names a container, not
+    // the secret itself (GATEWAY_CREDENTIAL_HEADER, issue #4): a value there
+    // shaped like a name is a name too and goes as written (docs/adr/0038).
+    const words = fieldWords(s, a)
+    const last = words[words.length - 1]
+    if (last !== undefined && !SECRET_WORDS.has(last) && slugValue(s.slice(a, b))) return false
+    return true
+  }
   return /^\d{10,}$/.test(s.slice(a, b)) && !fileField(s, a)
 }
 

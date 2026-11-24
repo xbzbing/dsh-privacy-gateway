@@ -328,3 +328,27 @@ test('a named field masks a long letters-only passphrase or a long number (ADR-0
   // a long word found in free text is still no secret
   assert.deepEqual(masked(`the passphrase is ${passphrase}`), [])
 })
+
+// A header-name constant in a field whose name keeps a secret word in the middle
+// (issue #4). Built from pieces, like the rest: it is a name, not a credential.
+const HEADER_NAME = ['x', 'dsh', 'auth', 'gateway'].join('-') + '-' + 'slgnamevle'
+
+test('a slug under a name that does not end in a secret word is a name, not a value (issue #4)', () => {
+  for (const s of [
+    `export const GATEWAY_CREDENTIAL_HEADER = '${HEADER_NAME}'`,
+    `{"GATEWAY_CREDENTIAL_HEADER": "${HEADER_NAME}"}`,
+    `credentials_header: ${HEADER_NAME}`,
+  ]) {
+    assert.deepEqual(masked(s), [], s)
+  }
+  // the name ends in a secret word: the value goes, slug or not (docs/adr/0036)
+  assert.deepEqual(masked(`DB_PASSWORD=${HEADER_NAME}`), [HEADER_NAME])
+  assert.deepEqual(masked(`credential = ${HEADER_NAME}`), [HEADER_NAME])
+  // a digit or a capital makes it a value again under any name
+  const withDigit = ['z', 'qvt', 'mqej', 'jqyqngd'].join('-') + '-' + '2c6x7q8m'
+  assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${withDigit}'`), [withDigit])
+  const withCapital = ['Zqvt', 'Mqej', 'Jqyqngd'].join('-') + '-' + 'Slnmvlve'
+  assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${withCapital}'`), [withCapital])
+  // the CJK names are the secret word themselves, so they keep masking (docs/adr/0036)
+  assert.deepEqual(masked(`密钥为 ${HEADER_NAME}`), [HEADER_NAME])
+})
