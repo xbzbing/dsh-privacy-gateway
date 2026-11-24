@@ -13,6 +13,7 @@ issue #4：`export const GATEWAY_CREDENTIAL_HEADER = 'x-dsh-auth-gateway-…'` �
 
 - 具名赋值的 `namedAt` 在 `fieldAt` 通过后加一道豁免：字段名的**末位词在容器词表里**（`CONTAINER_WORDS`：`header`、`id`、`uuid`、`guid`、`file`、`path`、`name`、`url`、`uri`、`label`、`prefix`、`suffix` 及其复数，闭合词表）且**值是 slug**（`slugValue`：全小写、以字母开头、只按 `-` `_` 分段、每段短于 16 字符）时，不算值，原样发出。
 - 用闭合词表而不是「末位词不是密语词」的反向判定：反向判定会把 `SECRET_V2`、`clientsecret`、`DB_PASSWORD_HASH` 这类名字也当成容器，让其下的值原样发出（PR #5 评审发现的漏遮回归）；闭合词表与文件名（ADR-0026）、算法名（ADR-0033）的既有做法一致。
+- 容器词表导出给用例（`test/rules.test.ts`）守卫：12 个基词及其复数逐条断言「容器字段名 + slug 值」放行，断言集合与测试里写死的清单完全一致，并断言与 `SECRET_WORDS` 不相交。以后往表里加 `hash`、`value`、`phrase` 之类的词会让用例失败，必须连同用例一起改，原样发出的面不会静默扩大。
 - 中文与「为 / 是」路径（`keyAt`）不豁免：那些名字的词本身就是密语词，值永远是密语（ADR-0036 的门槛不变）。
 - `slugValue` 与 `notASlug` 分工：`notASlug` 是 `sk-` 规则的宽测试（单段短词也算 slug），`slugValue` 只认 `-` `_` 分段、无数字无大写的形状，不动 `sk-` 规则。
 

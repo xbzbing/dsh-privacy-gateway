@@ -307,7 +307,11 @@ export function algorithmValue(v: string): boolean {
   return words.length > 0 && words.every((w) => ALGO_WORDS.has(w))
 }
 
-const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'secrets', 'password', 'passwords', 'passwd', 'pwd', 'key', 'keys', 'apikey', 'credential', 'credentials'])
+/**
+ * The words a real secret is named by. Exported so the guard test can keep the
+ * container word list disjoint from it (docs/adr/0038).
+ */
+export const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'secrets', 'password', 'passwords', 'passwd', 'pwd', 'key', 'keys', 'apikey', 'credential', 'credentials'])
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/
 
 function identWords(v: string): string[] {
@@ -358,9 +362,10 @@ export function fieldAt(s: string, a: number, b: number): boolean {
  * closed list, the way file names (ADR-0026) and algorithm names (ADR-0033)
  * are kept out: any other last word keeps masking, so a version suffix
  * (`SECRET_V2`), a glued name (`clientsecret`) or a hash (`DB_PASSWORD_HASH`)
- * never lets a value go by accident (docs/adr/0038).
+ * never lets a value go by accident (docs/adr/0038). Exported so the guard
+ * test pins every word: an addition that is not in the test fails it.
  */
-const CONTAINER_WORDS = new Set(
+export const CONTAINER_WORDS = new Set(
   'header headers id ids uuid uuids guid guids file files path paths name names url urls uri uris label labels prefix prefixes suffix suffixes'.split(' '),
 )
 

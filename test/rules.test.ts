@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 
+import { CONTAINER_WORDS, SECRET_WORDS } from '../src/redact/checks.ts'
 import { MIN_SECRET_CHARS } from '../src/redact/find.ts'
 import { MIN_KNOWN, ValueTable } from '../src/redact/known.ts'
 import { Masker, type MaskOptions } from '../src/redact/mask.ts'
@@ -360,4 +361,36 @@ test('a slug under a container field name is a name, not a value (issue #4)', ()
   assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${withCapital}'`), [withCapital])
   // the CJK names are the secret word themselves, so they keep masking (docs/adr/0036)
   assert.deepEqual(masked(`密钥为 ${HEADER_NAME}`), [HEADER_NAME])
+})
+
+// The closed list written out: 12 base words and their plurals. A word added
+// to CONTAINER_WORDS without a line here fails the exact-list assertion first,
+// so widening the surface that goes as written cannot pass review silently.
+const CONTAINER_ALL = [
+  'header', 'headers',
+  'id', 'ids',
+  'uuid', 'uuids',
+  'guid', 'guids',
+  'file', 'files',
+  'path', 'paths',
+  'name', 'names',
+  'url', 'urls',
+  'uri', 'uris',
+  'label', 'labels',
+  'prefix', 'prefixes',
+  'suffix', 'suffixes',
+]
+
+test('each container word, singular and plural, lets a slug go under its field (issue #4)', () => {
+  assert.deepEqual([...CONTAINER_WORDS].sort(), [...CONTAINER_ALL].sort())
+  for (const w of CONTAINER_ALL) {
+    assert.deepEqual(masked(`credentials_${w}: ${HEADER_NAME}`), [], w)
+  }
+  // the same field template masks when its last word is no container word:
+  // the rows above would pass vacuously if the rule stopped matching it
+  assert.deepEqual(masked(`credentials_phrase: ${HEADER_NAME}`), [HEADER_NAME])
+})
+
+test('the container word list and the secret words never overlap (docs/adr/0038)', () => {
+  assert.deepEqual([...CONTAINER_WORDS].filter((w) => SECRET_WORDS.has(w)), [])
 })
