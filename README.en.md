@@ -129,6 +129,8 @@ In the order a reader is most likely to assume otherwise:
 - A secret no rule matches is not masked: tokens of a custom shape, ciphertext, fragments split across places.
 - Deliberately left alone: values shorter than 8 characters, values typed to stand for a key (`sk-…xxxx`, `changeme`), algorithm names (`SCRAM-SHA-512`), values that look like a file name ([ADR-0031](docs/adr/0031-no-short-or-template-values.md), [ADR-0033](docs/adr/0033-algorithm-names.md), [ADR-0026](docs/adr/0026-file-name-values.md)).
 - There is no semantic judgement: rules and a word list only. Customer names, codenames and internal terms have to go into `words`; misses and false positives are both possible.
+- A source constant whose field name contains a secret word may be judged a value when it is a name: a protocol-shaped slug (lower case, hyphen-joined segments) under a name that does not end in a secret word is no longer mistaken for one ([ADR-0038](docs/adr/0038-container-field-slug-values.md)); put anything else confirmed not to be a secret into `allow`.
+- Masking matches contiguous strings: hex and line-split encodings form no match and pass through by design, so the same file may read differently through a text tool and a hex tool.
 - Images are not OCR'd; binary content goes out as it is.
 
 ### What it is not responsible for

@@ -129,6 +129,8 @@ someone@gmail.com                                                    → EMAIL
 - 规则没命中的密钥不脱敏：自定义格式的令牌、加密或编码后的密文、拆成多段的片段。
 - 故意不脱敏的：短于 8 个字符的值、占位写法（`sk-…xxxx`、`changeme`）、算法名（`SCRAM-SHA-512`）、像文件名的值（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)、[ADR-0033](docs/adr/0033-algorithm-names.md)、[ADR-0026](docs/adr/0026-file-name-values.md)）。
 - 没有语义判断：只有规则和词表。客户名、项目代号、内部术语要自己加进 `words`；漏检和误伤都可能存在。
+- 字段名里带 secret 词的源码常量可能被具名规则当成值脱敏（值其实是名字）：密语词不在末位的字段名下、小写连字符分段的协议型 slug 已不再误判（[ADR-0038](docs/adr/0038-container-field-slug-values.md)），其余的确认后放进 `allow`。
+- 脱敏按连续字符串匹配：hex、分行的编码表示不形成连续匹配，天然旁路——同一份文件经文本工具和 hex 工具读到的内容可能不一致。
 - 图片不做 OCR，二进制内容原样发出。
 
 ### 不负责的事
