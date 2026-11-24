@@ -338,9 +338,16 @@ test('a slug under a container field name is a name, not a value (issue #4)', ()
     `export const GATEWAY_CREDENTIAL_HEADER = '${HEADER_NAME}'`,
     `{"GATEWAY_CREDENTIAL_HEADER": "${HEADER_NAME}"}`,
     `credentials_header: ${HEADER_NAME}`,
+    // a plural container word, and a camelCase name (docs/adr/0038)
+    `credential_headers: ${HEADER_NAME}`,
+    `api_key_prefixes: ${HEADER_NAME}`,
+    `gatewayCredentialHeaders = ${HEADER_NAME}`,
   ]) {
     assert.deepEqual(masked(s), [], s)
   }
+  // a container name does not open a single long run of characters (docs/adr/0036)
+  const longSingle = 'zplxy' + 'qceqfv' + 'chwooclgofhnsj'
+  assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${longSingle}'`), [longSingle])
   // any other name keeps masking, closed container words apart (docs/adr/0038):
   // a name ending in a secret word, a version suffix, a glued name, a hash
   for (const name of ['DB_PASSWORD', 'credential', 'SECRET_V2', 'TOKEN2', 'token_v2', 'api_key_2', 'env.SECRET_V2', 'clientsecret', 'DB_PASSWORD_HASH', 'credential_phrase']) {

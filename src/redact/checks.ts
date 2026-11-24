@@ -361,7 +361,7 @@ export function fieldAt(s: string, a: number, b: number): boolean {
  * never lets a value go by accident (docs/adr/0038).
  */
 const CONTAINER_WORDS = new Set(
-  'header headers id ids uuid guid file files path paths name names url urls uri uris label labels prefix suffix'.split(' '),
+  'header headers id ids uuid uuids guid guids file files path paths name names url urls uri uris label labels prefix prefixes suffix suffixes'.split(' '),
 )
 
 /**
