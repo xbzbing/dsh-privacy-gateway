@@ -328,3 +328,36 @@ test('a named field masks a long letters-only passphrase or a long number (ADR-0
   // a long word found in free text is still no secret
   assert.deepEqual(masked(`the passphrase is ${passphrase}`), [])
 })
+
+// A header-name constant in a field whose name ends in a container word
+// (issue #4). Built from pieces, like the rest: it is a name, not a credential.
+const HEADER_NAME = ['x', 'dsh', 'auth', 'gateway'].join('-') + '-' + 'slgnamevle'
+
+test('a slug under a container field name is a name, not a value (issue #4)', () => {
+  for (const s of [
+    `export const GATEWAY_CREDENTIAL_HEADER = '${HEADER_NAME}'`,
+    `{"GATEWAY_CREDENTIAL_HEADER": "${HEADER_NAME}"}`,
+    `credentials_header: ${HEADER_NAME}`,
+    // a plural container word, and a camelCase name (docs/adr/0038)
+    `credential_headers: ${HEADER_NAME}`,
+    `api_key_prefixes: ${HEADER_NAME}`,
+    `gatewayCredentialHeaders = ${HEADER_NAME}`,
+  ]) {
+    assert.deepEqual(masked(s), [], s)
+  }
+  // a container name does not open a single long run of characters (docs/adr/0036)
+  const longSingle = 'zplxy' + 'qceqfv' + 'chwooclgofhnsj'
+  assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${longSingle}'`), [longSingle])
+  // any other name keeps masking, closed container words apart (docs/adr/0038):
+  // a name ending in a secret word, a version suffix, a glued name, a hash
+  for (const name of ['DB_PASSWORD', 'credential', 'SECRET_V2', 'TOKEN2', 'token_v2', 'api_key_2', 'env.SECRET_V2', 'clientsecret', 'DB_PASSWORD_HASH', 'credential_phrase']) {
+    assert.deepEqual(masked(`${name}=${HEADER_NAME}`), [HEADER_NAME], name)
+  }
+  // a digit or a capital makes it a value again under any name
+  const withDigit = ['z', 'qvt', 'mqej', 'jqyqngd'].join('-') + '-' + '2c6x7q8m'
+  assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${withDigit}'`), [withDigit])
+  const withCapital = ['Zqvt', 'Mqej', 'Jqyqngd'].join('-') + '-' + 'Slnmvlve'
+  assert.deepEqual(masked(`GATEWAY_CREDENTIAL_HEADER = '${withCapital}'`), [withCapital])
+  // the CJK names are the secret word themselves, so they keep masking (docs/adr/0036)
+  assert.deepEqual(masked(`密钥为 ${HEADER_NAME}`), [HEADER_NAME])
+})

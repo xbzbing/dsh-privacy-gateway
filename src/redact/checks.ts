@@ -125,6 +125,20 @@ export function secretValue(v: string): boolean {
 }
 
 /**
+ * A value shaped like a name rather than a key: all lower case, starting with
+ * a letter, joined by - or _ into segments none long enough to be a run of
+ * random characters (x-dsh-auth-gateway-…, a header's name, issue #4). A key
+ * keeps a digit, a capital or one long run of characters, so it is not let
+ * go. `notASlug` is the looser test the `sk-` rule needs, where a short word
+ * counts as a slug too (docs/adr/0038).
+ */
+export function slugValue(v: string): boolean {
+  if (!/^[a-z][a-z_-]*$/.test(v)) return false
+  const parts = v.split(/[-_]/)
+  return parts.length >= 2 && parts.every((w) => w.length > 0 && w.length < 16)
+}
+
+/**
  * A value of a field already named as a secret (`DB_PASSWORD=…`, `api_key: …`):
  * the name has done the proving, so a long passphrase of letters only and a
  * long number count too (ADR-0036). `secretValue` stays the test for a value
@@ -339,13 +353,33 @@ export function fieldAt(s: string, a: number, b: number): boolean {
 }
 
 /**
+ * The words a field's name may end in for its value to be a name rather than
+ * a secret: a container the secret goes in or is called by (issue #4). A
+ * closed list, the way file names (ADR-0026) and algorithm names (ADR-0033)
+ * are kept out: any other last word keeps masking, so a version suffix
+ * (`SECRET_V2`), a glued name (`clientsecret`) or a hash (`DB_PASSWORD_HASH`)
+ * never lets a value go by accident (docs/adr/0038).
+ */
+const CONTAINER_WORDS = new Set(
+  'header headers id ids uuid uuids guid guids file files path paths name names url urls uri uris label labels prefix prefixes suffix suffixes'.split(' '),
+)
+
+/**
  * Where a value of a field already named as a secret starts: `fieldAt`'s
  * places, plus a long run of digits. A bare number reads as a line reference
  * elsewhere (`token.go:L643`), but after `password=` it is the password
  * (ADR-0036).
  */
 export function namedAt(s: string, a: number, b: number): boolean {
-  if (fieldAt(s, a, b)) return true
+  if (fieldAt(s, a, b)) {
+    // A field whose name ends in a container word names where the secret goes
+    // (GATEWAY_CREDENTIAL_HEADER, issue #4): a value there shaped like a name
+    // is a name too and goes as written (docs/adr/0038).
+    const words = fieldWords(s, a)
+    const last = words[words.length - 1]
+    if (last !== undefined && CONTAINER_WORDS.has(last) && slugValue(s.slice(a, b))) return false
+    return true
+  }
   return /^\d{10,}$/.test(s.slice(a, b)) && !fileField(s, a)
 }
 
