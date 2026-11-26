@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +13,7 @@ import { Config, defaults, liveBool, liveStrings, resolveConfig } from '../src/c
 import { MaskingDispatcher } from '../src/dispatcher.ts'
 import { apply, name } from '../src/index.ts'
 import { stateDir } from '../src/paths.ts'
+import type { OverviewSource } from '../src/remote.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { name: string }
@@ -222,6 +225,148 @@ test('the card\'s reset clears the day files and the kept bodies', async () => {
     assert.equal(existsSync(day), false)
   } finally {
     for (const d of disposers.splice(0)) d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+for (const action of ['warn', 'block'] as const) test(`the Remote session display reuses the ${action} request's safe audit snapshot`, async () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), `dpg-session-${action}-`))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const key = 'sk-proj-' + 'auditBoundarySENTINEL0123456789abcd'
+  const rawSession = `prefix${key}suffix`
+  const disposers: Array<() => unknown> = []
+  const logs: unknown[][] = []
+  const logger = { info: (...args: unknown[]) => logs.push(args), warn: (...args: unknown[]) => logs.push(args), error: (...args: unknown[]) => logs.push(args) }
+  let source: OverviewSource | undefined
+  let sent = false
+  const server = createServer((req, res) => {
+    sent = true
+    req.resume()
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"choices":[{"message":{"content":"ok"}}]}')
+    })
+  })
+  try {
+    apply({ logger, effect: (fn) => disposers.push(fn()), plugin: (_plugin, value) => { source = value as OverviewSource } }, { record: false, actions: { API_KEY: action } })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(source)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
+    const request = fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-opencode-session': rawSession }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `key ${key}` }] }) })
+    if (action === 'block') await assert.rejects(request, /fetch failed/)
+    else await (await request).text()
+    const overview = source.overview(50, rawSession)
+    assert.equal(sent, action === 'warn')
+    assert.equal(overview.values, 0, 'warned and blocked values never enter the restoration table')
+    assert.equal(overview.recent.length, 1)
+    assert.equal(overview.stats.today.requests, 1)
+    assert.ok(overview.recent[0]?.session && !overview.recent[0].session.includes(key), 'the recorded request snapshot is already safe')
+    assert.equal(overview.session, overview.recent[0]?.session)
+    assert.ok(!JSON.stringify(overview).includes(key))
+    assert.ok(!JSON.stringify(logs).includes(key))
+  } finally {
+    for (const dispose of disposers.reverse()) await dispose()
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('/privacy test applies each volatile change before its first preview without recording any input', async () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-preview-live-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const key = 'sk-proj-' + 'livePreviewSENTINEL0123456789abcd'
+  const word = 'private-' + 'launch-project-codename'
+  const allowed = 'private-' + 'previously-allowed-codename'
+  const email = 'preview-' + 'private@baidu.com'
+  let words: string[] = []
+  let allow = [allowed]
+  let personal = false
+  const config = { record: false, words: { get: () => words }, allow: { get: () => allow }, personal: { get: () => personal } }
+  const disposers: Array<() => unknown> = []
+  const logs: unknown[][] = []
+  const logger = { info: (...args: unknown[]) => logs.push(args), warn: (...args: unknown[]) => logs.push(args), error: (...args: unknown[]) => logs.push(args) }
+  let run: (invocation: { rawInput: string }) => { kind: string; text?: string } = () => ({ kind: 'error' })
+  let source: OverviewSource | undefined
+  let recordInput: boolean | undefined
+  let sent = ''
+  const server = createServer((req, res) => {
+    req.setEncoding('utf8')
+    req.on('data', (chunk: string) => { sent += chunk })
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"choices":[{"message":{"content":"ok"}}]}')
+    })
+  })
+  try {
+    apply({
+      logger,
+      effect: (fn: () => () => void) => disposers.push(fn()),
+      plugin: (_plugin: unknown, value: unknown) => { source = value as OverviewSource },
+      inject: (_deps: string[], callback: (child: unknown) => void) => callback({
+        logger,
+        effect: (fn: () => () => void) => disposers.push(fn()),
+        commands: { register: (definition: { handler: typeof run; recordInput?: boolean }) => {
+          run = definition.handler
+          recordInput = definition.recordInput
+          return () => {}
+        } },
+      }),
+    } as never, config as never)
+    assert.equal(recordInput, false)
+    assert.ok(!run({ rawInput: `test ${key}` }).text?.includes(key))
+    words = [word]
+    const added = run({ rawInput: `test ${word} ${key}` })
+    assert.equal(added.kind, 'success')
+    assert.ok(added.text?.includes('DSH_REDACTED:TERM_'))
+    assert.ok(!added.text?.includes(word))
+    assert.ok(!added.text?.includes(key))
+    personal = true
+    const personalAdded = run({ rawInput: `test ${email} ${key}` })
+    assert.ok(personalAdded.text?.includes('DSH_REDACTED:EMAIL_'))
+    assert.ok(!personalAdded.text?.includes(email))
+    words = [word, allowed]
+    run({ rawInput: `test ${key}` })
+    allow = []
+    const removed = run({ rawInput: `test ${allowed} ${key}` })
+    assert.ok(!removed.text?.includes(allowed))
+    assert.ok(!removed.text?.includes(key))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(source)
+    assert.equal(source.overview(50).values, 0, 'previews never enter the value table')
+    assert.equal(source.overview(50).recent.length, 0, 'previews never create records')
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`
+    const sourceSession = `s1-${word}-${key}`
+    const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-opencode-session': sourceSession }, body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: `${word} ${allowed} ${email} ${key}` }] }) })
+    assert.equal(response.status, 200)
+    await response.text()
+    // A raw lookup id remains usable even when audit metadata has to hide a value inside it.
+    const overview = source.overview(50, sourceSession)
+    assert.equal(overview.recent.length, 1)
+    assert.equal(overview.stats.today.requests, 1)
+    assert.ok(overview.session && overview.session !== sourceSession)
+    words = []
+    allow = [word, allowed]
+    personal = false
+    const changed = source.overview(50, sourceSession)
+    assert.equal(changed.recent.length, 1, 'a later rule change does not lose the raw session lookup')
+    assert.equal(changed.stats.today.requests, 1)
+    for (const secret of [word, allowed, email, key]) {
+      assert.ok(!sent.includes(secret))
+      assert.ok(!JSON.stringify(overview).includes(secret))
+      assert.ok(!JSON.stringify(changed).includes(secret))
+      assert.ok(!JSON.stringify(logs).includes(secret))
+    }
+  } finally {
+    for (const dispose of disposers.reverse()) await dispose()
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
     else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
     rmSync(home, { recursive: true, force: true })

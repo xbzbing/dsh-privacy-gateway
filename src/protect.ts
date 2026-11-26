@@ -31,10 +31,17 @@ export function envBlockRanges(s: string): Range[] {
 /** The request's own tool definitions: Chat Completions, Responses and Anthropic `tools`, and the legacy `functions`. */
 export const TOOL_ROOTS: readonly string[] = ['tools', 'functions']
 
-/** Whether `path` (dotted, from the request's root) is inside one of `roots`. */
-export function under(path: string, roots: readonly string[]): boolean {
+/** Whether a path is inside a root; structured paths preserve literal key boundaries. */
+export function under(path: string, roots: readonly string[]): boolean
+export function under(path: readonly string[], roots: readonly (string | readonly string[])[]): boolean
+export function under(path: string | readonly string[], roots: readonly (string | readonly string[])[]): boolean {
   for (const r of roots) {
-    if (r === '' || path === r || path.startsWith(`${r}.`)) return true
+    if (typeof path === 'string') {
+      if (typeof r === 'string' && (r === '' || path === r || path.startsWith(`${r}.`))) return true
+    } else {
+      const segments = typeof r === 'string' ? [r] : r
+      if (segments.length <= path.length && segments.every((s, i) => s === path[i])) return true
+    }
   }
   return false
 }

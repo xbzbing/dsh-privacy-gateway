@@ -38,14 +38,15 @@ const MAX_HOSTS = 8
 
 /** Keys a tool call's arguments sit under, in any vendor's reply. */
 const TOOL_PATH = /(?:^|\.)(?:tool_calls|function_call|functionCall|tool_use|args|arguments|input|partial_json)(?:\.|$)/
+const TOOL_KEYS = new Set(['tool_calls', 'function_call', 'functionCall', 'tool_use', 'args', 'arguments', 'input', 'partial_json'])
 
 /**
  * Whether the string at `path` (its key `key`, in an event of `type`) is part
  * of a tool call's arguments. A Responses custom tool's input streams as the
  * delta of response.custom_tool_call_input.delta: free text, not JSON.
  */
-export function inToolCall(path: string, key: string, type: string): boolean {
-  return asJSON(key, type) || TOOL_PATH.test(path) || (key === 'delta' && type.includes('custom_tool_call_input'))
+export function inToolCall(path: string, key: string, type: string, segments?: readonly string[]): boolean {
+  return asJSON(key, type) || (segments ? segments.some((part) => TOOL_KEYS.has(part)) : TOOL_PATH.test(path)) || (key === 'delta' && type.includes('custom_tool_call_input'))
 }
 
 /** A restorer for one `text/event-stream` body. */
@@ -295,23 +296,27 @@ export class Restorer {
   restoreJSON(text: string, tally?: Tally): string {
     if (this.#table.size === 0 || (this.#table.shapes === 0 && !text.includes('_'))) return text
     const type = typeOf(text)
-    const leave = this.#guard !== 'off' && this.#judge(toolText(text, type) ?? '', tally) && this.#guard === 'block'
+    const args = toolText(text, type)
+    const leave = this.#guard !== 'off' && this.#judge(args, tally) && this.#guard === 'block'
     const out = walkJSON(
       text,
-      (path, _shown, key, s) => {
+      (path, _shown, key, s, segments) => {
         if (SIGNATURE_KEYS.has(key)) return s
-        const tool = inToolCall(path, key, type)
+        const tool = inToolCall(path, key, type, segments)
         return this.restoreText(s, asJSON(key, type), tally, tool, leave && tool)
       },
       // a key the masker turned into a placeholder (maskKeys) comes back as the agent wrote it
-      (path, _shown, name) => {
-        if (KEPT.has(name)) return undefined
-        const tool = inToolCall(path === '' ? name : `${path}.${name}`, name, type)
-        const restored = this.restoreText(name, false, tally, tool, leave && tool)
-        return restored === name ? undefined : restored
-      },
+      (path, _shown, name, segments) => this.#restoreKey(path, name, segments, type, tally, leave),
     )
     return out ?? this.restoreText(text, false, tally)
+  }
+
+  /** Keys share the value restoration policy in whole replies and stream events. */
+  #restoreKey(path: string, name: string, segments: readonly string[], type: string, tally: Tally | undefined, leave: boolean): string | undefined {
+    if (KEPT.has(name)) return undefined
+    const tool = inToolCall(path, name, type, [...segments, name])
+    const restored = this.restoreText(name, false, tally, tool, leave && tool)
+    return restored === name ? undefined : restored
   }
 
   /**
@@ -319,16 +324,29 @@ export class Restorer {
    * them) would have a value put back and name a host off this machine;
    * counted in `tally` where they would.
    */
-  #judge(text: string, tally?: Tally): boolean {
-    if (text === '') return false
+  #judge(args: ToolText | undefined, tally?: Tally): boolean {
+    if (!args) return false
+    const fields = [...args.values.values()]
+    const text = [...fields.map((field) => field.eligible), ...args.eligibleKeys].join('\n')
     const scratch = newTally()
     const restored = this.restoreText(text, false, scratch, true)
     if (scratch.restored.size === 0) return false
-    const hosts = externalHosts(restored)
+    // Opaque parameter fields still name destinations, even though their own placeholders are never restored.
+    const raw = [...fields.map((field) => field.raw), ...args.keys].join('\n')
+    const hosts = externalHosts(raw + '\n' + restored)
     if (hosts.length === 0) return false
     if (tally) {
       tally.exfil++
-      for (const h of hosts) if (tally.exfilHosts.size < MAX_HOSTS) tally.exfilHosts.add(h)
+      // Hosts are lowercased by the URL scanner; restored values must not cross into the audit tally.
+      const forms = [...scratch.restored.keys()].flatMap((placeholder) => {
+        const value = this.#table.get(placeholder)
+        return value === undefined ? [] : [[value.toLowerCase(), placeholder] as const]
+      }).sort((a, b) => b[0].length - a[0].length)
+      for (const host of hosts) {
+        let safe = host
+        for (const [value, placeholder] of forms) if (value !== '') safe = safe.split(value).join(placeholder)
+        if (tally.exfilHosts.size < MAX_HOSTS) tally.exfilHosts.add(safe)
+      }
     }
     return true
   }
@@ -355,6 +373,8 @@ export class Restorer {
     const decoder = new TextDecoder('utf-8')
     let buf = ''
     let pending: Held | undefined
+    const tailIdentities = new Map<string, string>()
+    let tailContext = ''
     const release = (): string => {
       const out = pending?.full ?? ''
       pending = undefined
@@ -367,14 +387,20 @@ export class Restorer {
       const e = splitEvent(ev)
       if (!e) return release() + loose(ev, leave)
       const ctx = `${e.name}|${eventCtx(e.data)}`
+      let doc: unknown
+      try { doc = JSON.parse(e.data) } catch { return release() + loose(ev, leave) }
+      if (tailContext !== ctx) {
+        tailIdentities.clear()
+        tailContext = ctx
+      }
       let out = ''
       let carry: Map<string, string> | undefined
       if (pending) {
         const p = pending
         pending = undefined
         let present = 0
-        walkJSON(e.data, (path, _shown, _k, s) => {
-          if (p.tails.has(path)) present++
+        walkJSON(e.data, (_path, _shown, _k, s, segments) => {
+          if (p.tails.has(fragmentLocation(doc, segments, tailIdentities))) present++
           return s
         })
         if (p.ctx === ctx && present === p.tails.size) {
@@ -385,10 +411,15 @@ export class Restorer {
       const type = typeOf(e.data) || e.name
       let tails: Map<string, string> | undefined
       let cuts: Map<string, string> | undefined
-      const restored = walkJSON(e.data, (path, _shown, key, s) => {
-        const c = carry?.get(path)
+      const fullValues = new Map<string, string>()
+      const restored = walkJSON(e.data, (path, _shown, key, s, segments) => {
+        const location = fragmentLocation(doc, segments, tailIdentities)
+        const c = carry?.get(location)
         if (c !== undefined) s = c + s
-        if (sealedText(key, s)) return s
+        if (sealedText(key, s)) {
+          fullValues.set(location, s)
+          return s
+        }
         const escaped = asJSON(key, type)
         // the tail is looked for before anything is put back, so a placeholder whose last brace is still to come keeps it
         if (!KEPT.has(key) && key !== 'obfuscation') {
@@ -396,19 +427,28 @@ export class Restorer {
           if (n > 0) {
             tails ??= new Map()
             cuts ??= new Map()
-            tails.set(path, s.slice(s.length - n))
-            cuts.set(path, this.restoreText(s.slice(0, s.length - n), escaped, undefined, false, leave && inToolCall(path, key, type)))
+            tails.set(location, s.slice(s.length - n))
+            cuts.set(location, this.restoreText(s.slice(0, s.length - n), escaped, undefined, false, leave && inToolCall(path, key, type, segments)))
           }
         }
         // counted here only: whichever of full and cut goes out, the places are these
-        const tool = inToolCall(path, key, type)
-        return this.restoreText(s, escaped, tally, tool, leave && tool)
+        const tool = inToolCall(path, key, type, segments)
+        const value = this.restoreText(s, escaped, tally, tool, leave && tool)
+        fullValues.set(location, value)
+        return value
+      }, (path, _shown, name, segments) => {
+        fragmentLocation(doc, [...segments, name], tailIdentities)
+        return this.#restoreKey(path, name, segments, type, tally, leave)
       })
       const full = restored === null ? undefined : e.render(restored)
       if (restored === null || full === undefined) return out + loose(ev, leave)
       if (!tails || !cuts) return out + full
       const cutMap = cuts
-      const cutData = walkJSON(restored, (path, _shown, _k, s) => cutMap.get(path) ?? s) ?? restored
+      // Cut the original event: restored keys no longer name the original paths whose tails were held.
+      const cutData = walkJSON(e.data, (_path, _shown, _k, s, segments) => {
+        const location = fragmentLocation(doc, segments, tailIdentities)
+        return cutMap.get(location) ?? fullValues.get(location) ?? s
+      }, (path, _shown, name, segments) => this.#restoreKey(path, name, segments, type, undefined, leave)) ?? restored
       const cut = e.render(cutData)
       if (cut === undefined) return out + full
       pending = { ctx, tails, full, cut }
@@ -416,22 +456,27 @@ export class Restorer {
     }
     // the tool arguments of the events in a row that have some: judged as one when the row ends (toolGuard)
     const guard = this.#guard
-    let run: { text: string; held: string[] } | undefined
+    let run: { args: ToolText; held: string[]; identities: Map<string, string> } | undefined
     const closeRun = (): string => {
       if (!run) return ''
       const r = run
       run = undefined
-      const leave = this.#judge(r.text, tally) && guard === 'block'
+      const leave = this.#judge(r.args, tally) && guard === 'block'
       let out = ''
       for (const ev of r.held) out += event(ev, leave)
       return out
     }
     const route = (ev: string): string => {
       if (guard === 'off' || this.#table.size === 0) return closeRun() + event(ev)
-      const t = eventToolText(ev)
+      run ??= { args: { values: new Map(), keys: [], eligibleKeys: [] }, held: [], identities: new Map() }
+      const t = eventToolText(ev, run.identities)
       if (t === undefined) return closeRun() + event(ev)
-      run ??= { text: '', held: [] }
-      run.text += t
+      for (const [location, field] of t.values) {
+        const prior = run.args.values.get(location)
+        run.args.values.set(location, { raw: (prior?.raw ?? '') + field.raw, eligible: (prior?.eligible ?? '') + field.eligible })
+      }
+      run.args.keys.push(...t.keys)
+      run.args.eligibleKeys.push(...t.eligibleKeys)
       // block holds the row until it ends, so nothing in it goes out restored before it is judged
       if (guard === 'block') {
         run.held.push(ev)
@@ -481,24 +526,81 @@ export class Restorer {
   }
 }
 
-/**
- * The tool call arguments' strings of a JSON body, one after another, `sep`
- * between them; undefined where it has none. A stream's pieces go on with no
- * separator, so a URL split between two events reads whole.
- */
-function toolText(data: string, type: string, sep = '\n'): string | undefined {
-  let t: string | undefined
-  walkJSON(data, (path, _shown, key, s) => {
-    if (s !== '' && !SIGNATURE_KEYS.has(key) && inToolCall(path, key, type)) t = (t ?? '') + s + sep
+/** Raw destinations and eligible restoration text share a lossless field identity, not a flattened string. */
+interface ToolText {
+  values: Map<string, { raw: string; eligible: string }>
+  keys: string[]
+  eligibleKeys: string[]
+}
+
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Protocol indexes identify reordered tool arrays; ids and names persist when subsequent deltas omit them. */
+function fragmentLocation(doc: unknown, segments: readonly string[], identities: Map<string, string>): string {
+  const root = object(doc) ? doc : {}
+  const context = ['type', 'item_id', 'index', 'output_index', 'content_index'].map((key) => [key, root[key] ?? null])
+  const path: Array<string | readonly unknown[]> = []
+  let node = doc
+  for (const segment of segments) {
+    if (Array.isArray(node)) {
+      const row: unknown = node[Number(segment)]
+      const index = object(row) && Number.isSafeInteger(row.index) ? row.index : undefined
+      path.push(index !== undefined ? ['index', index] : segment)
+      node = row
+    } else {
+      path.push(segment)
+      node = object(node) ? node[segment] : undefined
+    }
+    if (!object(node)) continue
+    const scope = JSON.stringify([context, path])
+    const name = (segment === 'functionCall' || segment === 'function_call') && typeof node.name === 'string' ? node.name : undefined
+    const id = !Number.isSafeInteger(node.index) && typeof node.id === 'string' ? node.id : name
+    if (id !== undefined) identities.set(scope, id)
+    const known = identities.get(scope)
+    if (known !== undefined) path.push(['identity', known])
+  }
+  return JSON.stringify([context, path])
+}
+
+/** Empty known argument fragments keep their run open; only the same field and tool identity may concatenate. */
+function toolText(data: string, type: string, identities = new Map<string, string>(), streamed = false): ToolText | undefined {
+  let doc: unknown
+  try { doc = JSON.parse(data) } catch { return undefined }
+  let t: ToolText | undefined
+  const ensure = (): ToolText => (t ??= { values: new Map(), keys: [], eligibleKeys: [] })
+  walkJSON(data, (path, _shown, key, s, segments) => {
+    if (inToolCall(path, key, type, segments)) {
+      const args = ensure()
+      const location = fragmentLocation(doc, segments, identities)
+      const prior = args.values.get(location)
+      // Two physical leaves in one event are never delta fragments, even if a vendor repeats a protocol index.
+      const raw = prior ? prior.raw + '\n' + s : s
+      const eligible = (streamed ? sealedText(key, s) : SIGNATURE_KEYS.has(key)) ? '' : s
+      args.values.set(location, { raw, eligible: prior ? prior.eligible + '\n' + eligible : eligible })
+    }
     return s
+  }, (path, _shown, name, segments) => {
+    // A parameter container is present even when it has no leaves; emptiness cannot impersonate a finish event.
+    if (inToolCall(path, name, type, [...segments, name])) {
+      ensure()
+      fragmentLocation(doc, [...segments, name], identities)
+    }
+    if (inToolCall(path, '', type, segments)) {
+      const args = ensure()
+      args.keys.push(name)
+      if (!KEPT.has(name)) args.eligibleKeys.push(name)
+    }
+    return undefined
   })
   return t
 }
 
-/** The tool call arguments' strings of one event; undefined where it has none. */
-function eventToolText(ev: string): string | undefined {
+/** The complete parameter surface of one event; undefined where it has none. */
+function eventToolText(ev: string, identities: Map<string, string>): ToolText | undefined {
   const e = splitEvent(ev)
   if (!e) return undefined
-  return toolText(e.data, typeOf(e.data) || e.name, '')
+  return toolText(e.data, typeOf(e.data) || e.name, identities, true)
 }
 

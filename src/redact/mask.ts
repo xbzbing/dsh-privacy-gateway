@@ -69,18 +69,18 @@ export function clip(s: string, n: number, end: boolean): string {
   return end ? `…${chars.slice(-n).join('')}` : `${chars.slice(0, n).join('')}…`
 }
 
-/** The role and block type of the objects along `path` in `doc`, the innermost of each. */
-export function placeOf(doc: unknown, path: string): Place {
+/** The role and block type along a structural path, the innermost of each. */
+export function placeOf(doc: unknown, path: string, segments: readonly string[] = path.split('.')): Place {
   const place: Place = { path }
   let node: unknown = doc
-  for (const seg of path.split('.')) {
+  for (const seg of segments) {
     if (typeof node !== 'object' || node === null) break
     if (!Array.isArray(node)) {
       const o = node as Record<string, unknown>
       if (typeof o.role === 'string') place.role = o.role
       if (typeof o.type === 'string') place.type = o.type
     }
-    node = (node as Record<string, unknown>)[seg]
+    node = Object.hasOwn(node, seg) ? (node as Record<string, unknown>)[seg] : undefined
   }
   return place
 }
@@ -94,6 +94,8 @@ export interface MaskResult {
   model?: string
   /** Each warned value as written in its string, with its placeholder: for the vendor view only, never kept (docs/adr/0016). */
   warned?: Array<[written: string, placeholder: string]>
+  /** Request-only audit projection inputs, never persisted or returned by preview. */
+  trueforms?: Array<[value: string, placeholder: string]>
 }
 
 /** A key holding an identifier the vendor matches against another (tool_call_id against its call's id). */
@@ -110,6 +112,12 @@ const DEF_KEYS = [
   'response_format', 'text', 'reasoning', 'include', 'output_format', 'output_config',
   'generationConfig', 'generation_config', 'stream_options', 'client_metadata',
 ]
+
+/** Root fields that identify a model-request candidate, before duplicate members are checked. */
+const MODEL_ROOT_KEYS = ['messages', 'input', 'contents', 'prompt']
+
+/** Known protocol container names are structural only at the request's root. */
+const ROOT_KEYS = new Set([...MODEL_ROOT_KEYS, ...DEF_KEYS, 'system', 'instructions', 'systemInstruction'])
 
 /** Responses input items that carry tools. */
 const DEF_ITEMS = new Set(['additional_tools', 'tool_search_output'])
@@ -134,38 +142,35 @@ export function isModelRequest(doc: unknown): doc is Record<string, unknown> {
   )
 }
 
-function definitions(doc: Record<string, unknown>): string[] {
-  const defs: string[] = []
+function definitions(doc: Record<string, unknown>): Array<readonly string[]> {
+  const defs: Array<readonly string[]> = []
   for (const k of DEF_KEYS) {
     if (!(k in doc)) continue
     // Responses' text is the output's settings; a prompt's text is a string
     if (k === 'text' && !isObject(doc[k])) continue
-    defs.push(k)
+    defs.push([k])
   }
   const items = doc.input
   if (Array.isArray(items)) {
     items.forEach((it, i) => {
-      if (isObject(it) && typeof it.type === 'string' && DEF_ITEMS.has(it.type)) defs.push(`input.${i}.tools`)
+      if (isObject(it) && typeof it.type === 'string' && DEF_ITEMS.has(it.type)) defs.push(['input', String(i), 'tools'])
     })
   }
   return defs
 }
 
 /** Paths of tool calls' arguments as objects (Anthropic tool_use input, Gemini functionCall args): their keys are the tool's. */
-function argPaths(doc: unknown, body: string): string[] {
-  if (!body.includes('"tool_use"') && !body.includes('"server_tool_use"') && !body.includes('"functionCall"') && !body.includes('"function_call"')) {
-    return []
-  }
-  const args: string[] = []
-  const visit = (path: string, key: string, v: unknown): void => {
+function argPaths(doc: unknown): Array<readonly string[]> {
+  const args: Array<readonly string[]> = []
+  const visit = (path: readonly string[], key: string, v: unknown): void => {
     if (Array.isArray(v)) {
-      v.forEach((c, i) => visit(path === '' ? String(i) : `${path}.${i}`, key, c))
+      v.forEach((c, i) => visit([...path, String(i)], key, c))
       return
     }
     if (!isObject(v)) return
     const t = typeof v.type === 'string' ? v.type : ''
     for (const [k, c] of Object.entries(v)) {
-      const p = path === '' ? k : `${path}.${k}`
+      const p = [...path, k]
       if ((k === 'input' && (t === 'tool_use' || t === 'server_tool_use')) || (k === 'args' && (key === 'functionCall' || key === 'function_call'))) {
         args.push(p)
         continue
@@ -173,11 +178,11 @@ function argPaths(doc: unknown, body: string): string[] {
       visit(p, k, c)
     }
   }
-  visit('', '', doc)
+  visit([], '', doc)
   return args
 }
 
-function keepIn(path: string, key: string, s: string, args: string[], defs: string[]): boolean {
+function keepIn(path: readonly string[], key: string, s: string, args: Array<readonly string[]>, defs: Array<readonly string[]>): boolean {
   if (s.startsWith('data:')) return true
   if (under(path, args)) return false
   if (under(path, defs)) return key !== 'description'
@@ -201,13 +206,14 @@ function isSignedURL(s: string): boolean {
  * message, a tool result or a tool's arguments may quote one by accident, and
  * protecting it would send the rest of that string in the clear (ADR-0004).
  */
-function hostEnvPath(path: string, doc: Record<string, unknown>): boolean {
-  if (path === 'instructions' || path.startsWith('instructions.')) return true
-  if (path === 'system' || path.startsWith('system.') || path === 'systemInstruction' || path.startsWith('systemInstruction.')) return true
-  const m = /^(messages|input)\.(\d+)\./.exec(path)
-  if (!m) return false
-  const list = doc[m[1] as string]
-  const item = Array.isArray(list) ? list[Number(m[2])] : undefined
+function hostEnvPath(path: readonly string[], doc: Record<string, unknown>): boolean {
+  const root = path[0]
+  if (root === 'instructions' || root === 'system' || root === 'systemInstruction') return true
+  if ((root !== 'messages' && root !== 'input') || path.length < 3) return false
+  const index = path[1]
+  if (index === undefined || !/^(0|[1-9]\d*)$/.test(index)) return false
+  const list = doc[root]
+  const item = Array.isArray(list) ? list[Number(index)] : undefined
   if (!isObject(item)) return false
   return item.role === 'system' || item.role === 'developer'
 }
@@ -218,9 +224,11 @@ function hostEnvPath(path: string, doc: Record<string, unknown>): boolean {
  * the vendor to read as structure, and a tool call's argument names, which are
  * the tool's own schema (docs/adr/0029).
  */
-function keepKey(path: string, name: string, args: string[], defs: string[]): boolean {
+function keepKey(path: readonly string[], name: string, args: Array<readonly string[]>, defs: Array<readonly string[]>): boolean {
   if (KEPT.has(name) || isID(name)) return true
-  return under(path, args) || under(path, defs)
+  if (path.length === 0 && ROOT_KEYS.has(name)) return true
+  const child = [...path, name]
+  return under(child, args) || under(child, defs)
 }
 
 function overlaps(f: { start: number; end: number }, r: Range): boolean {
@@ -244,6 +252,9 @@ interface Pass {
   preview: boolean
   hits: Hit[]
   warned?: Array<[string, string]>
+  trueforms?: Array<[string, string]>
+  /** A key's audit text, independent of its wire text. */
+  shown?: string
   /** The string being masked is at this place; set while maskJSON keeps context. */
   at?: Place
 }
@@ -322,10 +333,11 @@ export class Masker {
    * was. A key that reads as no value comes back as it is, with no hits
    * (docs/adr/0029).
    */
-  maskKey(raw: string, route: string): MaskResult {
-    const pass: Pass = { route, preview: false, hits: [] }
+  maskKey(raw: string, route: string, trueforms?: Array<[string, string]>): MaskResult & { shown: string } {
+    const pass: Pass = { route, preview: false, hits: [], warned: [], shown: raw, ...(trueforms ? { trueforms } : {}) }
+    if (this.#options.context) pass.at = { path: '' }
     const { text, n } = this.#mask(raw, false, [], pass)
-    return { text, n, hits: pass.hits }
+    return { text, n, hits: pass.hits, shown: pass.shown ?? text, ...(pass.warned?.length ? { warned: pass.warned } : {}) }
   }
 
   /**
@@ -401,9 +413,31 @@ export class Masker {
     let safeLen = 0
     let safeLast = 0
     const marks: Array<{ hit: Hit; at: number; len: number }> = []
+    // Protected bytes belong only to the wire copy, never to audit context.
+    const protectedRanges = context ? [...keep].sort((a, b) => a.start - b.start) : []
+    let protectedAt = 0
+    const auditSlice = (start: number, end: number): string => {
+      if (protectedRanges.length === 0) return raw.slice(start, end)
+      const pieces: string[] = []
+      let from = start
+      while (protectedAt < protectedRanges.length) {
+        const r = protectedRanges[protectedAt] as Range
+        if (r.end <= from) {
+          protectedAt++
+          continue
+        }
+        if (r.start >= end) break
+        pieces.push(raw.slice(from, Math.max(from, r.start)), '…')
+        from = Math.min(end, Math.max(from, r.end))
+        if (r.end > end) break
+        protectedAt++
+      }
+      pieces.push(raw.slice(from, end))
+      return pieces.join('')
+    }
     const mark = (hit: Hit, start: number, end: number, shown: string): void => {
-      if (!context) return
-      const piece = raw.slice(safeLast, start)
+      if (!context && pass.shown === undefined) return
+      const piece = auditSlice(safeLast, start)
       safe.push(piece, shown)
       marks.push({ hit, at: safeLen + piece.length, len: shown.length })
       safeLen += piece.length + shown.length
@@ -421,6 +455,7 @@ export class Masker {
         const tag = tagOf(this.#key, f.kind, v)
         const hit: Hit = { placeholder: tag, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len, action }
         pass.hits.push(hit)
+        pass.trueforms?.push([v, tag])
         mark(hit, f.start, f.end, tag)
         if (action === 'warn' && pass.warned) pass.warned.push([written, tag])
         // a preview never shows a value: it has the placeholder there still
@@ -433,18 +468,26 @@ export class Masker {
       if (action === undefined) {
         const hit: Hit = { placeholder: p.id, kind: f.kind, by: f.by, head: f.head ?? h.head, ...(h.tail ? { tail: h.tail } : {}), len: h.len }
         pass.hits.push(hit)
+        pass.trueforms?.push([v, p.id])
+        if (o.shape) {
+          const [name, key] = splitName(v)
+          if (name !== '') pass.trueforms?.push([key, p.id])
+        }
         mark(hit, f.start, f.end, text)
       }
       last = f.end
       n++
     }
-    if (context && marks.length > 0) {
-      safe.push(raw.slice(safeLast))
+    if (marks.length > 0) {
+      safe.push(auditSlice(safeLast, raw.length))
       const all = safe.join('')
-      for (const m of marks) {
-        m.hit.before = clip(all.slice(Math.max(0, m.at - CONTEXT_CHARS * 4), m.at), CONTEXT_CHARS, true)
-        m.hit.after = clip(all.slice(m.at + m.len, m.at + m.len + CONTEXT_CHARS * 4), CONTEXT_CHARS, false)
-        if (pass.at) m.hit.at = pass.at
+      if (pass.shown !== undefined) pass.shown = all
+      if (context) {
+        for (const m of marks) {
+          m.hit.before = clip(all.slice(Math.max(0, m.at - CONTEXT_CHARS * 4), m.at), CONTEXT_CHARS, true)
+          m.hit.after = clip(all.slice(m.at + m.len, m.at + m.len + CONTEXT_CHARS * 4), CONTEXT_CHARS, false)
+          if (pass.at) m.hit.at = pass.at
+        }
       }
     }
     if (n === 0) return none
@@ -466,40 +509,44 @@ export class Masker {
     } catch {
       return null
     }
+    // Last-wins JSON.parse metadata cannot safely describe duplicate literal
+    // members, even when a later member hides the earlier model-request shape.
+    if (isObject(doc) && MODEL_ROOT_KEYS.some((key) => Object.hasOwn(doc, key))) {
+      if (walkJSON(body, (_path, _shown, _key, value) => value, undefined, { rejectDuplicateKeys: true }) === null) {
+        throw new Error('request body is JSON but could not be walked')
+      }
+    }
     if (!isModelRequest(doc)) return null
-    const args = argPaths(doc, body)
+    const args = argPaths(doc)
     const defs = definitions(doc)
     const { protectTools, protectEnvBlock } = this.#options
-    const pass: Pass = { route, preview: false, hits: [], warned: [] }
+    const pass: Pass = { route, preview: false, hits: [], warned: [], trueforms: [] }
     let n = 0
     /**
      * A key that reads as a value is masked as one, and recorded as one; the
      * ones the request's own structure needs go as they are, so masking a key
      * never leaves the vendor a body it cannot read (docs/adr/0029).
      */
-    const keyFn = (path: string, shown: string, name: string): string | undefined => {
+    const keyFn = (path: string, shown: string, name: string, segments: readonly string[]): { text?: string; shown?: string } | undefined => {
       if (!this.#options.maskKeys) return undefined
-      if (protectTools && under(path, TOOL_ROOTS)) return undefined
-      if (keepKey(path, name, args, defs)) return undefined
-      const r = this.maskKey(name, route)
+      if (protectTools && under([...segments, name], TOOL_ROOTS)) return undefined
+      if (keepKey(segments, name, args, defs)) return undefined
+      const r = this.maskKey(name, route, pass.trueforms)
       if (r.hits.length > 0) {
-        // the key's own place is where its value is, named the way the body had
-        // it: a key sent as written (warn, block) goes by its placeholder there,
-        // so the record never names it (docs/adr/0024, 0029)
-        const shownKey = r.text === name ? (r.hits[0]?.placeholder ?? name) : r.text
-        const at: Place = { ...placeOf(doc, path), path: shown === '' ? shownKey : `${shown}.${shownKey}` }
+        const at: Place = { ...placeOf(doc, path, [...segments, name]), path: shown === '' ? r.shown : `${shown}.${r.shown}` }
         for (const h of r.hits) pass.hits.push({ ...h, at })
+        pass.warned?.push(...r.warned ?? [])
       }
-      // a key masked is a place masked, as the record counts them
-      if (r.text !== name) n += r.n
-      return r.text === name ? undefined : r.text
+      // A key masked is a place masked, as the record counts them.
+      n += r.n
+      return r.text === name && r.shown === name ? undefined : { text: r.text, shown: r.shown }
     }
     const out = walkJSON(
       body,
-      (path, shown, key, s) => {
-        if (protectTools && under(path, TOOL_ROOTS)) return s
-        if (this.#options.context) pass.at = shown === path ? placeOf(doc, path) : { ...placeOf(doc, path), path: shown }
-        if (URL_KEYS.has(key) && !under(path, args) && !under(path, defs)) {
+      (_path, shown, key, s, segments) => {
+        if (protectTools && under(segments, TOOL_ROOTS)) return s
+        if (this.#options.context) pass.at = placeOf(doc, shown, segments)
+        if (URL_KEYS.has(key) && !under(segments, args) && !under(segments, defs)) {
           // a value already masked must not go back in the clear inside a link (ADR-0004);
           // a signed URL goes whole, and no rule rewrites a link the vendor must fetch
           if (s.startsWith('data:') || isSignedURL(s)) return s
@@ -507,8 +554,8 @@ export class Masker {
           n += r.n
           return r.edits
         }
-        if (keepIn(path, key, s, args, defs)) return s
-        const protect = protectEnvBlock && hostEnvPath(path, doc) ? envBlockRanges(s) : []
+        if (keepIn(segments, key, s, args, defs)) return s
+        const protect = protectEnvBlock && hostEnvPath(segments, doc) ? envBlockRanges(s) : []
         const r = this.#mask(s, asJSON(key, ''), protect, pass)
         n += r.n
         // spliced into the literal as written, so what is not masked keeps its escapes
@@ -522,6 +569,10 @@ export class Masker {
     const r: MaskResult = { text: out, n, hits: pass.hits }
     if (model !== undefined) r.model = model
     if (pass.warned && pass.warned.length > 0) r.warned = pass.warned
+    if (pass.trueforms?.length) {
+      const unique = new Map<string, string>(pass.trueforms)
+      r.trueforms = [...unique]
+    }
     return r
   }
 }

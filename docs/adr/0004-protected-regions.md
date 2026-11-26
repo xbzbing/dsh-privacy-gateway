@@ -33,7 +33,7 @@ oc2dsh 的免费车道 gate 校验三样东西：payload、连接栈、session i
 
 原实现把 `envBlockRanges` 用在 walk 到的**每个**字符串上，只看内容、不看来源。用户消息、工具结果或工具参数里只要出现 `<env>`（甚至没有 `</env>`），其后的内容就会整段跳过脱敏、原样发给模型服务；`/privacy test` 的预览又用空保护区间，所以自检看不到这条旁路。
 
-保护改为按来源判定：只有 `instructions`、`system`、`systemInstruction`，以及 `messages[i].role` / `input[i].role` 为 `system` / `developer` 的字符串才应用 `<env>` 区间。其余字符串照常脱敏。工具定义仍按 `under(path, TOOL_ROOTS)` 判定，本来就是按来源的。回归覆盖系统提示词、用户消息、`tool_result`、工具参数、无闭合标签和 Gemini 的 `systemInstruction`。
+保护改为按来源判定：只有 `instructions`、`system`、`systemInstruction`，以及 `messages[i].role` / `input[i].role` 为 `system` / `developer` 的字符串才应用 `<env>` 区间。其余字符串照常脱敏。工具定义按无损路径分段判定，本来就是按来源的；点分字符串只用于展示，字面 `tools.note` 不视为 `tools` 子树。工具根键和已知模型协议根键保持原样，metadata 内同名业务键不因此豁免。回归覆盖系统提示词、用户消息、`tool_result`、工具参数、无闭合标签和 Gemini 的 `systemInstruction`。
 
 ### 补充（2026-11-11）：`url` / `image_url` 只做已知值脱敏
 
@@ -42,3 +42,5 @@ oc2dsh 的免费车道 gate 校验三样东西：payload、连接栈、session i
 现在这两个键（工具参数和工具定义里的除外）只做已知值脱敏：查值表，把之前脱敏过的值换成同一个占位符；规则不再改写 URL，以免误伤路径、版本号或签名。带签名的 URL 整段原样发出：query 里出现 `X-Amz-Signature`、`X-Amz-Credential`、`X-Amz-Security-Token`、`X-Goog-Signature`、`X-Goog-Credential`、`Signature`、`sig`、`hmac`、`token`、`access_token` 之一即视为签名 URL。签名 URL 里出现已知值时仍会原样发出，这是有意的取舍：改了就取不到，而且签名本身通常就是那个 URL 的凭据。`data:` URL 不读。
 
 代价：一个从未见过的密钥直接写在 URL 里仍然原样发出，这是原有行为；普通 URL 里重复出现的密钥不再泄露，签名 URL 保持可用。
+
+模型候选 JSON 在脱敏副作用前检查重复成员：同一对象中的两个键解码后相同则 fail-closed，防止 `JSON.parse` 的后者覆盖与逐字节遍历的全部成员在来源判断上不一致；不同对象的同名键不受影响。非模型 JSON 放行和回复 walker 的默认行为保持不变。

@@ -2,10 +2,12 @@ import type { ResolvedConfig } from './config.ts'
 import { valuesOf, whatOf, RecordStore, type MaskRecord } from './records.ts'
 import { ValueTable } from './redact/known.ts'
 import { Masker, type Hit, type MaskResult } from './redact/mask.ts'
-import { jsonEscape } from './redact/json.ts'
+import { jsonEscape, walkJSON } from './redact/json.ts'
+import { decodedView } from './redact/find.ts'
+import { bodies } from './redact/placeholder.ts'
 import { newTally, Restorer, type StreamRestorer, type Tally } from './redact/restore.ts'
 import { FirstSending } from './first.ts'
-import { hideWarned, type ViewStore } from './views.ts'
+import type { ViewStore } from './views.ts'
 
 /** Where a request goes, as the record keeps it. */
 export interface RequestInfo {
@@ -86,7 +88,11 @@ function modelInPath(path: string): string | undefined {
 export class PrivacyEngine implements RedactionEngine {
   readonly #key: Uint8Array
   readonly #table: ValueTable
+  /** Audit-only recent hits include warn/block values without granting masking or restoration authority. */
+  readonly #auditForms = new Map<string, string>()
   #masker: Masker
+  /** Audit has no wire exemptions: allow, actions, protected regions and disabled categories cannot expose known values. */
+  #auditMasker: Masker
   #restorer: Restorer
   /** Keep the bodies for the vendor view (config vendorView); `reconfigure` changes it. */
   #keepViews: boolean
@@ -106,6 +112,7 @@ export class PrivacyEngine implements RedactionEngine {
     this.#key = key
     this.#table = new ValueTable(config.maxValues)
     this.#masker = this.#maskerFor(config)
+    this.#auditMasker = this.#maskerFor(config, true)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#keepViews = config.vendorView
     this.#restoreLog = config.restoreLog
@@ -116,19 +123,19 @@ export class PrivacyEngine implements RedactionEngine {
     this.records = options.records ?? new RecordStore({ keepDays: config.keepDays, keepBytes: config.keepMegabytes * 1024 * 1024, keepRecords: config.keepRecords })
   }
 
-  #maskerFor(config: ResolvedConfig): Masker {
+  #maskerFor(config: ResolvedConfig, audit = false): Masker {
     return new Masker(this.#key, this.#table, {
-      secrets: config.secrets,
-      personal: config.personal,
-      protectEnvBlock: config.protectEnvBlock,
-      protectTools: config.protectTools,
+      secrets: audit || config.secrets,
+      personal: audit || config.personal,
+      protectEnvBlock: !audit && config.protectEnvBlock,
+      protectTools: !audit && config.protectTools,
       words: config.words,
-      allow: config.allow,
-      cookies: { names: config.cookieNames, keep: config.cookieKeep },
-      actions: notMasked(config.actions),
-      shape: config.shape,
+      allow: audit ? [] : config.allow,
+      cookies: { names: config.cookieNames, keep: audit ? [] : config.cookieKeep },
+      actions: audit ? {} : notMasked(config.actions),
+      shape: !audit && config.shape,
       maskKeys: config.maskKeys,
-      context: config.recordContext,
+      context: !audit && config.recordContext,
     })
   }
 
@@ -142,6 +149,7 @@ export class PrivacyEngine implements RedactionEngine {
    */
   reconfigure(config: ResolvedConfig): void {
     this.#masker = this.#maskerFor(config)
+    this.#auditMasker = this.#maskerFor(config, true)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#keepViews = config.vendorView
     this.#restoreLog = config.restoreLog
@@ -159,50 +167,88 @@ export class PrivacyEngine implements RedactionEngine {
     return this.#masker.preview(text)
   }
 
+  /** Safe display and query text for internal audit consumers; a projection failure omits the text. */
+  auditText(text: string): string | undefined {
+    return auditProjection(this.#auditMasker, [...this.#auditForms, ...this.#table.trueforms()])(text)
+  }
+
+  #rememberAudit(forms: ReadonlyArray<readonly [string, string]>): void {
+    for (const [value, placeholder] of forms) {
+      this.#auditForms.delete(value)
+      this.#auditForms.set(value, placeholder)
+      if (this.#auditForms.size > this.#table.maxValues) {
+        const oldest = this.#auditForms.keys().next()
+        if (!oldest.done) this.#auditForms.delete(oldest.value)
+      }
+    }
+  }
+
   maskRequest(body: string, info: RequestInfo): Exchange | null {
     if (!this.active) return null
     const started = performance.now()
     const time = new Date().toISOString()
     // where the session was when the request went: read once, so the record and the values it carries agree
     const step = info.session ? this.#steps?.(info.session) : undefined
-    // read where a record is written: the names are looked up only then, and only for a session there is
-    const base = () => ({
-      time,
-      what: whatOf(info.path),
-      host: info.host,
-      ...(isLoopback(info.host) ? { relay: true as const } : {}),
-      ...(info.session ? { session: info.session, ...this.#names?.(info.session), ...step } : {}),
-    })
+    const masker = this.#masker
+    const auditMasker = this.#auditMasker
+    const known = [...this.#auditForms, ...this.#table.trueforms()]
+    let project: (text: string) => string | undefined
+    // Raw metadata is used only for lookups and routing; every persisted string has its own audit projection.
+    const base = () => {
+      const names = info.session ? this.#names?.(info.session) : undefined
+      const session = info.session ? project(info.session) : undefined
+      const title = names?.title !== undefined ? project(names.title) : undefined
+      const workspace = names?.workspace !== undefined ? project(names.workspace) : undefined
+      return {
+        time,
+        what: whatOf(info.path),
+        host: project(info.host) ?? '',
+        ...(isLoopback(info.host) ? { relay: true as const } : {}),
+        ...(session !== undefined ? { session } : {}),
+        ...(title !== undefined ? { title } : {}),
+        ...(workspace !== undefined ? { workspace } : {}),
+        ...step,
+      }
+    }
     let r: MaskResult | null
     try {
-      r = this.#masker.maskJSON(body, info.host)
+      r = masker.maskJSON(body, info.host)
     } catch (err) {
-      const model = modelInPath(info.path)
-      this.records.add({ ...base(), ...(model ? { model } : {}), tookMs: elapsed(started), n: 0, values: [], restored: 0, unmapped: 0, failed: true })
+      project = auditProjection(auditMasker, known)
+      const rawModel = modelInPath(info.path)
+      const model = rawModel !== undefined ? project(rawModel) : undefined
+      this.records.add({ ...base(), ...(model ? { model } : {}), tookMs: elapsed(started), n: 0, values: [], restored: 0, unmapped: 0, failed: true }, info.session)
       throw err
     }
     if (r === null) return null
     const tookMs = elapsed(started)
-    const model = r.model ?? modelInPath(info.path)
+    this.#rememberAudit(r.trueforms ?? [])
+    project = auditProjection(auditMasker, [...known, ...this.#auditForms, ...this.#table.trueforms(), ...(r.trueforms ?? [])])
+    const rawModel = r.model ?? modelInPath(info.path)
+    const model = rawModel !== undefined ? project(rawModel) : undefined
+    const hits = r.hits.map((hit) => auditHit(hit, project))
     let warned = 0
     const blocks: Hit[] = []
-    for (const h of r.hits) {
+    for (const h of hits) {
       if (h.action === 'warn') warned++
       else if (h.action === 'block') blocks.push(h)
     }
-    const values = valuesOf(r.hits)
+    const values = valuesOf(hits)
     // each value says which request sent it the first time, one step behind what produced it (docs/adr/0030)
     if (info.session !== undefined && step !== undefined) {
       for (const v of values) {
-        const first = this.#first.note(info.session, v.placeholder, step)
-        // only when it went out before: a value this request sends first needs no line of its own
-        if (first.turn !== step.turn || first.step !== step.step) v.first = first
+        const first = this.#first.get(info.session, v.placeholder)
+        // A blocked attempt can refer to an earlier sending, but cannot create one.
+        if (first && (first.turn !== step.turn || first.step !== step.step)) v.first = first
       }
     }
     const record: Omit<MaskRecord, 'key'> = { ...base(), ...(model ? { model } : {}), tookMs, n: r.n, ...(warned > 0 ? { warned } : {}), values, restored: 0, unmapped: 0 }
     if (blocks.length > 0) {
-      this.records.add({ ...record, blocked: true })
+      this.records.add({ ...record, blocked: true }, info.session)
       throw new RequestBlocked(blocks)
+    }
+    if (info.session !== undefined && step !== undefined) {
+      for (const v of values) this.#first.note(info.session, v.placeholder, step)
     }
     const tally: Tally = newTally()
     // the reply goes through the guard this request was sent under, whatever reconfigure does meanwhile
@@ -225,7 +271,7 @@ export class PrivacyEngine implements RedactionEngine {
         for (const n of tally.restored.values()) restored += n
         // a request with nothing masked and nothing put back is not recorded (docs/adr/0008)
         if (record.n === 0 && warned === 0 && restored === 0 && tally.unmapped === 0 && tally.exfil === 0) return
-        const hosts = [...tally.exfilHosts]
+        const hosts = [...tally.exfilHosts].map(project).filter((host): host is string => host !== undefined)
         if (tally.exfil > 0) {
           const left = tally.exfilBlocked > 0 ? `; ${tally.exfilBlocked} placeholders were left in them` : ''
           this.#logger?.warn(`dsh-privacy-gateway: ${tally.exfil} tool calls had a value put back in arguments that name ${hosts.join(', ')}${left}`)
@@ -237,15 +283,106 @@ export class PrivacyEngine implements RedactionEngine {
           unmapped: tally.unmapped,
           ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
           ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
-        })
-        if (this.views && this.#keepViews) this.views.put(rec.key, hideWarned(sentText, warnedForms(r.warned)))
+        }, info.session)
+        if (this.views && this.#keepViews) this.views.put(rec.key, warnedView(sentText, r.warned, [...known, ...(r.trueforms ?? [])].map(([, placeholder]) => placeholder)))
       },
     }
   }
 }
 
+/** Canonical stand-ins are opaque; decoded literal matches map back to the original escaped text. */
+function literalProjector(known: ReadonlyArray<readonly [string, string]>, standIns: readonly string[] = known.map(([, placeholder]) => placeholder)): (text: string) => string {
+  const byForm = new Map<string, string>()
+  for (const [value, placeholder] of warnedForms(known)) {
+    const decoded = decodedView(value).text
+    for (const candidate of [value, decoded, decodedView(decoded).text]) {
+      if (candidate !== '') for (const form of [candidate, candidate.toLowerCase(), candidate.toUpperCase()]) byForm.set(form, placeholder)
+    }
+  }
+  const compile = (values: readonly string[]): RegExp | undefined => values.length > 0 ? new RegExp([...new Set(values)].sort((a, b) => b.length - a.length).map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g') : undefined
+  const pattern = compile([...byForm.keys()])
+  const atoms = compile(standIns.filter((value) => value !== ''))
+  return (text) => {
+    if (!pattern) return text
+    const views: Array<{ text: string; at?: Int32Array }> = [{ text }]
+    for (let n = 0; n < 2; n++) {
+      const prior = views[views.length - 1] as { text: string; at?: Int32Array }
+      if (!prior.text.includes('\\')) break
+      const view = decodedView(prior.text)
+      if (view.text === prior.text) break
+      views.push({ text: view.text, at: prior.at ? Int32Array.from(view.at, (at) => prior.at?.[at] as number) : view.at })
+    }
+    const edits: Array<{ start: number; end: number; text: string }> = []
+    for (const view of views) {
+      const opaque = [...bodies(view.text), ...(atoms ? [...view.text.matchAll(atoms)].map((match) => ({ start: match.index, end: match.index + match[0].length })) : [])]
+      for (const match of view.text.matchAll(pattern)) {
+        const start = match.index
+        const end = start + match[0].length
+        if (opaque.some((atom) => start < atom.end && end > atom.start)) continue
+        edits.push({ start: view.at?.[start] ?? start, end: view.at?.[end] ?? end, text: byForm.get(match[0]) ?? '' })
+      }
+    }
+    edits.sort((a, b) => a.start - b.start || b.end - a.end)
+    const out: string[] = []
+    let last = 0
+    for (const edit of edits) {
+      if (edit.start < last) continue
+      out.push(text.slice(last, edit.start), edit.text)
+      last = edit.end
+    }
+    out.push(text.slice(last))
+    return out.join('')
+  }
+}
+
+/** Warned literals can use noncanonical escapes without exposing decoded values or corrupting protocol atoms. */
+function warnedView(text: string, warned: MaskResult['warned'], standIns: readonly string[]): string {
+  if (!warned?.length) return text
+  try {
+    const project = literalProjector(warned, standIns)
+    const out = walkJSON(text, (_path, _shown, _key, value) => project(value), (_path, _shown, name) => {
+      const safe = project(name)
+      return safe === name ? undefined : safe
+    })
+    return out === null ? '' : project(out)
+  } catch {
+    return ''
+  }
+}
+
+/** Audit replaces known literals independently of wire exemptions, with one matcher per request. */
+function auditProjection(masker: Masker, known: ReadonlyArray<readonly [string, string]>): (text: string) => string | undefined {
+  try {
+    const project = literalProjector(known)
+    return (text) => {
+      try { return masker.preview(project(text)).text } catch { return undefined }
+    }
+  } catch {
+    return () => undefined
+  }
+}
+
+/** Kept role/type and other contextual metadata have no exemption from the audit boundary. */
+function auditHit(hit: Hit, project: (text: string) => string | undefined): Hit {
+  const { head, tail, before, after, at, ...safe } = hit
+  const shownTail = tail !== undefined ? project(tail) : undefined
+  const shownBefore = before !== undefined ? project(before) : undefined
+  const shownAfter = after !== undefined ? project(after) : undefined
+  const path = at ? project(at.path) : undefined
+  const role = at?.role !== undefined ? project(at.role) : undefined
+  const type = at?.type !== undefined ? project(at.type) : undefined
+  return {
+    ...safe,
+    head: project(head) ?? '',
+    ...(shownTail !== undefined ? { tail: shownTail } : {}),
+    ...(shownBefore !== undefined ? { before: shownBefore } : {}),
+    ...(shownAfter !== undefined ? { after: shownAfter } : {}),
+    ...(path !== undefined ? { at: { path, ...(role !== undefined ? { role } : {}), ...(type !== undefined ? { type } : {}) } } : {}),
+  }
+}
+
 /** Each warned value in the forms a body may have it in: as it is, escaped once (a JSON string) and twice (a tool call's arguments). */
-function warnedForms(warned: MaskResult['warned']): Array<[string, string]> {
+function warnedForms(warned: ReadonlyArray<readonly [string, string]> | undefined): Array<[string, string]> {
   const out: Array<[string, string]> = []
   for (const [w, p] of warned ?? []) {
     const once = jsonEscape(w)
