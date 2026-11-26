@@ -1,6 +1,7 @@
 import { cookieSpans, type CookieOptions } from './cookie.ts'
 import { decodedView, hint, inRaw, inStrings, lowerASCII, ruleSpans, SentMemo, wordSpans, type DecodedView } from './find.ts'
 import { noIDs, noNumbers, PERSONAL_KINDS, type Finder, type Found } from './ids.ts'
+import { multilineSpans } from './multiline.ts'
 import { tagOf } from './key.ts'
 import type { KnownSpan, ValueTable } from './known.ts'
 import { bodies, hasPlaceholder } from './placeholder.ts'
@@ -350,6 +351,8 @@ export class Masker {
         if (r.cat === 'secret' ? !o.secrets : !o.personal) continue
         found.push(...ruleSpans(r, forRules, lowerRules))
       }
+      // The grammar scanner needs actual quotes, not the rule view's escape stand-ins.
+      if (o.secrets) found.push(...multilineSpans(s, escaped ? raw : undefined, view))
     }
     if (o.secrets || o.personal) {
       const known = (): KnownSpan[] => this.#table.knownSpans(s, this.#covers)

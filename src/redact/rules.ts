@@ -40,14 +40,14 @@ const p = (r: Omit<Rule, 'cat'>): Rule => ({ ...r, cat: 'personal' })
 /** A field's or a value's quote, if it has one: " or ', or \" in JSON written inside a string. */
 const QUOTE = `(?:\\\\?["'])?`
 /** The characters of a secret's value. */
-const SECRET_CH = `[A-Za-z0-9_\\-./+=~!@#%^&*]`
+export const SECRET_CH = `[A-Za-z0-9_\\-./+=~!@#%^&*]`
 /**
  * The most of them a value after a name is read to: = is one of them, so in
  * token=token=… the value from every name ran to the end of the text.
  */
-const MAX_SECRET = 1024
+export const MAX_SECRET = 1024
 /** What a field holding a secret has in its name: DB_PASSWORD, apiKey, x-api-key, client_secret. */
-const SECRET_NAMES = ['password', 'passwd', 'pwd', 'secret', 'token', 'api[_-]?key', 'access[_-]?key', 'private[_-]?key', 'credential']
+export const SECRET_NAMES = ['password', 'passwd', 'pwd', 'secret', 'token', 'api[_-]?key', 'access[_-]?key', 'private[_-]?key', 'credential']
 
 const CJK_PASSWORD_NAMES = ['密码', '密碼', '口令', 'PIN码', 'PIN碼', 'PIN 码', '安全码', '安全碼', 'パスワード', '暗証番号', '비밀번호', '암호', '비번']
 const CJK_KEY_NAMES = [
