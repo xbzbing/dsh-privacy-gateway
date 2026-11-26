@@ -1,6 +1,6 @@
 {
   "name": "dsh-privacy-gateway",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "Process-wide undici redaction gateway for DSH: masks matched, non-exempt secrets in model request bodies; replies keep placeholders by default, with optional restoration before the session log is written.",
   "icon": "./assets/icon.svg",
