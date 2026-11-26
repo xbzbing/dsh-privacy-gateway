@@ -90,6 +90,7 @@ someone@gmail.com                                                    → EMAIL
 - 私钥整段一起换：`-----BEGIN` 到 `-----END`，或只有开头一段 base64 的截断私钥。
 - 文档域名（`example.com`、`.example`）不算邮箱；手机号要 11 位、身份证要过校验位、银行卡要过 Luhn，否则不换。
 - 字段的值是一个文件名时不是密钥：只由文件名的字符组成、且扩展名是已知的文件类型（模型权重 `safetensors`/`gguf`/`ckpt` 等、压缩包、图片音视频、文档数据），原样发出（[ADR-0026](docs/adr/0026-file-name-values.md)）。
+- 具名 YAML `|` / `>` 块和完整 TOML 三引号字符串中，简单 ASCII 字段名总长不超过 256、每个非空行都是不超过 1024 字符的连续 token 时，按行沿用具名规则脱敏；块头、引号、缩进、换行及后续字段不动，finder 仍为 `rule`。不拼接分段值，不处理多词口令或 TOML 内部转义/续行重组（[ADR-0036](docs/adr/0036-named-field-values.md)）。
 - 同一个值重复出现，占位符相同。
 - 短于 8 个字符的秘密（`abc123`、`666666`、`888888` 这类口令）不算值：照原样发出，也不进记录。它们随时能被爆破，遮住只是给人一种并不存在的保护；值表本来也不把这么短的值当作已知值（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)）。
 - 明显是占位写法的值不算值：8 个以上相同字符连排（`sk-proj-xxxx…`、`AKIA0000…`），或自带「这是占位」说明（`your_api_key`、`example`、`changeme`、`placeholder`、`dummy`、`***`）。随机 key 出现 8 连排的概率低于十亿分之一，`sk_test_…` 这种真测试 key 照旧脱敏（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)）。
@@ -130,7 +131,7 @@ someone@gmail.com                                                    → EMAIL
 - 故意不脱敏的：短于 8 个字符的值、占位写法（`sk-…xxxx`、`changeme`）、算法名（`SCRAM-SHA-512`）、像文件名的值（[ADR-0031](docs/adr/0031-no-short-or-template-values.md)、[ADR-0033](docs/adr/0033-algorithm-names.md)、[ADR-0026](docs/adr/0026-file-name-values.md)）。
 - 没有语义判断：只有规则和词表。客户名、项目代号、内部术语要自己加进 `words`；漏检和误伤都可能存在。
 - 字段名里带 secret 词的源码常量可能被具名规则当成值脱敏（值其实是名字）：末位是容器词（`header`、`id`、`file`、`name`…）的字段名下、小写且以 `-`/`_` 分段每段短于 16 字符的协议型 slug 已不再误判（[ADR-0038](docs/adr/0038-container-field-slug-values.md)），其余的确认后放进 `allow`。
-- 脱敏按连续字符串匹配：hex、分行的编码表示不形成连续匹配，天然旁路——同一份文件经文本工具和 hex 工具读到的内容可能不一致。
+- 脱敏按连续字符串匹配：hex 转储、编码或拆分后才拼出的值不重组；具名 YAML/TOML 块里的连续 token 可逐行匹配，但不等于解码或还原整块的语义值——同一份文件经文本工具和 hex 工具读到的内容仍可能不一致。
 - 图片不做 OCR，二进制内容原样发出。
 
 ### 不负责的事

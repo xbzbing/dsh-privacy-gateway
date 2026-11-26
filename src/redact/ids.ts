@@ -3,7 +3,7 @@
  * `noNumbers`): an id a backend made, and a number that is a piece of a
  * decimal or a bare JSON number.
  */
-import { DIGITS, fieldWords, isWordChar } from './checks.ts'
+import { DIGITS, fieldWords, isWordChar, nameWords } from './checks.ts'
 
 export interface Found {
   start: number
@@ -15,6 +15,8 @@ export interface Found {
   head?: string
   /** A whole bare value of JSON text, whose placeholder goes in quoted. */
   bare?: boolean
+  /** The field naming a multiline scalar, used only by identifier exclusions. */
+  field?: string
 }
 
 export type Finder = 'rule' | 'word' | 'known' | 'cookie'
@@ -51,7 +53,7 @@ function elementField(words: string[]): boolean {
 }
 
 /** cua-driver's element token (s0000002a:14), or its snapshot's part as an element_token field's value. */
-function elementToken(s: string, a: number, b: number): boolean {
+function elementToken(s: string, a: number, b: number, field?: string): boolean {
   if (b - a < 9 || s[a] !== 's' || (a > 0 && isWordChar(s[a - 1]))) return false
   if (!/^[0-9a-f]{8}$/.test(s.slice(a + 1, a + 9))) return false
   let end = a + 9
@@ -62,12 +64,12 @@ function elementToken(s: string, a: number, b: number): boolean {
     end = i
   }
   if ((b !== a + 9 && b !== end) || (end < s.length && isWordChar(s[end]))) return false
-  return end > a + 9 || elementField(fieldWords(s, a))
+  return end > a + 9 || elementField(field === undefined ? fieldWords(s, a) : nameWords(field))
 }
 
 /** The id s[a:b] is in, or is: a UUID, 32 hex digits or more, a short digest, or an element token. */
-function idAround(s: string, a: number, b: number): [number, number] | undefined {
-  if (elementToken(s, a, b)) return [a, b]
+function idAround(s: string, a: number, b: number, field?: string): [number, number] | undefined {
+  if (elementToken(s, a, b, field)) return [a, b]
   let l = a
   let r = b
   while (l > 0 && hexOrHyphen(s[l - 1])) l--
@@ -107,8 +109,7 @@ const NOT_CREDENTIAL = new Set(
 )
 
 /** The field whose value starts at s[at] is named for a credential (refresh_token, DB_PASSWORD), not an id, a cursor or a bare key. */
-function credentialField(s: string, at: number): boolean {
-  const words = fieldWords(s, at)
+function credentialField(s: string, at: number, words = fieldWords(s, at)): boolean {
   if (words.length === 1 && words[0] === 'key' && keyPhrase(s, at)) return true
   if ((words.length < 2 && (words.length === 0 || words[0] === 'key')) || elementField(words)) return false
   if (['id', 'ids', 'uuid', 'guid'].includes(words[words.length - 1] as string)) return false
@@ -124,7 +125,7 @@ function credentialField(s: string, at: number): boolean {
 export function noIDs(s: string, found: Found[]): Found[] {
   return found.filter((f) => {
     if (f.by === 'word' || f.by === 'cookie') return true
-    const id = idAround(s, f.start, f.end)
+    const id = idAround(s, f.start, f.end, f.field)
     if (!id) return true
     const [l, r] = id
     if (f.start > l || f.end < r) return false
@@ -132,9 +133,11 @@ export function noIDs(s: string, found: Found[]): Found[] {
     switch (f.kind) {
       case 'PASSWORD': case 'API_KEY': case 'TOKEN': case 'PRIVATE_KEY':
         return true
-      case 'SECRET':
-        if (digestShaped(s.slice(l, r)) && fieldWords(s, l).length === 0) return true
-        return credentialField(s, l)
+      case 'SECRET': {
+        const words = f.field === undefined ? fieldWords(s, l) : nameWords(f.field)
+        if (digestShaped(s.slice(l, r)) && words.length === 0) return true
+        return credentialField(s, l, words)
+      }
     }
     return false
   })
