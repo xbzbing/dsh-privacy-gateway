@@ -17,6 +17,8 @@
 ### 请求
 
 - 候选请求（POST、body 可读、`content-type` 是 JSON 或没有）带 `content-encoding` 时，按头里的顺序逆序解码：`gzip`、`x-gzip`、`deflate`（zlib 包装，失败再按 raw deflate）、`br`、`zstd`（`node:zlib` 有 zstd 时）。`identity` 忽略。
+- 候选 JSON body 支持 string、Blob、ArrayBuffer、ArrayBuffer view（按 byteOffset/byteLength）、同步及异步 iterable，统一完整读取再脱敏，不因 body 的表示改变保护条件。读取前建立可取消 controller，取消时结束调用并尝试终止 producer，不等待其不可取消的内部 Promise，只通知一次失败，不把已读片段发出；multipart/FormData 的明示豁免不变。FormData 仅在稳定 data descriptors 与原生内部 brand 验证均通过时按 multipart 放行，不能靠 tag、原型伪造、getter 或 Proxy 取得豁免。
+- 提前开始通知只发一次，并交出稳定可变 context 对象；下游真正开始时合并其 object context，保留重定向 history 的引用。controller 的只读 `context` 给出下游原始 context，包括 null/基本类型；提前回调第二参数不再与这些晚到值严格相等。这是在立即可取消和保持旧 literal context identity 无法同时满足时的显式兼容取舍。
 - 解码后照常脱敏。内容有改动时以明文发出：去掉 `content-encoding`，按新 body 重算 `content-length`。没有改动时原样发出压缩字节和原来的头。
 - 未知的编码、或 body 与它声明的编码不符：不发，返回 `PrivacyGatewayError`（`DSH_PRIVACY_GATEWAY_FAIL_CLOSED`）。
 - `content-type` 是 JSON 但 body（解码后）不是 UTF-8：不发。JSON 必须是 UTF-8（RFC 8259），读不了就不能确认里面没有密钥。没有 `content-type` 的非 UTF-8 body 仍当作不是模型请求，原样发出。
@@ -26,6 +28,7 @@
 - 要还原的请求（有 exchange，`restoreLog` 打开且值表里有值）把 `accept-encoding` 设成 `identity`，请求头是哪种形式都一样处理；不还原时（默认）不改这个头，回复可以照常压缩。
 - 还原打开时厂商仍回压缩的回复，`RestoringHandler` 用 `node:zlib` 流式解码（gzip、deflate、br、zstd），还原后以不压缩的形式交给调用方：去掉 `content-encoding` 与 `content-length`。解码出错时中止上游，并向调用方报错。没有解码器的编码照原样交出，打一条 warn。还原关闭时压缩的回复原样交给调用方，网关不解码、不改头，由适配器自己解压。
 - `application/x-ndjson`（以及 jsonl、json-seq）按行流式还原，每行是一个 JSON 文档；不再整段缓存到结束。
+- 解压与还原层使用同一个稳定的 controller 传播背压和取消：pause 后不再交付解码输出或成功结束，resume 后继续；abort 销毁解码链、清理待交付内容且只失败一次。原始 HTTP 已结束但解码/还原仍有输出时，这些约束仍有效；不会通过丢掉暂停期间的数据实现背压。
 
 ### WebSocket 与其他升级
 

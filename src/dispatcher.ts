@@ -1,10 +1,12 @@
-import type { Transform } from 'node:stream'
 import zlib from 'node:zlib'
+import { types as utilTypes } from 'node:util'
 
-import { Dispatcher, Dispatcher1Wrapper, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
+import { Dispatcher, Dispatcher1Wrapper, FormData as UndiciFormData, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
 import { bypassedProvider, currentSession, inModelCall } from './providers.ts'
+import { BufferedRequest, RequestController } from './transport/request.ts'
+import { ReplyDecoder } from './transport/decoder.ts'
 
 type Options = Dispatcher.DispatchOptions
 type Handler = Dispatcher.DispatchHandler
@@ -205,7 +207,7 @@ class UnknownCoding extends Error {
   }
 }
 
-type ZstdZlib = typeof zlib & { zstdDecompressSync?: (b: Buffer) => Buffer; createZstdDecompress?: () => Transform }
+type ZstdZlib = typeof zlib & { zstdDecompressSync?: (b: Buffer) => Buffer }
 
 /** Takes one coding off `body`; throws when the coding is unknown or the body is not in it. */
 function decodeOnce(body: Buffer, coding: string): Buffer {
@@ -239,105 +241,50 @@ export function decodeBody(body: Buffer, codings: readonly string[]): Buffer {
   return out
 }
 
-/** As fetch sets its own decoders up: whatever has arrived comes out, a stream cut short is no error at its end. */
-const STREAM_FLUSH = { flush: zlib.constants.Z_SYNC_FLUSH, finishFlush: zlib.constants.Z_SYNC_FLUSH }
-
-/** A streaming decoder for one coding, or undefined when there is none for it. */
-function decoderFor(coding: string): Transform | undefined {
-  switch (coding) {
-    case 'gzip':
-    case 'x-gzip':
-      return zlib.createGunzip(STREAM_FLUSH)
-    case 'deflate':
-      return zlib.createInflate(STREAM_FLUSH)
-    case 'br':
-      return zlib.createBrotliDecompress({ flush: zlib.constants.BROTLI_OPERATION_FLUSH, finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH })
-    case 'zstd': {
-      const z = zlib as ZstdZlib
-      return typeof z.createZstdDecompress === 'function' ? z.createZstdDecompress() : undefined
-    }
-    default:
-      return undefined
-  }
-}
-
-/**
- * Takes the codings off a reply as it streams. What comes out goes to
- * `onData`, in order; `onEnd` once all of it has, `onError` (once, and then
- * nothing else) when the reply is not in its codings.
- */
-class ReplyDecoder {
-  readonly #first: Transform
-  readonly #all: Transform[]
-  #settled = false
-
-  private constructor(chain: Transform[], onData: (b: Buffer) => void, onEnd: () => void, onError: (err: Error) => void) {
-    this.#all = chain
-    this.#first = chain[0] as Transform
-    for (let i = 0; i + 1 < chain.length; i++) (chain[i] as Transform).pipe(chain[i + 1] as Transform)
-    const last = chain.at(-1) as Transform
-    last.on('data', (b: Buffer) => {
-      if (!this.#settled) onData(b)
-    })
-    last.on('end', () => {
-      if (this.#settled) return
-      this.#settled = true
-      onEnd()
-    })
-    for (const t of chain) {
-      t.on('error', (err: Error) => {
-        if (this.#settled) return
-        this.destroy()
-        onError(err)
-      })
-    }
-  }
-
-  /** A decoder for `codings`, or undefined when one of them has no streaming decoder. */
-  static for(codings: readonly string[], onData: (b: Buffer) => void, onEnd: () => void, onError: (err: Error) => void): ReplyDecoder | undefined {
-    const chain: Transform[] = []
-    for (let i = codings.length - 1; i >= 0; i--) {
-      const d = decoderFor(codings[i] as string)
-      if (d === undefined) return undefined
-      chain.push(d)
-    }
-    return chain.length === 0 ? undefined : new ReplyDecoder(chain, onData, onEnd, onError)
-  }
-
-  write(chunk: Buffer): void {
-    if (!this.#settled) this.#first.write(chunk)
-  }
-
-  end(): void {
-    if (!this.#settled) this.#first.end()
-  }
-
-  destroy(): void {
-    this.#settled = true
-    for (const t of this.#all) t.destroy()
-  }
-}
-
 // ---- request body --------------------------------------------------------------
 
 type Body = Options['body']
 
-function isReadableBody(body: Body): boolean {
-  if (body == null) return false
-  if (typeof body === 'string' || body instanceof Uint8Array) return true
-  return typeof (body as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
+const FORM_METHODS = ['append', 'delete', 'get', 'getAll', 'has', 'set'] as const
+const formHas = [UndiciFormData.prototype.has, globalThis.FormData.prototype.has]
+
+const UNSAFE_BODY_PROPERTY = Symbol('unsafe body property')
+
+/** Accessors and proxies cannot provide a stable classification across the gateway and undici. */
+function bodyDataProperty(body: object, key: PropertyKey): unknown {
+  const seen = new Set<object>()
+  let current: object | null = body
+  while (current !== null) {
+    if (utilTypes.isProxy(current) || seen.has(current)) return UNSAFE_BODY_PROPERTY
+    seen.add(current)
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (descriptor) return Object.hasOwn(descriptor, 'value') ? descriptor.value : UNSAFE_BODY_PROPERTY
+    current = Object.getPrototypeOf(current) as object | null
+  }
+  return undefined
 }
 
-async function readBody(body: Body): Promise<Buffer> {
-  if (typeof body === 'string') return Buffer.from(body, 'utf8')
-  if (body instanceof Uint8Array) return Buffer.from(body.buffer, body.byteOffset, body.byteLength)
-  const chunks: Buffer[] = []
-  for await (const chunk of body as AsyncIterable<unknown>) {
-    if (typeof chunk === 'string') chunks.push(Buffer.from(chunk, 'utf8'))
-    else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))
-    else throw new TypeError(`unsupported request body chunk: ${typeof chunk}`)
+/** Match stable undici multipart data properties, then validate the native internal brand. */
+function isMultipartBody(body: Body): boolean {
+  if (typeof body !== 'object' || body === null || utilTypes.isProxy(body)) return false
+  // Undici treats stream-shaped bodies before considering FormData.
+  const pipe = bodyDataProperty(body, 'pipe')
+  const on = bodyDataProperty(body, 'on')
+  if (pipe === UNSAFE_BODY_PROPERTY || on === UNSAFE_BODY_PROPERTY || (typeof pipe === 'function' && typeof on === 'function')) return false
+  if (bodyDataProperty(body, Symbol.toStringTag) !== 'FormData' || !FORM_METHODS.every((name) => typeof bodyDataProperty(body, name) === 'function')) return false
+  for (const has of formHas) {
+    try {
+      has.call(body as UndiciFormData, '')
+      return true
+    } catch {
+      // A prototype, tag or shadowed method cannot supply the native internal brand.
+    }
   }
-  return Buffer.concat(chunks)
+  return false
+}
+
+function isReadableBody(body: Body): boolean {
+  return body != null && !isMultipartBody(body)
 }
 
 /** Delivers `err` to a handler whose request was never dispatched. */
@@ -384,6 +331,7 @@ function replyMode(type: string): ReplyMode {
 class RestoringHandler implements Handler {
   readonly #next: Handler
   readonly #exchange: Exchange
+  readonly #finish: () => void
   readonly #logger: GatewayLogger | undefined
   #mode: ReplyMode = 'pass'
   #stream: ReturnType<Exchange['streamRestorer']> | undefined
@@ -392,13 +340,30 @@ class RestoringHandler implements Handler {
   #view: Controller | undefined
   #decoder: ReplyDecoder | undefined
   #trailers: IncomingHeaders | undefined
+  readonly #controller: RequestController
+  #inputEnded = false
+  #ending = false
+  #output: Buffer[] = []
+  #flushing = false
   /** The reply ended or failed, as the downstream handler was told: nothing more goes to it. */
   #done = false
 
-  constructor(next: Handler, exchange: Exchange, logger: GatewayLogger | undefined) {
+  constructor(next: Handler, exchange: Exchange, logger: GatewayLogger | undefined, controller: RequestController, finish: () => void) {
     this.#next = next
     this.#exchange = exchange
+    this.#finish = finish
     this.#logger = logger
+    this.#controller = controller
+    controller.onAbort = (err) => this.#fail(err)
+    controller.onResume = () => {
+      this.#flush()
+      this.#decoder?.resume()
+      this.#resumeInput()
+    }
+  }
+
+  #resumeInput(): void {
+    if (!this.#done && !this.#inputEnded && !this.#controller.paused && !this.#decoder?.backpressured) this.#controller.target?.resume()
   }
 
   onRequestStart(controller: Controller, context: unknown): void {
@@ -431,6 +396,8 @@ class RestoringHandler implements Handler {
           (b) => this.#plain(b),
           () => this.#end(),
           () => this.#fail(new PrivacyGatewayError('the reply is not in the content-encoding it names')),
+          () => this.#controller.paused || this.#done || this.#controller.aborted,
+          () => this.#resumeInput(),
         )
         if (this.#decoder === undefined) this.#logger?.warn(`dsh-privacy-gateway: reply is ${codings.join(', ')}-encoded, placeholders in it are not restored`)
       }
@@ -457,8 +424,9 @@ class RestoringHandler implements Handler {
       this.#next.onResponseData?.(this.#view ?? controller, chunk)
       return
     }
-    if (this.#decoder) this.#decoder.write(chunk)
-    else this.#plain(chunk)
+    if (this.#decoder) {
+      if (!this.#decoder.write(chunk)) this.#controller.target?.pause()
+    } else this.#plain(chunk)
   }
 
   /** One piece of the reply as the vendor wrote it, before any coding. */
@@ -473,7 +441,26 @@ class RestoringHandler implements Handler {
   }
 
   #send(out: string): void {
-    if (out !== '' && this.#view) this.#next.onResponseData?.(this.#view, Buffer.from(out, 'utf8'))
+    if (out !== '') this.#output.push(Buffer.from(out, 'utf8'))
+    this.#flush()
+  }
+
+  /** Output and completion remain pending until the consumer resumes; abort discards both. */
+  #flush(): void {
+    if (this.#flushing || this.#done || !this.#view) return
+    this.#flushing = true
+    try {
+      while (!this.#done && !this.#controller.paused && this.#output.length > 0) {
+        this.#next.onResponseData?.(this.#view, this.#output.shift() as Buffer)
+      }
+      if (!this.#done && !this.#controller.paused && this.#ending && this.#output.length === 0) {
+        this.#done = true
+        this.#finish()
+        this.#next.onResponseEnd?.(this.#view, this.#trailers ?? {})
+      }
+    } catch (err) {
+      this.#fail(err instanceof Error ? err : new Error('response callback failed'))
+    } finally { this.#flushing = false }
   }
 
   #pushLines(chunk: Buffer | undefined): string {
@@ -506,13 +493,13 @@ class RestoringHandler implements Handler {
     if (this.#done) return
     this.#view ??= controller
     this.#trailers = trailers
+    this.#inputEnded = true
     if (this.#decoder) this.#decoder.end()
     else this.#end()
   }
 
   #end(): void {
-    if (this.#done) return
-    const view = this.#view as Controller
+    if (this.#done || this.#ending) return
     if (this.#mode === 'stream') {
       this.#send(this.#stream?.end() ?? '')
     } else if (this.#mode === 'lines') {
@@ -527,19 +514,20 @@ class RestoringHandler implements Handler {
         // not UTF-8, or the restorer failed: on as it came, placeholders and all; the error may quote the body, so only its name is logged
         this.#logger?.warn(`dsh-privacy-gateway: a JSON reply could not be restored (${errorName(err)}); it goes on with its placeholders`)
       }
-      if (body.length > 0) this.#next.onResponseData?.(view, body)
+      if (body.length > 0) this.#output.push(body)
     }
-    this.#done = true
-    this.#exchange.finish()
-    this.#next.onResponseEnd?.(view, this.#trailers ?? {})
+    this.#ending = true
+    this.#flush()
   }
 
   /** The decoder failed: the reply is cut off upstream and fails downstream. */
   #fail(err: Error): void {
     if (this.#done) return
     this.#done = true
+    this.#decoder?.destroy()
+    this.#output = []
     this.#chunks = []
-    this.#exchange.finish()
+    this.#finish()
     try {
       this.#view?.abort(err)
     } catch {
@@ -552,8 +540,9 @@ class RestoringHandler implements Handler {
     if (this.#done) return
     this.#done = true
     this.#decoder?.destroy()
+    this.#output = []
     this.#chunks = []
-    this.#exchange.finish()
+    this.#finish()
     this.#next.onResponseError?.(this.#view ?? controller, err)
   }
 }
@@ -653,6 +642,7 @@ export class MaskingDispatcher extends Dispatcher {
   readonly #skip: (() => boolean) | undefined
   readonly #logger: GatewayLogger | undefined
   #layers: Layer[]
+  readonly #fallback: Dispatcher
   #seq = 0
   #order: Layer[] | undefined
   /** Hosts a tunnel was let through to: each warned about once, however often it reconnects. */
@@ -668,6 +658,7 @@ export class MaskingDispatcher extends Dispatcher {
   constructor(downstream: Dispatcher, engine: RedactionEngine, options: MaskingDispatcherOptions = {}) {
     super()
     this.#layers = [{ d: downstream, role: 'proxy', seq: 0 }]
+    this.#fallback = downstream
     this.#engine = engine
     this.#excludeHosts = options.excludeHosts ?? []
     this.#skip = options.skip
@@ -684,7 +675,8 @@ export class MaskingDispatcher extends Dispatcher {
     const had = this.#layers.find((l) => l.d === d)
     if (had) {
       had.seq = ++this.#seq
-      if (options.role) had.role = options.role
+      // The last usable connection layer cannot become a route-only layer.
+      if (options.role && !(had.role === 'proxy' && options.role === 'route' && !this.#hasOtherProxy(d))) had.role = options.role
     } else {
       this.#layers.push({ d, role: options.role ?? 'route', seq: ++this.#seq })
     }
@@ -697,10 +689,15 @@ export class MaskingDispatcher extends Dispatcher {
     this.chainTo(d, { role: 'proxy' })
   }
 
-  /** Takes `d` out from under the gateway; the last layer stays. True when it was there. */
+  #hasOtherProxy(d: Dispatcher): boolean {
+    return this.#layers.some((l) => l.d !== d && l.role === 'proxy' && !isClosed(l.d))
+  }
+
+  /** Takes `d` out from under the gateway; the last layer and last usable proxy stay. */
   release(d: Dispatcher): boolean {
     const i = this.#layers.findIndex((l) => l.d === d)
     if (i < 0 || this.#layers.length === 1) return false
+    if (this.#layers[i]?.role === 'proxy' && !this.#hasOtherProxy(d)) return false
     this.#layers.splice(i, 1)
     this.#order = undefined
     return true
@@ -731,7 +728,7 @@ export class MaskingDispatcher extends Dispatcher {
    */
   handback(): Dispatcher {
     const proxies = this.#ordered().filter((l) => l.role === 'proxy')
-    return (proxies.find((l) => !isClosed(l.d)) ?? (proxies.at(-1) as Layer)).d
+    return proxies.find((l) => !isClosed(l.d))?.d ?? this.#fallback
   }
 
   /** The dispatcher requests go on to: the first open layer, or the last one when all are closed. */
@@ -856,13 +853,27 @@ export class MaskingDispatcher extends Dispatcher {
    * reject, and nothing it reports quotes the body.
    */
   async #intercept(opts: Options, handler: Handler): Promise<void> {
+    const buffered = new BufferedRequest(handler, opts.body)
+    handler = buffered.handler
     let exchange: Exchange | null = null
+    let finished = false
+    const finish = (): void => {
+      if (finished) return
+      finished = true
+      try {
+        exchange?.finish()
+      } catch (err) {
+        // Recording is best-effort; it cannot prevent a transport terminal callback.
+        try { this.#logger?.warn(`dsh-privacy-gateway: exchange recording failed (${errorName(err)})`) } catch {}
+      }
+    }
     let next: Options
     let to: Dispatcher
     try {
       let raw: Buffer
       try {
-        raw = await readBody(opts.body)
+        raw = await buffered.read()
+        if (buffered.controller.aborted) return
       } catch (err) {
         // the caller's own body stream failed: its error goes back to it, and nothing is sent
         failRequest(handler, err instanceof Error ? err : new Error(String(err)))
@@ -921,16 +932,17 @@ export class MaskingDispatcher extends Dispatcher {
       to = this.downstream()
       next = { ...opts, body, headers, [kHop]: to } as Options
     } catch (err) {
-      exchange?.finish()
+      finish()
       this.#logger?.warn(`dsh-privacy-gateway: masking failed (${errorName(err)}), request not sent`)
       failRequest(handler, new PrivacyGatewayError('masking failed, request not sent'))
       return
     }
-    const h = exchange === null ? handler : new RestoringHandler(handler, exchange, this.#logger)
+    const h = exchange === null ? handler : new RestoringHandler(handler, exchange, this.#logger, buffered.controller, finish)
+    if (exchange === null) buffered.controller.onAbort = (err) => h.onResponseError?.(buffered.controller, err)
     try {
-      to.dispatch(next, h)
+      to.dispatch(next, buffered.bridge(h))
     } catch (err) {
-      exchange?.finish()
+      finish()
       failRequest(handler, err instanceof Error ? err : new Error(String(err)))
     }
   }
@@ -963,6 +975,7 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
   const gateway = new MaskingDispatcher(unwrapDisposed(getGlobalDispatcher()), engine, options)
   const slots = globalThis as unknown as Record<symbol, unknown>
   let legacy: unknown
+  let disposed = false
   const put = (): void => {
     setGlobalDispatcher(gateway)
     legacy = slots[LEGACY_GLOBAL]
@@ -970,6 +983,7 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
   put()
 
   const check = (): boolean => {
+    if (disposed) return false
     const current = getGlobalDispatcher()
     const legacyNow = slots[LEGACY_GLOBAL]
     if (current === gateway && legacyNow === legacy) return false
@@ -993,18 +1007,18 @@ export function installGateway(engine: RedactionEngine, options: GatewayInstallO
   const timer = interval > 0 ? setInterval(check, interval) : undefined
   timer?.unref()
 
-  let disposed = false
   return {
     dispatcher: gateway,
     check,
     dispose() {
       if (disposed) return
+      // Restore the global slot before disabling protection. A failed handback remains retryable.
+      if (getGlobalDispatcher() === gateway) setGlobalDispatcher(gateway.handback())
       disposed = true
       if (timer) clearInterval(timer)
       gateway.heal = undefined
-      // a layer may still hold the gateway as its own previous dispatcher: whatever reaches it passes through
+      // A layer may still hold the gateway as its own previous dispatcher.
       gateway.bypass = true
-      if (getGlobalDispatcher() === gateway) setGlobalDispatcher(gateway.handback())
     },
   }
 }

@@ -20,7 +20,7 @@ ADR-0001 让网关链在全局 dispatcher 前面，被顶掉时把顶掉它的 d
 - 公开成员（插件之间的契约，类型从包入口导出）：
   - `chainTo(d, { role? })`：新层默认 `route`；已在下游的层再挂一次会排到同角色的最前，给了 `role` 就改角色。
   - `below(d)`：`d` 之后的第一个未关闭的层。route 层每个请求用它找下一跳，不必在挂上时借用一个固定的下游。
-  - `release(d)`：移除一层，最后一层不能移除。
+  - `release(d)`：移除一层，最后一层及最后一个未关闭的 proxy 不能移除；最后一个可用 proxy 也不能通过 `chainTo` 改成 route。卸载优先交回可用 proxy；若所有 proxy 已关闭，交回安装时保存的 fallback，不把 route 当独立全局 dispatcher。卸载成功后自检不再重新安装网关，重复卸载无副作用。
   - `downstream()`：下一跳，语义不变。
   - `downstreams()`：按顺序列出各层的 dispatcher、角色、是否已关闭，供自检与日志。
   - 下游的 `closed === true` 或 `destroyed === true` 视为已关闭，被跳过。
