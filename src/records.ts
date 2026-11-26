@@ -204,10 +204,13 @@ export function emptyTotals(): Totals {
 }
 
 function bump(m: Record<string, number>, k: string, by: number): void {
-  if (by > 0) m[k] = (m[k] ?? 0) + by
+  if (by <= 0) return
+  // Finder, host and model names may coincide with inherited properties or the prototype setter.
+  const value = (Object.hasOwn(m, k) ? m[k] ?? 0 : 0) + by
+  Object.defineProperty(m, k, { value, writable: true, enumerable: true, configurable: true })
 }
 
-export function addRecord(t: Totals, r: MaskRecord): void {
+export function addRecord(t: Totals, r: Omit<MaskRecord, 'key'>): void {
   t.requests++
   if (r.n > 0) t.masked++
   t.n += r.n
@@ -257,35 +260,105 @@ export interface Stats {
   failStreak: number
 }
 
-/** A record read back from disk, checked for the fields the sums use. */
-function parseRecord(line: string): MaskRecord | undefined {
+type LoadedRecord = Omit<MaskRecord, 'key'> & { key?: number }
+
+function objectOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function countOf(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+/** Every generated key must also be readable, with the endpoint reserved to report exhaustion. */
+function keyOf(value: unknown): value is number {
+  return countOf(value) && value > 0 && value < Number.MAX_SAFE_INTEGER
+}
+
+function stepOf(value: unknown): StepAt | undefined {
+  const s = objectOf(value)
+  return s && countOf(s.turn) && s.turn > 0 && countOf(s.step) && s.step > 0 ? { turn: s.turn, step: s.step } : undefined
+}
+
+/** Copies only the display fields; unrecognized data must not reach the Remote response. */
+function stringsInto<T extends object>(into: T, from: Record<string, unknown>, keys: readonly (keyof T & string)[]): void {
+  for (const k of keys) if (typeof from[k] === 'string') Object.assign(into, { [k]: from[k] })
+}
+
+function placeOf(value: unknown): Place | undefined {
+  const p = objectOf(value)
+  if (!p || typeof p.path !== 'string') return undefined
+  const out: Place = { path: p.path }
+  stringsInto(out, p, ['role', 'type'])
+  return out
+}
+
+/** A malformed value rejects its row; optional display metadata may be omitted independently. */
+function valueOf(value: unknown): ValueRecord | undefined {
+  const v = objectOf(value)
+  if (!v || typeof v.placeholder !== 'string' || v.placeholder === '' || typeof v.kind !== 'string' || typeof v.head !== 'string' || !countOf(v.len) || !countOf(v.n) || v.n < 1) return undefined
+  // Finder names are open-ended (ADR-0035); `by` is accepted from older records.
+  const finder = v.finder !== undefined ? v.finder : v.by !== undefined ? v.by : ''
+  if (typeof finder !== 'string') return undefined
+  if (v.elsewhereOmitted !== undefined && !countOf(v.elsewhereOmitted)) return undefined
+  const out: ValueRecord = { placeholder: v.placeholder, kind: v.kind, finder, head: v.head, len: v.len, n: v.n }
+  stringsInto(out, v, ['tail', 'before', 'after'])
+  if (v.action === 'warn' || v.action === 'block') out.action = v.action
+  const first = stepOf(v.first)
+  if (first) out.first = first
+  const at = placeOf(v.at)
+  if (at) out.at = at
+  const seen = new Set(at ? [at.path] : [])
+  const elsewhere: Place[] = []
+  let omitted = (v.elsewhereOmitted as number | undefined) ?? 0
+  if (Array.isArray(v.elsewhere)) for (const value of v.elsewhere) {
+    const p = placeOf(value)
+    if (!p || seen.has(p.path)) continue
+    seen.add(p.path)
+    if (elsewhere.length + (at ? 1 : 0) < MAX_RECORD_PLACES) elsewhere.push(p)
+    else omitted++
+  }
+  if (!countOf(omitted)) return undefined
+  if (elsewhere.length > 0) out.elsewhere = elsewhere
+  if (omitted > 0) out.elsewhereOmitted = omitted
+  return out
+}
+
+/** Validates each row independently and projects the complete downstream record contract. */
+function parseRecord(line: string): LoadedRecord | undefined {
   try {
-    const r = JSON.parse(line) as MaskRecord
-    if (typeof r !== 'object' || r === null || typeof r.time !== 'string' || typeof r.n !== 'number' || !Array.isArray(r.values)) return undefined
-    r.restored = typeof r.restored === 'number' ? r.restored : 0
-    r.unmapped = typeof r.unmapped === 'number' ? r.unmapped : 0
-    if (typeof r.restoredInTools !== 'number') delete r.restoredInTools
-    if (typeof r.warned !== 'number') delete r.warned
-    if (typeof r.exfil !== 'number') delete r.exfil
-    if (typeof r.exfilBlocked !== 'number') delete r.exfilBlocked
-    if (typeof r.valuesOmitted !== 'number') delete r.valuesOmitted
-    for (const v of r.values) if (typeof v === 'object' && v !== null) {
-      const f = v.first as StepAt | undefined
-      if (!f || !Number.isSafeInteger(f.turn) || !Number.isSafeInteger(f.step) || f.turn < 1 || f.step < 1) delete v.first
+    const r = objectOf(JSON.parse(line))
+    if (!r || typeof r.time !== 'string' || !Number.isFinite(Date.parse(r.time)) || !countOf(r.n) || !Array.isArray(r.values)) return undefined
+    // A key at the endpoint cannot be continued safely; missing legacy keys are assigned after loading.
+    if (r.key !== undefined && !keyOf(r.key)) return undefined
+    if (r.tookMs !== undefined && (typeof r.tookMs !== 'number' || !Number.isFinite(r.tookMs) || r.tookMs < 0 || r.tookMs > Number.MAX_SAFE_INTEGER)) return undefined
+    const counts = ['restored', 'unmapped', 'restoredInTools', 'warned', 'exfil', 'exfilBlocked', 'valuesOmitted'] as const
+    for (const k of counts) if (r[k] !== undefined && !countOf(r[k])) return undefined
+    const values: ValueRecord[] = []
+    for (const value of r.values) {
+      const v = valueOf(value)
+      if (!v) return undefined
+      if (values.length < MAX_RECORD_VALUES) values.push(v)
     }
-    // a step is one the trajectory counts from 1; a record of another version may say none, or not a step at all
-    for (const k of ['turn', 'step'] as const) {
-      const n = r[k]
-      if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1) delete r[k]
+    const omitted = ((r.valuesOmitted as number | undefined) ?? 0) + r.values.length - values.length
+    if (!countOf(omitted)) return undefined
+    const out: LoadedRecord = {
+      time: r.time, n: r.n, values,
+      tookMs: (r.tookMs as number | undefined) ?? 0,
+      what: r.what === 'embeddings' || r.what === 'count' || r.what === 'search' ? r.what : 'chat',
+      host: typeof r.host === 'string' ? r.host : '',
+      restored: (r.restored as number | undefined) ?? 0,
+      unmapped: (r.unmapped as number | undefined) ?? 0,
     }
-    // the two go together: one without the other names no place in the trajectory
-    if (r.turn === undefined || r.step === undefined) {
-      delete r.turn
-      delete r.step
-    }
-    r.tookMs = typeof r.tookMs === 'number' ? r.tookMs : 0
-    r.host = typeof r.host === 'string' ? r.host : ''
-    return r
+    if (r.key !== undefined) out.key = r.key as number
+    for (const k of counts) if (r[k] !== undefined) out[k] = r[k] as number
+    if (omitted > 0) out.valuesOmitted = omitted
+    stringsInto(out, r, ['model', 'session', 'title', 'workspace'])
+    for (const k of ['relay', 'blocked', 'failed'] as const) if (r[k] === true) out[k] = true
+    if (Array.isArray(r.exfilHosts)) out.exfilHosts = r.exfilHosts.filter((h): h is string => typeof h === 'string')
+    const at = stepOf(r)
+    if (at) Object.assign(out, at)
+    return out
   } catch {
     return undefined
   }
@@ -343,6 +416,8 @@ export class RecordStore {
   #diskRead = false
   readonly #now: () => Date
   #ring: MaskRecord[] = []
+  /** Raw session ids are used only for in-memory lookup, never serialized as audit metadata. */
+  readonly #sessions = new WeakMap<MaskRecord, string>()
   readonly #days = new Map<string, Totals>()
   #queue: Array<{ day: string; line: string }> = []
   #timer: ReturnType<typeof setTimeout> | undefined
@@ -410,8 +485,10 @@ export class RecordStore {
   }
 
   #nextKey(): number {
-    lastKey = Math.max(this.#now().getTime() * 1000, lastKey + 1)
-    return lastKey
+    const key = Math.max(this.#now().getTime() * 1000, lastKey + 1)
+    if (!keyOf(key)) throw new Error('record key space exhausted or clock outside the safe range')
+    lastKey = key
+    return key
   }
 
   #day(day: string): Totals {
@@ -421,8 +498,9 @@ export class RecordStore {
   }
 
   /** Keeps `r`, and has it written. */
-  add(r: Omit<MaskRecord, 'key'>): MaskRecord {
+  add(r: Omit<MaskRecord, 'key'>, sourceSession?: string): MaskRecord {
     const rec = { key: this.#nextKey(), ...r } as MaskRecord
+    if (sourceSession !== undefined) this.#sessions.set(rec, sourceSession)
     if (rec.values.length > MAX_RECORD_VALUES) {
       rec.valuesOmitted = (rec.valuesOmitted ?? 0) + rec.values.length - MAX_RECORD_VALUES
       rec.values = rec.values.slice(0, MAX_RECORD_VALUES)
@@ -442,7 +520,7 @@ export class RecordStore {
 
   /** The latest records, newest first. */
   recent(limit = this.#o.keepRecords, session?: string): MaskRecord[] {
-    const rows = session === undefined ? this.#ring : this.#ring.filter((r) => r.session === session)
+    const rows = session === undefined ? this.#ring : this.#ring.filter((r) => (this.#sessions.get(r) ?? r.session) === session)
     return rows.slice(-limit).reverse()
   }
 
@@ -460,7 +538,7 @@ export class RecordStore {
     const out: Stats = { today: emptyTotals(), week: emptyTotals(), month: emptyTotals(), failStreak: this.#failStreak }
     if (session !== undefined) {
       for (const r of this.#ring) {
-        if (r.session !== session) continue
+        if ((this.#sessions.get(r) ?? r.session) !== session) continue
         // the local day, as the day sums and the files go by
         const day = dayOf(new Date(r.time))
         if (day > today || day < month) continue
@@ -694,19 +772,24 @@ export class RecordStore {
       .filter((d): d is string => d !== undefined && d >= from)
       .sort()
       .reverse()
-    let older: MaskRecord[] = []
+    let older: LoadedRecord[] = []
     let maxKey = 0
+    const seen = new Set<number>()
     for (const day of days) {
       const t = emptyTotals()
       const need = this.#o.keepRecords - older.length
-      const tail: MaskRecord[] = []
+      const tail: LoadedRecord[] = []
       const lines = createInterface({ input: createReadStream(join(dir, `${day}.jsonl`), { encoding: 'utf8' }), crlfDelay: Infinity })
       for await (const line of lines) {
         // a blank line or one a crash cut short is no record
         const r = parseRecord(line)
-        // one added since the read began is in the sums already
-        if (!r || added.has(r.key)) continue
-        if (typeof r.key === 'number' && r.key > maxKey) maxKey = r.key
+        // The first valid row read wins across all days; malformed rows never reserve a key.
+        // Records added since the read began are already in the sums and take priority over disk rows.
+        if (!r || (r.key !== undefined && (added.has(r.key) || seen.has(r.key)))) continue
+        if (r.key !== undefined) {
+          seen.add(r.key)
+          maxKey = Math.max(maxKey, r.key)
+        }
         addRecord(t, r)
         if (need > 0) {
           tail.push(r)
@@ -718,7 +801,9 @@ export class RecordStore {
     }
     // keys go on from the largest on disk, should the clock have gone back since it was written
     lastKey = Math.max(lastKey, maxKey)
-    this.#ring = [...older, ...this.#ring].slice(-this.#o.keepRecords)
+    // Legacy rows get keys only after the validated disk maximum is known, avoiding historical collisions.
+    const kept = older.map((r): MaskRecord => ({ ...r, key: r.key ?? this.#nextKey() }))
+    this.#ring = [...kept, ...this.#ring].slice(-this.#o.keepRecords)
   }
 
   #warn(message: string, err: unknown): void {

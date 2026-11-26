@@ -4,7 +4,7 @@
 
 ![The model only sees ⟦DSH_REDACTED:…⟧: secrets, credentials and personal data go out as placeholders and can come back as real values (off by default) — one interception point, every model request through the global fetch goes through it](docs/assets/screenshots/0-banner-en.png)
 
-A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders; by default the placeholders in the replies go into the session log as they are, so no real value from a reply reaches it, and `restoreLog` puts them back with the real values on request. Adapters and providers don't notice it; by default the agent gets placeholders, and with `restoreLog` on it gets the real values as before. One interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
+A redaction gateway on the host process's undici global dispatcher. Secrets in outgoing model request bodies are replaced with placeholders; by default the placeholders in the replies go into the session log as they are, without replacing them with their real values, and `restoreLog` puts them back with the real values on request. Adapters and providers don't notice it; by default the agent gets placeholders, and with `restoreLog` on it gets the real values as before. One interception point covers every provider that goes through `fetch()`, including adapters that plugins provide.
 
 If you are using an **API relay**, or you are working with **sensitive information** or **production data**, please be sure to protect information security.
 
@@ -51,9 +51,9 @@ flowchart LR
   G -.->|"placeholder ↔ value"| T["value table (memory only)"]
 ```
 
-- **Outbound (①②)**: a value a rule finds becomes a placeholder, so the model service only ever gets placeholders; the values stay in the in-memory table, which is what makes the same value the same placeholder every turn.
+- **Outbound (①②)**: a matched, non-exempt value becomes a placeholder; the mapping stays in the in-memory table, so the same value has the same placeholder every turn. Protected regions, `allow` entries, disabled categories and unmatched content still go out as written.
 - **Inbound (③④)**: with `restoreLog` off (the default) the placeholders reach the agent and the session log as they are; with it on they become the real values before the log is written, so the agent and the log agree — the reply has this one restore point.
-- **Sideways**: a request records metadata only (placeholder, kind, head, length); the records, the statistics and the Remote answers never hold a value.
+- **Side channel**: records, statistics and `overview` use a safe projection without the complete originals of masked values; context and display fields such as host and model are cleaned independently. `vendorView` returns a copy of what was sent: protected regions, `allow` entries and unmatched content may still contain sensitive originals, so this copy is not secret-free.
 
 ## What is masked
 
@@ -69,7 +69,7 @@ flowchart LR
 
 A value masked once is masked with the same placeholder wherever else the request has it (its finder is `known`), `url` / `image_url` included; a signed URL (an S3 presigned one, say) goes as it is, since masking one character breaks it ([ADR-0004](docs/adr/0004-protected-regions.md)). History sent to the same host again keeps the bytes it went with before, so the prompt cache still hits.
 
-To try it: every line below is a **fake** value; paste one into a session and the matching record on the card shows the placeholder it became. Neither the records, the stats nor the vendorView copy holds the value, just the placeholder and a few characters at each end; the session log holds no value either while `restoreLog` is off (the default), and does once it is on ([ADR-0003](docs/adr/0003-restore-before-session-log.md)).
+To try it: every line below is a **fake** value; paste one into a session and the matching record on the card shows its placeholder. Records and statistics do not store the complete originals of masked values. The vendorView copy also cleans non-exempt matches and warn values, but protected regions, `allow` entries and unmatched content can retain originals. Restore being off only constrains placeholders in model replies: the text you pasted was already logged before it went out and is not erased by this plugin ([ADR-0003](docs/adr/0003-restore-before-session-log.md)).
 
 ```text
 sk-proj-Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY                             → API_KEY
@@ -109,7 +109,7 @@ The gateway acts at one point: **the moment a model request leaves**. It does no
 | Model reply | The response on the same connection: SSE streams and whole JSON, restored across chunks, compression and `\u27e6` escapes; written back into the log only with `restoreLog` on |
 | Providers | Every adapter that goes through `fetch()`, ones a plugin provides included; `excludeHosts` / `excludeProviders` opt out |
 | On failure | A masking error, an unknown `content-encoding`, or an `upgrade` / `CONNECT` on a model call is not sent ([ADR-0005](docs/adr/0005-fail-closed.md)) |
-| Side channel | Records, statistics and Remote answers hold metadata only, never a value ([ADR-0008](docs/adr/0008-masking-records.md)) |
+| Side channel | Records, statistics and `overview` do not store the complete originals of masked values; the `vendorView` copy can still contain exempt or unmatched sensitive originals ([ADR-0008](docs/adr/0008-masking-records.md), [ADR-0016](docs/adr/0016-vendor-view.md)) |
 
 ### What it does not cover
 
@@ -187,9 +187,9 @@ The everyday settings can be changed on the Configure page of this plugin's row 
 | `/privacy` or `/privacy status` | On or off, the value table's size, today's / 7 days' / 30 days' requests and places replaced, the counts by kind and finder, and warning signals |
 | `/privacy off` | Stops masking for this run: requests go as written. The config is unchanged; a restart turns masking back on |
 | `/privacy on` | Turns masking back on |
-| `/privacy test <text>` | Shows how the text would go: the masked text, and each value's kind, finder, head and length. Nothing goes into the value table, and the text is not written to the session log |
+| `/privacy test <text>` | Previews the text with the current configuration: masked text and each value's kind, finder, head and length. Nothing goes into the table and the input is not logged; the answer is logged, with unmatched parts still shown as written |
 
-No answer of the command has a value in it.
+The command does not echo the complete secrets recognized by the preview; unmatched or allow-listed content can still appear in its answer and in the session log.
 
 ## Records and statistics
 
@@ -201,7 +201,7 @@ Records go to a `masking/YYYY-MM-DD.jsonl`, one file a day (directory 0700, file
 
 The plugin's detail page has a statistics card: today / 7 days / 30 days, the counts, the distributions by kind / finder / host (six entries at most, the rest summed into one 「Other kinds / finders / hosts」 row; hovering a title or a name explains it) and the latest 200 records, 10 a page. Open one to see each value: placeholder, kind / finder, head, length, times, the message it went in (`messages.3`) and the text around it, plus the other places the same value was sent. Each record says which turn and step it went out in (`42·3`, numbered as the Trajectory tab; it is the step that SENT it), and each value says where it was first sent in this run. The kind and finder column heads filter the rows, changing only what is shown ([ADR-0035](docs/adr/0035-kind-finder-hints-and-filters.md)). 「清空数据」 (Clear data), once its box is checked, deletes every record and count and cannot be undone ([ADR-0022](docs/adr/0022-reset.md)). With `showPanel` on, the same view is a 「隐私保护」 (Privacy) tab at the top of the session, counting only that session; the tab's switch turns masking off for that session alone ([ADR-0023](docs/adr/0023-session-switch.md)).
 
-With `vendorView` on (「保留发出内容，供对照查看」 on the config page), a record shows 「查看发出内容」: replaced places on the left (kind · head · length), the body the model service received on the right; neither side ever shows a value.
+With `vendorView` on (「保留发出内容，供对照查看」 on the config page), a record shows 「查看发出内容」: replacements are marked on the left (kind · head · length), and a copy of what was sent appears on the right, with warn values also replaced by placeholders. **Protected regions, `allow` entries and unmatched content may still contain sensitive originals; neither column is secret-free.** The copy is as sensitive as the session log, kept only in memory and never written to disk ([ADR-0016](docs/adr/0016-vendor-view.md)).
 
 ## Notes
 

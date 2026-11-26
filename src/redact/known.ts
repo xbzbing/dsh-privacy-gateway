@@ -200,6 +200,11 @@ export class ValueTable {
     return this.#values.get(placeholder)
   }
 
+  /** An in-memory audit snapshot, never a record or Remote payload. Strings are shared, not copied. */
+  trueforms(): Array<[value: string, placeholder: string]> {
+    return [...this.#values].map(([placeholder, value]) => [value, placeholder])
+  }
+
   /** The kinds a placeholder has been made for. */
   kinds(): ReadonlySet<string> {
     return this.#kinds

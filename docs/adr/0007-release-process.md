@@ -15,7 +15,7 @@
   - 版本号含 `-`（`0.1.0-rc.1`）是预发布：只建 GitHub prerelease 并附 tgz，不发 npm。
   - 纯 semver 是正式版：先 `npm publish --provenance`，再建稳定 Release 并附同一个 tgz。
   - 顺序：状态检查 → 正文检查 → 门禁（`pnpm verify`、构建、打包、`assert-pack`）→ 打 tag → 〔正式版〕npm publish → Release。npm 是唯一不可逆的一步，排在 tag 之后、Release 之前。
-  - 幂等可重跑：npm 已有该版本、远端已有 tag、已有 Release 时相应步骤跳过；稳定 Release 的正文按文件刷新。
+  - 幂等可重跑：npm 已有该版本、远端已有 tag、已有 Release 时相应步骤跳过；稳定 Release 的正文按文件刷新。已有 tag 必须先解析到 Commit（annotated tag 取 peeled Commit）并与 checkout HEAD 一致，查远端失败不当作 tag 缺失；不一致就停止，不给旧 tag 附上新来源的包。正式版补发 Release 时，构建出的 tgz 还须匹配已发布 npm 包的 `dist.integrity`；不一致或缺少完整性证据就停止，不静默替换原产物。创建 tag 与发布前再次核验来源，防止状态检查后远端改变。
 - **正文**：正式版的 `docs/releases/v<版本>.md` 随发版提交入库，格式以 `.github/RELEASE_TEMPLATE.md` 为唯一来源（四段双语 + compare 链接）。文件缺失时在门禁之前失败。预发布用 `.github/PRERELEASE_BODY.md` 的固定说明建页，正文发布后用 `gh release edit` 补，不入库。
 - npm 认证优先 Trusted Publishing（OIDC）；退回 `NPM_TOKEN` 时用只限本包、只能 publish 的 granular token。
 

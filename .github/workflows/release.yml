@@ -76,7 +76,7 @@ jobs:
             *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
             *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
-          git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null 2>&1 && echo "tag=done" >> "$GITHUB_OUTPUT" || true
+          node scripts/release-source.mjs tag "$V" >> "$GITHUB_OUTPUT"
           gh release view "v$V" >/dev/null 2>&1 && echo "gh=done" >> "$GITHUB_OUTPUT" || true
           if [ "${V#*-}" = "$V" ]; then
             npm view "$NAME@$V" version >/dev/null 2>&1 && echo "npm=done" >> "$GITHUB_OUTPUT" || true
@@ -113,6 +113,9 @@ jobs:
           pnpm pack
           mkdir -p pkg && tar -xzf "${{ steps.state.outputs.tarball }}" -C pkg
           node scripts/assert-pack.mjs pkg/package
+          if [ "${{ steps.state.outputs.npm }}" = "done" ]; then
+            node scripts/release-source.mjs artifact "${{ steps.state.outputs.tarball }}" "${{ steps.state.outputs.name }}@${{ steps.state.outputs.version }}"
+          fi
 
       - name: Tag
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.tag != 'done'
@@ -121,8 +124,12 @@ jobs:
           V="${{ steps.state.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v$V" -m "v$V"
-          git push origin "refs/tags/v$V"
+          # Another publisher may have added the tag since the state lookup.
+          TAG_STATE=$(node scripts/release-source.mjs tag "$V")
+          if [ "$TAG_STATE" != "tag=done" ]; then
+            git tag -a "v$V" -m "v$V"
+            git push origin "refs/tags/v$V"
+          fi
 
       # Trusted publishing (OIDC) is the only way this publishes: the workflow
       # asks the registry to exchange its OIDC token for a publish token, and no
@@ -132,6 +139,7 @@ jobs:
         if: steps.state.outputs.skip != 'true' && steps.state.outputs.prerelease != 'true' && steps.state.outputs.npm != 'done'
         run: |
           set -euo pipefail
+          node scripts/release-source.mjs published-tag "${{ steps.state.outputs.version }}"
           npm publish "${{ steps.state.outputs.tarball }}" --provenance --access public
 
       - name: GitHub Release
@@ -146,6 +154,7 @@ jobs:
           else
             CHANNEL=(--latest)
           fi
+          node scripts/release-source.mjs published-tag "$V"
           gh release create "v$V" "${{ steps.state.outputs.tarball }}" \
             --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" --verify-tag "${CHANNEL[@]}"
 

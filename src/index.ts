@@ -241,7 +241,10 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       return engine.values
     },
     stats: () => records.stats(),
-    preview: (text) => engine.preview(text),
+    preview: (text) => {
+      current()
+      return engine.preview(text)
+    },
   }
   // the command is there when dsh-commands is; the gateway runs either way
   ctx.inject?.(['commands'], (child) => {
@@ -259,19 +262,27 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   })
   // the settings card's Remote service; the gateway does not depend on it
   if (ctx.plugin) {
+    const sessionLabel = (session: string, recent = records.recent(1, session)): string | undefined => {
+      // Reapply live rules to a prior safe label, never rebuild it from a previously hidden canonical identifier.
+      const text = recent.length > 0 ? recent[0]?.session : session
+      return text === undefined ? undefined : engine.auditText(text)
+    }
     const source: OverviewSource = {
       overview: (limit, session) => {
         // first: a change the configuration page made is applied before anything is read
         const c = current()
+        const recent = records.recent(limit, session)
+        // Warned or blocked values may never enter the table; their request's audit snapshot is authoritative.
+        const shownSession = session ? sessionLabel(session, recent) : undefined
         return {
           active: engine.active && c.enabled,
           secrets: c.secrets,
           personal: c.personal,
           record: c.record,
           values: engine.values,
-          ...(session ? { session } : {}),
+          ...(shownSession !== undefined ? { session: shownSession } : {}),
           stats: records.stats(session),
-          recent: records.recent(limit, session),
+          recent,
           vendorView: c.vendorView,
           restoreLog: c.restoreLog,
           views: c.vendorView ? views.keys() : [],
@@ -285,8 +296,13 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         }
       },
       setSessionMasking: (session, on) => {
-        // quoted: the id comes from the browser, and a line break in it would forge a log line
-        if (sessions.set(session, on)) ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'} for session ${JSON.stringify(session)} from its Privacy tab`)
+        current()
+        if (sessions.set(session, on)) {
+          // The canonical identifier is for lookup only; quoting prevents log forgery, not disclosure.
+          const shown = sessionLabel(session)
+          const where = shown === undefined ? ' for a session' : ` for session ${JSON.stringify(shown)}`
+          ctx.logger.info(`dsh-privacy-gateway: masking turned ${on ? 'on' : 'off'}${where} from its Privacy tab`)
+        }
         return !sessions.isOff(session)
       },
       providers: () => {

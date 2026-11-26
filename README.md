@@ -4,7 +4,7 @@
 
 ![模型只看见 ⟦DSH_REDACTED:…⟧：密钥、凭据、个人信息发出前换成占位符，回复里的占位符可换回原值（默认不换），一处拦截，每个走全局 fetch 的模型请求都经过它](docs/assets/screenshots/0-banner.png)
 
-在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符；入站默认让回流里的占位符原样进会话日志，回复里的真值不进日志，打开 `restoreLog` 才换回真值。对 adapter、provider 无感；agent 在默认关闭时拿到的是占位符，打开 `restoreLog` 后与以前一样拿到真值。一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
+在宿主进程的 undici 全局 dispatcher 上装一层脱敏网关。出站把模型请求体里的密钥换成占位符；入站默认让回流里的占位符原样进会话日志，不会将回复里的占位符还原成真值，打开 `restoreLog` 才换回真值。对 adapter、provider 无感；agent 在默认关闭时拿到的是占位符，打开 `restoreLog` 后与以前一样拿到真值。一处拦截覆盖所有走 `fetch()` 的 provider，包括插件提供的 adapter。
 
 如果你在用**中转站**或者在处理**敏感信息**、**线上数据**，请务必注意保护信息安全。
 
@@ -31,7 +31,7 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/rele
 
 - **脱敏范围**：密钥、token、密码、私钥、cookie、邮箱、手机号、身份证、银行卡、自定义敏感词，各有开关。
 - **动作可选**：按 kind 选 `mask` / `warn` / `block`，密钥可换成同形的假 key（`shape`）。
-- **回复不写回真值**：默认不还原，回复里的占位符原样进会话日志，回复里的真值不进日志；打开 `restoreLog` 才把真值写回，agent 同时拿到真值。
+- **回复不写回真值**：默认不还原，回复里的占位符原样进会话日志，不会将回复里的占位符还原成真值；打开 `restoreLog` 才把真值写回，agent 同时拿到真值。
 - **记录与统计**：按天落盘的脱敏记录、统计卡、会话「隐私保护」标签页；记录里只有占位符，没有真值。
 - **`/privacy` 命令**：查状态、临时开关、`test` 预览一段文本会怎样发出。
 - **配置热更新**：日常项在插件页上改，下一次调用即生效；脱敏出错时请求不发出。
@@ -51,9 +51,9 @@ flowchart LR
   G -.->|"占位符 ↔ 真值"| T["值表（只在内存）"]
 ```
 
-- **出站（①②）**：请求体里命中规则的值换成占位符，模型服务只拿到占位符；原值只留在内存的值表里，同一个值每轮都是同一个占位符。
+- **出站（①②）**：请求体里命中规则且未被豁免的值换成占位符，映射只留在内存的值表里，同一个值每轮都是同一个占位符。受保护区域、`allow`、关闭的类别与未命中内容仍按原文发出。
 - **入站（③④）**：`restoreLog` 关闭（默认）时占位符原样交给 agent、原样写进会话日志；打开后在日志落盘前换回真值，agent 与日志都拿到真值——回复方向只有这一个还原点，两边必然一致。
-- **旁路**：每个请求只记元信息（占位符、kind、开头、长度），记录、统计和 Remote 返回值里都没有真值。
+- **旁路**：记录、统计与 `overview` 返回安全投影，不写已脱敏值的完整原值；上下文和 host、model 等展示字段也单独清洗。`vendorView` 返回的是发出内容副本，受保护区域、`allow` 与未命中内容仍可能含敏感原文，不能按「无秘密」的数据处理。
 
 ## 脱敏范围
 
@@ -69,7 +69,7 @@ flowchart LR
 
 脱敏过的值在请求的其它地方再出现，也按同一个占位符脱敏（finder 记为 `known`），`url` / `image_url` 里的也算；带签名的 URL（S3 预签名等）原样发出，改了会失效（[ADR-0004](docs/adr/0004-protected-regions.md)）。同一个 host 重发的历史保持原来的字节，prompt cache 照样命中。
 
-照着试：下面每行都是**假值**，复制进会话发出去，统计卡的对应记录里就会出现替换后的占位符。记录、统计和 vendorView 副本里都没有原值；会话日志在 `restoreLog` 关闭（默认）时也没有，只有占位符，打开后才有真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
+照着试：下面每行都是**假值**，复制进会话发出去，统计卡的对应记录里就会出现替换后的占位符。记录与统计不写已脱敏值的完整原值；vendorView 的非豁免命中值和 warn 值也会清洗，但受保护区域、`allow` 与未命中内容可能仍含原文。默认不还原只约束模型回复里的占位符：你粘贴的原文已在出站前写进会话日志，不会因开启本插件而消失（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
 
 ```text
 sk-proj-Zq7Lr2Vt9mK1Px3aB5cD8eF0gH4jN6wY                             → API_KEY
@@ -109,7 +109,7 @@ someone@gmail.com                                                    → EMAIL
 | 模型回复 | 同一条连接的响应：SSE 流与整段 JSON，跨分片、压缩、`\u27e6` 转义都能还原；`restoreLog` 打开时才写回日志 |
 | 覆盖的 provider | 所有走 `fetch()` 的 adapter，包括插件提供的；`excludeHosts` / `excludeProviders` 可以放行 |
 | 出错时 | 脱敏出错、认不出的 `content-encoding`、模型调用上的 `upgrade` / `CONNECT` 一律不发（[ADR-0005](docs/adr/0005-fail-closed.md)） |
-| 旁路 | 记录、统计、Remote 返回值只有元信息，没有真值（[ADR-0008](docs/adr/0008-masking-records.md)） |
+| 旁路 | 记录、统计和 `overview` 不写已脱敏值的完整原值；`vendorView` 的发出内容副本仍可能含豁免或未命中的敏感原文（[ADR-0008](docs/adr/0008-masking-records.md)、[ADR-0016](docs/adr/0016-vendor-view.md)） |
 
 ### 做不到的
 
@@ -185,9 +185,9 @@ someone@gmail.com                                                    → EMAIL
 | `/privacy` 或 `/privacy status` | 开关状态、值表大小、今日 / 7 天 / 30 天的请求与替换计数、按 kind 和 finder 的分布、异常信号 |
 | `/privacy off` | 本次运行内停止脱敏，请求按原文发出；不改配置，重启后恢复 |
 | `/privacy on` | 恢复脱敏 |
-| `/privacy test <文本>` | 预览这段文本会怎样发出：脱敏后的文本和每个值的 kind、finder、开头、长度。不进值表，原文不写进会话日志 |
+| `/privacy test <文本>` | 按当前配置预览这段文本会怎样发出：脱敏后的文本和每个值的 kind、finder、开头、长度。不进值表，输入不写进会话日志；回答会进日志，未识别部分仍按原文显示 |
 
-命令的回答里不出现任何值。
+命令不会回显预览已识别的完整秘密；未命中规则或被 allow 放行的内容仍可能出现在回答和会话日志里。
 
 ## 记录与统计
 
@@ -199,12 +199,12 @@ someone@gmail.com                                                    → EMAIL
 
 插件详情页下方有统计卡：今日 / 7 天 / 30 天，计数、按 kind / finder / host 的分布（每栏最多 6 条，其余合并成「其余 kind / finder / host」；悬停标题和名字有说明）和最近 200 条记录（每页 10 条）。点开一条看每个值：占位符、kind / finder、开头、长度、次数，以及它在哪条消息（`messages.3`）和前后文字，同一个值在别处也出现的会一并列出。每条记录标出这次请求在第几轮第几步发出（`42·3`，与「轨迹」一致，指**发出**的那一步），每个值还标出本次运行首次发出的位置。kind / finder 列头可筛选，只影响显示（[ADR-0035](docs/adr/0035-kind-finder-hints-and-filters.md)）。右上角「清空数据」确认后删除全部记录与统计，无法恢复（[ADR-0022](docs/adr/0022-reset.md)）。打开 `showPanel` 后同样的内容出现在会话顶部的「隐私保护」标签页，只统计当前会话；页头的开关可以只关这个会话的脱敏（[ADR-0023](docs/adr/0023-session-switch.md)）。
 
-打开 `vendorView`（配置页叫「保留发出内容，供对照查看」）后，记录明细多一个「查看发出内容」：左列是替换处的标记（kind · 开头 · 长度），右边是模型服务收到的原文，两边都不出现真值。
+打开 `vendorView`（配置页叫「保留发出内容，供对照查看」）后，记录明细多一个「查看发出内容」：左列标注替换处（kind · 开头 · 长度），右列显示发出的副本，warn 值也换成占位符。**受保护区域、`allow` 与未命中内容仍可能包含敏感原文，两列都不是无秘密的数据。** 副本与会话日志同等敏感，只留内存、不落盘（[ADR-0016](docs/adr/0016-vendor-view.md)）。
 
 ## 须知
 
 - 从 0.1.x 升级上来：默认不再还原，agent 拿到的是占位符。需要旧行为（agent 与日志都拿到真值）时，在配置页打开 `restoreLog`（「会话日志写入真值」）。
-- 会话日志默认是占位符：`restoreLog` 关闭（默认）时，回复里的占位符原样进日志，回复里的真值不进日志，agent 拿到的也是占位符；打开后还原发生在日志落盘之前，日志与 agent 都是真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
+- 会话日志默认是占位符：`restoreLog` 关闭（默认）时，回复里的占位符原样进日志，不会将回复里的占位符还原成真值，agent 拿到的也是占位符；打开后还原发生在日志落盘之前，日志与 agent 都是真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
 - 压缩的请求先解压再脱敏；`restoreLog` 打开时压缩的回复也先解码再还原，关闭时压缩的回复原样穿过网关、由适配器按 `content-encoding` 自己解压（用 `undici.request` 直连的 adapter 要自己解压，`fetch` 会自动解）。请求里认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的组件自己的连接）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
 - 脱敏出错时请求不会发出，报错 `dsh-privacy-gateway: masking failed, request not sent`（[ADR-0005](docs/adr/0005-fail-closed.md)）。止血办法是 `/privacy off`，或在插件页停用本插件、把配置 `enabled` 设为 `false`。
 
