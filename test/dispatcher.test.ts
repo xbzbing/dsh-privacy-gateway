@@ -1037,3 +1037,73 @@ test('a new gateway goes on top of what a disposed one handed back, so reloads d
     await o.close()
   }
 })
+
+/** Whether a dispatcher reports itself closed/destroyed, the way the gateway reads it. */
+function isClosedShape(d: Dispatcher): boolean {
+  const shape = d as unknown as { closed?: boolean; destroyed?: boolean }
+  return shape.closed === true || shape.destroyed === true
+}
+
+test('a fallback closed under a live gateway is never handed back to the global slot', async () => {
+  const o = await origin((_s, res) => res.end('{}'))
+  const before = getGlobalDispatcher()
+  const corpse = new CountingAgent()
+  setGlobalDispatcher(corpse)
+  const warnings: unknown[][] = []
+  const g = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn: (...a: unknown[]) => warnings.push(a) } })
+  try {
+    // The next generation of the plugin that owned the slot joins as a route
+    // layer, then that plugin closes the router the gateway was installed on.
+    g.dispatcher.chainTo(new RouteLayer(g.dispatcher), { role: 'route' })
+    await corpse.close()
+    g.dispose()
+    const handed = getGlobalDispatcher()
+    assert.notEqual(handed, corpse, 'a dead layer is not handed back')
+    assert.equal(isClosedShape(handed), false, 'the global slot carries requests again')
+    assert.equal(g.dispatcher.handback(), handed, 'repeated handbacks share the one replacement')
+    assert.ok(warnings.join('\n').includes('closed under it'), 'the replacement is reported')
+    const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
+    await res.text()
+    assert.equal(o.seen.length, 1, 'the process goes on working without a restart')
+  } finally {
+    setGlobalDispatcher(before)
+    await o.close()
+  }
+})
+
+test('a gateway installed on a closed global dispatcher replaces it instead of inheriting it', async () => {
+  const o = await origin((_s, res) => res.end('{}'))
+  const before = getGlobalDispatcher()
+  const corpse = new CountingAgent()
+  setGlobalDispatcher(corpse)
+  await corpse.close()
+  const g = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn() {} } })
+  try {
+    assert.equal(g.dispatcher.downstreams().some((l) => l.dispatcher === corpse), false, 'the dead layer is not a downstream')
+    const res = await fetch(`${o.url}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: chat(OPENAI) })
+    await res.text()
+    assert.equal(o.seen.length, 1)
+    g.dispose()
+    assert.notEqual(getGlobalDispatcher(), corpse)
+  } finally {
+    setGlobalDispatcher(before)
+    g.dispose()
+    await o.close()
+  }
+})
+
+test('check() does not adopt a closed dispatcher that took the slot', async () => {
+  const before = getGlobalDispatcher()
+  const corpse = new CountingAgent()
+  await corpse.close()
+  const g = installGateway(new PrivacyEngine(randomBytes(32), defaults), { checkIntervalMs: 0, logger: { warn() {} } })
+  try {
+    setGlobalDispatcher(corpse)
+    assert.equal(g.check(), true, 'the gateway reinstalls itself')
+    assert.equal(g.dispatcher.downstreams().some((l) => l.dispatcher === corpse), false, 'a dead layer is not chained')
+    assert.equal(getGlobalDispatcher(), g.dispatcher)
+  } finally {
+    setGlobalDispatcher(before)
+    g.dispose()
+  }
+})

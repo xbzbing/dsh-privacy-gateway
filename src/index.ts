@@ -7,8 +7,10 @@ import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
 import { makeSkip, routeStream } from './providers.ts'
+import { QueryEngine } from './query.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
+import { isSessionId, PrivacyGatewayService } from './remote.ts'
 import { SessionSwitches } from './sessions.ts'
 import { StepBook } from './steps.ts'
 import { ViewStore } from './views.ts'
@@ -112,6 +114,15 @@ function readVersion(): string | undefined {
 /** Read once: a running process's version does not change. */
 const currentVersion = readVersion()
 
+/** The zone the card names its days in, as the host's own name for it. */
+const zone = ((): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
+  } catch {
+    return 'Asia/Shanghai'
+  }
+})()
+
 export const name = 'dsh-privacy-gateway'
 
 /** The longest title or workspace name a record keeps, in characters (docs/adr/0020). */
@@ -154,6 +165,11 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   const views = new ViewStore()
   // the turn and step each session is at, read from the host's own log (docs/adr/0030)
   const stepBook = new StepBook()
+  // the history queries behind the card (docs/adr/0039): the day files, a slice at a time
+  const queries = new QueryEngine({
+    store: records,
+    detectionOn: () => current().restoreLog,
+  })
   // sessions the user turned masking off for, from the session's Privacy tab (docs/adr/0023)
   const sessions = new SessionSwitches({ file: join(home, 'sessions.json'), logger: ctx.logger })
   const optional = (name: string): unknown => {
@@ -293,7 +309,22 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           // what the running process is, for the tab to show: a page built against
           // another version says so instead of looking like this one
           ...(currentVersion !== undefined ? { version: currentVersion } : {}),
+          // what this host can answer: a page built against an older one says
+          // the history query is missing instead of calling its list complete
+          capabilities: { historyQuery: true, recordDetail: true, evidence: true },
+          timeZone: zone,
         }
+      },
+      records: (mode) => queries.run(mode),
+      record: async (ref) => {
+        const found = await queries.detail(ref)
+        if ('code' in found) return null
+        const record = engine.detail(found.row)
+        // A session the record kept is only a name to open when it is one the
+        // host would make; one that was projected is not (docs/adr/0039).
+        const session = record.session
+        const navigation = session === undefined ? 'no-session' : isSessionId(session) ? undefined : 'sensitive-id'
+        return { record, ...(navigation !== undefined ? { navigation } : {}) }
       },
       setSessionMasking: (session, on) => {
         current()
@@ -335,16 +366,16 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         return body === undefined ? null : { key, body }
       },
     }
-    let disposed = false
-    ctx.effect(() => () => {
-      disposed = true
-    })
-    import('./remote.ts').then(
-      ({ PrivacyGatewayService }) => {
-        if (!disposed) ctx.plugin?.(PrivacyGatewayService, source)
-      },
-      (err: unknown) => ctx.logger.warn('dsh-privacy-gateway: the settings card has no data (typert is not there)', err),
-    )
+    // Mounted right here, while the fiber is still the one running apply().
+    // Deferring it behind a dynamic import used to lose the endpoint on a
+    // remount: that fiber's teardown could remove the service key after the
+    // late registration had added it, leaving the page calling an endpoint
+    // nothing answered (docs/adr/0039).
+    try {
+      ctx.plugin(PrivacyGatewayService, source)
+    } catch (err) {
+      ctx.logger.warn('dsh-privacy-gateway: the settings card has no data', err)
+    }
   }
   // Where each session is in its turns: the host appends `step/start` to the session's log before it makes the
   // call, and this feed hands each entry over, so a record can name the turn and step it went in (docs/adr/0030).

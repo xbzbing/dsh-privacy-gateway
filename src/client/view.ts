@@ -3,6 +3,7 @@
  * unit tests run it as it is.
  */
 import type { Overview } from '../remote.ts'
+import type { QueryCoverage, QuerySummary } from '../query.ts'
 import type { MaskRecord, Place, Totals, ValueRecord } from '../records.ts'
 import type { Key, T } from './locales.ts'
 import type { Failure, Result } from './rpc.ts'
@@ -449,4 +450,107 @@ export function elsewhereText(v: { elsewhere?: Place[]; elsewhereOmitted?: numbe
 export function hintOf(v: { head?: string; tail?: string }): string {
   if (!v.head) return ''
   return v.tail ? `${v.head}…${v.tail}` : `${v.head}…`
+}
+
+/** One query's answer, as the card reads it (docs/adr/0039). */
+export interface QueryState {
+  status: 'building' | 'paused' | 'ready' | 'partial' | 'error'
+  queryId?: string
+  items: QuerySummary[]
+  nextCursor?: string
+  matched: number
+  unmapped: number
+  risk: number
+  coverage: QueryCoverage
+  /** A build that is going asks again after this long; a paused one waits. */
+  retryMs?: number
+  canResume?: boolean
+  reason?: string
+  message?: string
+}
+
+function obj(v: unknown): Record<string, unknown> | undefined {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
+}
+
+/** A count from a row, as a number; anything else is zero. */
+function num(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0
+}
+
+function querySummaryOf(v: unknown): QuerySummary | undefined {
+  const s = obj(v)
+  if (!s || typeof s.ref !== 'string' || typeof s.time !== 'string' || typeof s.host !== 'string' || num(s.n) < 1) return undefined
+  const turn = num(s.turn)
+  const step = num(s.step)
+  const key = num(s.key)
+  return {
+    ref: s.ref,
+    ...(key > 0 ? { key } : {}),
+    time: s.time,
+    ...(turn > 0 && step > 0 ? { turn, step } : {}),
+    ...(typeof s.model === 'string' ? { model: s.model } : {}),
+    host: s.host,
+    from: typeof s.from === 'string' ? s.from : '',
+    n: num(s.n),
+    restored: num(s.restored),
+    unmapped: num(s.unmapped),
+    exfil: num(s.exfil),
+    failed: s.failed === true,
+    evidence: s.evidence === 'kept' || s.evidence === 'unknown' ? s.evidence : 'none',
+  }
+}
+
+/** The coverage an answer names; anything else reads as a partial disk scan. */
+function coverageOf(v: unknown): QueryCoverage {
+  const c = obj(v)
+  const reasons = Array.isArray(c?.reasons) ? (c?.reasons as unknown[]).filter((r): r is string => typeof r === 'string') : []
+  const scan = c?.scan === 'ready' || c?.scan === 'paused' || c?.scan === 'building' ? c.scan : 'partial'
+  const storage = c?.storage === 'mixed' || c?.storage === 'memory-only' ? c.storage : 'disk'
+  const detection = c?.detection === 'on' || c?.detection === 'off' ? c.detection : 'unknown'
+  return { storage, scan, reasons, detection }
+}
+
+/** A query answer, or undefined when it is not of the shape this page knows. */
+export function readQuery(v: unknown): QueryState | undefined {
+  const q = obj(v)
+  const status = q?.status
+  if (status === 'building' || status === 'paused') {
+    if (typeof q?.queryId !== 'string') return undefined
+    const retry = num(q.retryMs)
+    return {
+      status,
+      queryId: q.queryId,
+      items: [],
+      matched: 0,
+      unmapped: 0,
+      risk: 0,
+      coverage: coverageOf(q.coverage),
+      ...(retry > 0 ? { retryMs: retry } : {}),
+      ...(q.canResume === true ? { canResume: true } : {}),
+      ...(typeof q.reason === 'string' ? { reason: q.reason } : {}),
+    }
+  }
+  if (status !== 'ready' && status !== 'partial') return undefined
+  const page = obj(q?.page)
+  if (!page || typeof page.snapshotId !== 'string' || !Array.isArray(page.items)) return undefined
+  const items = page.items.map(querySummaryOf).filter((row): row is QuerySummary => row !== undefined)
+  return {
+    status,
+    items,
+    ...(typeof page.nextCursor === 'string' ? { nextCursor: page.nextCursor } : {}),
+    matched: num(page.matchedRequests) || items.length,
+    unmapped: num(page.unmappedOccurrences),
+    risk: num(page.riskMatches),
+    coverage: coverageOf(page.coverage),
+  }
+}
+
+/** One stored row as the card shows it, or undefined when it is not one. */
+export function readRecordDetail(v: unknown): MaskRecord | undefined {
+  const r = obj(v)
+  const record = obj(r?.record)
+  if (!record || !isRecord(record as unknown as MaskRecord)) return undefined
+  const navigation = typeof r?.navigation === 'string' ? r.navigation : undefined
+  return { ...(record as unknown as MaskRecord), ...(navigation !== undefined ? { navigation } : {}) } as MaskRecord
 }

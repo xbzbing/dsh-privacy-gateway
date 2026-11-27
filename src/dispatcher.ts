@@ -1,7 +1,7 @@
 import zlib from 'node:zlib'
 import { types as utilTypes } from 'node:util'
 
-import { Dispatcher, Dispatcher1Wrapper, FormData as UndiciFormData, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
+import { Agent, Dispatcher, Dispatcher1Wrapper, FormData as UndiciFormData, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 
 import { RequestBlocked, type Exchange, type RedactionEngine, type RequestInfo } from './engine.ts'
 import { bypassedProvider, currentSession, inModelCall } from './providers.ts'
@@ -595,6 +595,14 @@ function isClosed(d: Dispatcher): boolean {
 }
 
 /**
+ * A connection layer that carries requests right now, for the global slot when
+ * every dispatcher it could inherit is closed (docs/adr/0012).
+ */
+function freshDispatcher(): Dispatcher {
+  return new Agent()
+}
+
+/**
  * Where a layer under the gateway goes (docs/adr/0012). `route` layers choose
  * where a request goes (oc2dsh's egress pool) and come first; `proxy` layers
  * make the connection (dsh-http-proxy's agent, the dispatcher the gateway was
@@ -643,6 +651,8 @@ export class MaskingDispatcher extends Dispatcher {
   readonly #logger: GatewayLogger | undefined
   #layers: Layer[]
   readonly #fallback: Dispatcher
+  /** The fresh layer `handback()` made because the fallback was closed, so repeated handbacks share one. */
+  #replacement: Dispatcher | undefined
   #seq = 0
   #order: Layer[] | undefined
   /** Hosts a tunnel was let through to: each warned about once, however often it reconnects. */
@@ -686,6 +696,9 @@ export class MaskingDispatcher extends Dispatcher {
   /** Puts a dispatcher found on top of the gateway under it, as a `proxy` layer; one already there stays where it is. */
   adopt(d: Dispatcher): void {
     if (d === (this as Dispatcher) || this.#layers.some((l) => l.d === d)) return
+    // A closed layer serves nothing, and the last layer is where requests fall
+    // back when every hop is closed: adopting one would keep the outage.
+    if (isClosed(d)) return
     this.chainTo(d, { role: 'proxy' })
   }
 
@@ -728,7 +741,19 @@ export class MaskingDispatcher extends Dispatcher {
    */
   handback(): Dispatcher {
     const proxies = this.#ordered().filter((l) => l.role === 'proxy')
-    return proxies.find((l) => !isClosed(l.d))?.d ?? this.#fallback
+    const open = proxies.find((l) => !isClosed(l.d))?.d
+    if (open !== undefined) return open
+    // The layer the gateway was installed on can be closed while the gateway is
+    // live: a plugin that owned the slot swaps its own generation and closes the
+    // old router. Handing that one back points the global slot at a corpse, so
+    // every fetch in the process fails with the dead layer's own error until the
+    // host restarts (docs/adr/0012).
+    if (!isClosed(this.#fallback)) return this.#fallback
+    if (this.#replacement === undefined || isClosed(this.#replacement)) {
+      this.#logger?.warn('dsh-privacy-gateway: the dispatcher this gateway was installed on was closed under it; handing back a fresh dispatcher instead')
+      this.#replacement = freshDispatcher()
+    }
+    return this.#replacement
   }
 
   /** The dispatcher requests go on to: the first open layer, or the last one when all are closed. */
@@ -857,11 +882,11 @@ export class MaskingDispatcher extends Dispatcher {
     handler = buffered.handler
     let exchange: Exchange | null = null
     let finished = false
-    const finish = (): void => {
+    const finish = (partial = false): void => {
       if (finished) return
       finished = true
       try {
-        exchange?.finish()
+        exchange?.finish(partial)
       } catch (err) {
         // Recording is best-effort; it cannot prevent a transport terminal callback.
         try { this.#logger?.warn(`dsh-privacy-gateway: exchange recording failed (${errorName(err)})`) } catch {}
@@ -972,7 +997,15 @@ export interface InstalledGateway {
  * `check` and put downstream, so the user's proxy policy still applies.
  */
 export function installGateway(engine: RedactionEngine, options: GatewayInstallOptions = {}): InstalledGateway {
-  const gateway = new MaskingDispatcher(unwrapDisposed(getGlobalDispatcher()), engine, options)
+  let downstream = unwrapDisposed(getGlobalDispatcher())
+  if (isClosed(downstream)) {
+    // A closed layer serves nothing, and the one a reload hands back is exactly
+    // that: building the new gateway on it would keep every request failing
+    // instead of restoring service (docs/adr/0012).
+    options.logger?.warn('dsh-privacy-gateway: the global dispatcher was closed; installing on a fresh dispatcher instead')
+    downstream = freshDispatcher()
+  }
+  const gateway = new MaskingDispatcher(downstream, engine, options)
   const slots = globalThis as unknown as Record<symbol, unknown>
   let legacy: unknown
   let disposed = false

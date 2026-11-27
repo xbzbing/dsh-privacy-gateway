@@ -1,7 +1,8 @@
 /** The host's `privacyGateway/*` methods, through the shared `/api` channel. */
+import type { MaskRecord } from '../records.ts'
 import type { Overview, ProviderEntry } from '../remote.ts'
 import type { Key, T } from './locales.ts'
-import { readOverview } from './view.ts'
+import { readOverview, readQuery, readRecordDetail, type QueryState } from './view.ts'
 
 export type { ProviderEntry }
 
@@ -104,4 +105,14 @@ export function fetchProviders(ctx: ClientCtx, signal?: AbortSignal): Promise<Re
 function providerEntry(p: unknown): ProviderEntry[] {
   const e = p as { id?: unknown; name?: unknown } | null
   return e !== null && typeof e === 'object' && typeof e.id === 'string' && e.id !== '' ? [{ id: e.id, name: typeof e.name === 'string' && e.name !== '' ? e.name : e.id }] : []
+}
+
+/** One history query, by its mode (docs/adr/0039); never throws. */
+export function fetchRecords(ctx: ClientCtx, mode: Record<string, unknown>, signal?: AbortSignal): Promise<Result<QueryState>> {
+  return call(ctx, 'records', mode, readQuery, signal)
+}
+
+/** One stored row by its ref: null when the host no longer holds it (docs/adr/0039). */
+export function fetchRecord(ctx: ClientCtx, ref: string, signal?: AbortSignal): Promise<Result<MaskRecord | null>> {
+  return call(ctx, 'record', { ref }, (v) => (v === null ? null : readRecordDetail(v)), signal)
 }

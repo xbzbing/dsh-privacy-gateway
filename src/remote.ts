@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 
 import type { MaskRecord, Stats } from './records.ts'
+import type { QueryEvent, QueryMode, QueryReply } from './query.ts'
 
 /**
  * What the settings card reads (design §7.4), through the typert Gateway as
@@ -44,6 +45,29 @@ export interface Overview {
   sessionMasking?: boolean
   /** The host half's own version; absent on a host too old to say. */
   version?: string
+  /** What this host can answer (docs/adr/0039); absent on a host without the history query. */
+  capabilities?: {
+    historyQuery: boolean
+    recordDetail: boolean
+    evidence: boolean
+  }
+  /** The zone the card names its days in. */
+  timeZone?: string
+}
+
+/** One history query, as the card asks it (docs/adr/0039). */
+export type RecordsRequest = QueryMode
+
+/** One stored row, as the card shows it, with why it may not be opened. */
+export interface RecordDetail {
+  record: MaskRecord
+  /** Why the row cannot be opened in the session, when it cannot. */
+  navigation?: string
+}
+
+/** The ref of one stored row. */
+export interface RecordRequest {
+  ref?: unknown
 }
 
 export interface SessionMaskingRequest {
@@ -88,6 +112,10 @@ export interface OverviewSource {
   reset?(): Promise<ResetResult>
   /** Turns masking on or off for one session (docs/adr/0023); the state after. */
   setSessionMasking?(session: string, on: boolean): boolean
+  /** One history query, by its mode (docs/adr/0039). */
+  records?(mode: RecordsRequest): Promise<QueryReply>
+  /** One stored row by its ref, read again from disk (docs/adr/0039). */
+  record?(ref: string): Promise<RecordDetail | null>
 }
 
 export const NAMESPACE = 'privacyGateway'
@@ -102,6 +130,46 @@ export function isSessionId(id: unknown): id is string {
 
 export function clampLimit(limit: unknown): number {
   return typeof limit === 'number' && Number.isFinite(limit) ? Math.min(200, Math.max(1, Math.floor(limit))) : 50
+}
+
+/** The days a query may name, as the day files are named. */
+function isDay(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
+/** The events a query narrows by. */
+const EVENTS = new Set(['all', 'anomalies', 'unmapped', 'exfil', 'failed'])
+
+/**
+ * The mode a request names, or undefined when it names none this host knows.
+ * A mode is one shape or the other: a start carries the range, anything else
+ * carries the handle it goes on with, so neither can be read as the other.
+ */
+export function parseMode(value: unknown): RecordsRequest | undefined {
+  const m = (value as { mode?: unknown } | null)?.mode
+  if (m === 'start') {
+    const req = value as { from?: unknown; to?: unknown; event?: unknown; session?: unknown; limit?: unknown }
+    if (!isDay(req.from) || !isDay(req.to) || req.from > req.to) return undefined
+    if (typeof req.event !== 'string' || !EVENTS.has(req.event)) return undefined
+    if (req.session !== undefined && (typeof req.session !== 'string' || req.session === '' || !isSessionId(req.session))) return undefined
+    return {
+      mode: 'start',
+      from: req.from,
+      to: req.to,
+      event: req.event as QueryEvent,
+      ...(typeof req.session === 'string' ? { session: req.session } : {}),
+      ...(typeof req.limit === 'number' ? { limit: req.limit } : {}),
+    }
+  }
+  if (m === 'page') {
+    const cursor = (value as { cursor?: unknown }).cursor
+    return typeof cursor === 'string' && cursor !== '' ? { mode: 'page', cursor } : undefined
+  }
+  if (m === 'poll' || m === 'resume' || m === 'partial' || m === 'cancel') {
+    const queryId = (value as { queryId?: unknown }).queryId
+    return typeof queryId === 'string' && queryId !== '' ? { mode: m, queryId } : undefined
+  }
+  return undefined
 }
 
 export class PrivacyGatewayService extends TypertRemoteService {
@@ -139,6 +207,22 @@ export class PrivacyGatewayService extends TypertRemoteService {
     return { on: this.source.setSessionMasking(session, request.on) }
   }
 
+  /** One history query (docs/adr/0039); the answer says whether it is built, paused or done. */
+  async records(request: RecordsRequest): Promise<QueryReply> {
+    if (!this.source.records) throw new Error('history query is not offered')
+    const mode = parseMode(request)
+    if (!mode) throw new Error('a query mode and the fields it names are needed')
+    return this.source.records(mode)
+  }
+
+  /** One stored row by its ref, or null when it is no longer held (docs/adr/0039). */
+  async record(request: RecordRequest): Promise<RecordDetail | null> {
+    if (!this.source.record) throw new Error('record detail is not offered')
+    const ref = request?.ref
+    if (typeof ref !== 'string' || ref === '') throw new Error('a record ref is needed')
+    return this.source.record(ref)
+  }
+
   /** One recorded request as the vendor got it, or null. */
   async vendorView(request: VendorViewRequest): Promise<VendorView | null> {
     const key = request?.key
@@ -170,6 +254,8 @@ function markRemote(cls: { prototype: object }, method: string): void {
 }
 
 markRemote(PrivacyGatewayService, 'overview')
+markRemote(PrivacyGatewayService, 'records')
+markRemote(PrivacyGatewayService, 'record')
 markRemote(PrivacyGatewayService, 'vendorView')
 markRemote(PrivacyGatewayService, 'providers')
 markRemote(PrivacyGatewayService, 'reset')
