@@ -1,4 +1,5 @@
 import { externalHosts } from './guard.ts'
+import { knownKind } from './kinds.ts'
 import type { ValueTable } from './known.ts'
 import { asJSON, jsonEscape, KEPT, SIGNATURE_KEYS, walkJSON } from './json.ts'
 import { bodies, CLOSE, format, OPEN, tailLen } from './placeholder.ts'
@@ -19,10 +20,25 @@ export interface Tally {
   exfilBlocked: number
   /** The hosts they named. */
   exfilHosts: Set<string>
+  /**
+   * The placeholders no value was known for, as the record may keep them: the
+   * kind when it is one of ours, how often it came, and where. The marker's own
+   * text is never kept, for it may be a value the model wrote (docs/adr/0039).
+   */
+  unknown: UnknownHit[]
+  /** Whether a reply was read at all: a setting on is not proof the path ran. */
+  sawReply: boolean
+}
+
+/** One unknown placeholder, before it is given the request's own number. */
+export interface UnknownHit {
+  kind: string
+  n: number
+  tool: boolean
 }
 
 export function newTally(): Tally {
-  return { restored: new Map(), inTools: 0, unmapped: 0, exfil: 0, exfilBlocked: 0, exfilHosts: new Set() }
+  return { restored: new Map(), inTools: 0, unmapped: 0, exfil: 0, exfilBlocked: 0, exfilHosts: new Set(), unknown: [], sawReply: false }
 }
 
 /**
@@ -47,6 +63,25 @@ const TOOL_KEYS = new Set(['tool_calls', 'function_call', 'functionCall', 'tool_
  */
 export function inToolCall(path: string, key: string, type: string, segments?: readonly string[]): boolean {
   return asJSON(key, type) || (segments ? segments.some((part) => TOOL_KEYS.has(part)) : TOOL_PATH.test(path)) || (key === 'delta' && type.includes('custom_tool_call_input'))
+}
+
+/** The most unknown markers one request notes; past it only the count grows (docs/adr/0039). */
+const MAX_UNKNOWN = 16
+
+/**
+ * Notes one unknown marker under a kind the gateway knows, or under `custom`
+ * when the name is the model's own. The marker's text is dropped here: it may
+ * be a value the model wrote inside a legal-looking shell (docs/adr/0039).
+ */
+function noteUnknown(tally: Tally, kind: string, tool: boolean): void {
+  const known = knownKind(kind)
+  const same = tally.unknown.find((u) => u.kind === known && u.tool === tool)
+  if (same) {
+    same.n++
+    return
+  }
+  if (tally.unknown.length >= MAX_UNKNOWN) return
+  tally.unknown.push({ kind: known, n: 1, tool })
 }
 
 /** A restorer for one `text/event-stream` body. */
@@ -222,6 +257,7 @@ export class Restorer {
    * a quote in it would break it.
    */
   restoreText(s: string, escaped = false, tally?: Tally, tool = false, leave = false, plain = false): string {
+    if (tally) tally.sawReply = true
     if (this.#table.size === 0) return s
     const shapes = this.#table.shapes > 0
     if (!shapes && !s.includes('_')) return s
@@ -276,7 +312,10 @@ export class Restorer {
       if (v === undefined) {
         // only a placeholder written exactly as the masker writes one counts:
         // a text a model changed is no sign of one this gateway made
-        if (tally && text.slice(f.start, f.end) === p) tally.unmapped++
+        if (tally && text.slice(f.start, f.end) === p) {
+          tally.unmapped++
+          noteUnknown(tally, f.kind, tool)
+        }
         continue
       }
       if (plain && jsonEscape(v) !== v) continue

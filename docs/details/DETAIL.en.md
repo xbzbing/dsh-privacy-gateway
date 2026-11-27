@@ -17,5 +17,6 @@ If this project helps you, please give it a star 🌟
 - **Exfiltration guard**: with `restoreLog` on, when a tool call's arguments would get a real value back and name a host off this machine, warn, or leave the placeholder in.
 - **Look-alike keys**: optionally send a key as a made-up one with the same prefix, length and kinds of character, so the model cannot tell it was masked; a value under 8 characters, or with unusual characters, keeps the placeholder.
 - **Records and statistics**: only requests with something masked or restored are recorded, and a record never holds a value. The `/privacy` command shows the state and a preview; the plugin's detail page has a statistics card, and a Privacy tab can be turned on at the top of the session.
+- **History query**: the Record query section under the statistics card reads the kept days by range and by kind, not just the latest 200; a scan is sliced and resumable, a published page never changes, and opening a row checks that line on disk again.
 - **What was sent**: optionally keep a copy in memory. Protected regions, allow entries and unmatched content may still contain sensitive originals; the copy is as sensitive as the session log, not a safe export of raw data.
 - **Fails closed**: when masking fails, the request is not sent; `/privacy off` turns masking off for the moment.

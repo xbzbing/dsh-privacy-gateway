@@ -33,3 +33,7 @@
 - `/privacy off` 在重启后失效：要长期关闭，用配置 `enabled: false`。
 - `test` 的回答（脱敏后的文本）会进会话日志；规则没认出的部分按原文出现在里面，和直接把文本发进对话一样。
 - 本地 link 安装时，插件从自己的 `node_modules` 解析 typert 和 cordis，与宿主不是同一份拷贝；typert 的标记按字符串属性读、cordis 的 `Context.is` 跨拷贝识别，所以能工作，但每次升级宿主都要实测一次。
+
+## 更新（2026-11-27）
+
+统计卡下方增加「记录查询」：范围与类型筛选、分片扫描与续扫、已发布快照的游标分页、记录详情与覆盖状态。`overview` 仍是运行汇总与最近记录，新增 `privacyGateway/records` 与 `privacyGateway/record` 两个 Remote 方法，`capabilities` 说明 host 是否有历史查询。见 [ADR-0039](0039-record-traceability.md)。

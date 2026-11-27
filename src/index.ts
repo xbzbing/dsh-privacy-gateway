@@ -7,8 +7,10 @@ import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
 import { makeSkip, routeStream } from './providers.ts'
+import { QueryEngine } from './query.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
+import { isSessionId } from './remote.ts'
 import { SessionSwitches } from './sessions.ts'
 import { StepBook } from './steps.ts'
 import { ViewStore } from './views.ts'
@@ -112,6 +114,15 @@ function readVersion(): string | undefined {
 /** Read once: a running process's version does not change. */
 const currentVersion = readVersion()
 
+/** The zone the card names its days in, as the host's own name for it. */
+const zone = ((): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
+  } catch {
+    return 'Asia/Shanghai'
+  }
+})()
+
 export const name = 'dsh-privacy-gateway'
 
 /** The longest title or workspace name a record keeps, in characters (docs/adr/0020). */
@@ -154,6 +165,11 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   const views = new ViewStore()
   // the turn and step each session is at, read from the host's own log (docs/adr/0030)
   const stepBook = new StepBook()
+  // the history queries behind the card (docs/adr/0039): the day files, a slice at a time
+  const queries = new QueryEngine({
+    store: records,
+    detectionOn: () => current().restoreLog,
+  })
   // sessions the user turned masking off for, from the session's Privacy tab (docs/adr/0023)
   const sessions = new SessionSwitches({ file: join(home, 'sessions.json'), logger: ctx.logger })
   const optional = (name: string): unknown => {
@@ -293,7 +309,22 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           // what the running process is, for the tab to show: a page built against
           // another version says so instead of looking like this one
           ...(currentVersion !== undefined ? { version: currentVersion } : {}),
+          // what this host can answer: a page built against an older one says
+          // the history query is missing instead of calling its list complete
+          capabilities: { historyQuery: true, recordDetail: true, evidence: true },
+          timeZone: zone,
         }
+      },
+      records: (mode) => queries.run(mode),
+      record: async (ref) => {
+        const found = await queries.detail(ref)
+        if ('code' in found) return null
+        const record = engine.detail(found.row)
+        // A session the record kept is only a name to open when it is one the
+        // host would make; one that was projected is not (docs/adr/0039).
+        const session = record.session
+        const navigation = session === undefined ? 'no-session' : isSessionId(session) ? undefined : 'sensitive-id'
+        return { record, ...(navigation !== undefined ? { navigation } : {}) }
       },
       setSessionMasking: (session, on) => {
         current()

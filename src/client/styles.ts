@@ -111,6 +111,9 @@ const CSS = `
 .pgw-ctx__more{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .pgw-ctx__text{flex:1 1 auto;min-width:0;font-size:12px;line-height:18px;letter-spacing:0;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .pgw-ctx__mark{margin:0 1px;padding:0 2px;font-size:11px;border-radius:3px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 16%,transparent);color:var(--dsw-alias-label-primary)}
+.pgw-query{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.pgw-query__head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.pgw-query__controls{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .pgw-pager{display:flex;align-items:center;justify-content:flex-end;gap:2px}
 .pgw-pager__at{min-width:56px;text-align:center;font-variant-numeric:tabular-nums}
 @media (max-width:640px){.pgw-rec{grid-template-columns:16px 64px minmax(0,1fr) 56px 56px}.pgw-rec__from,.pgw-rec__step{display:none}.pgw-rec--head>:nth-child(3),.pgw-rec--head>:nth-child(5){display:none}}

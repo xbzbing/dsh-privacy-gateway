@@ -48,8 +48,39 @@ export interface ValueRecord {
   first?: StepAt
 }
 
+/**
+ * One unknown placeholder, as the record may keep it: the request's own
+ * sequence number, the kind when it is one the gateway knows, how often it
+ * came, and where. Never the marker the model wrote (docs/adr/0039).
+ */
+export interface UnknownNote {
+  id: string
+  kind: string
+  n: number
+  at?: Place
+  tool?: true
+}
+
 /** chat, embeddings, count or search, by the request's path. */
 export type What = 'chat' | 'embeddings' | 'count' | 'search'
+
+/**
+ * Whether a reply was actually read for placeholders and destinations, and
+ * under which settings the request went (docs/adr/0039). A setting on is not
+ * proof the path ran: an empty value table or a reply that never arrived
+ * leaves it skipped, and a zero count must not read as "checked, nothing".
+ */
+export interface DetectionActivity {
+  state: 'executed' | 'skipped' | 'partial' | 'unknown'
+  /** Why it did not run, or ran only in part; names from a fixed set. */
+  reasons?: string[]
+}
+
+export interface DetectionRecord {
+  settings: { restoreLog: boolean; toolGuard: 'off' | 'warn' | 'block' }
+  unknown: DetectionActivity
+  exfil: DetectionActivity
+}
 
 export interface MaskRecord {
   /** Unique, later records larger. */
@@ -96,6 +127,14 @@ export interface MaskRecord {
   exfilHosts?: string[]
   /** Masking failed: the request was not sent (docs/adr/0005). */
   failed?: true
+  /** What the reply path actually did, as against what the settings asked for (docs/adr/0039). */
+  detection?: DetectionRecord
+  /**
+   * Anonymous notes on placeholders no value was known for (docs/adr/0039).
+   * The model's own text is never kept: a legal-looking marker may carry a
+   * value, so only this request's sequence number and a known kind remain.
+   */
+  unknown?: UnknownNote[]
 }
 
 /**
@@ -113,6 +152,16 @@ export const MAX_RECORD_VALUES = 200
  * (docs/adr/0028).
  */
 export const MAX_RECORD_PLACES = 8
+
+/**
+ * The most anonymous unknown notes one request keeps (docs/adr/0039). Past it
+ * only the count grows: a reply that repeats one marker must not lengthen the
+ * record without bound.
+ */
+export const MAX_UNKNOWN_NOTES = 16
+
+/** The most reasons one reply path names; the rest are counted by the state alone. */
+export const MAX_DETECTION_REASONS = 8
 
 /**
  * Adds `at` to `v`'s places unless it is one already met, as long as the value
@@ -260,7 +309,7 @@ export interface Stats {
   failStreak: number
 }
 
-type LoadedRecord = Omit<MaskRecord, 'key'> & { key?: number }
+export type LoadedRecord = Omit<MaskRecord, 'key'> & { key?: number }
 
 function objectOf(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -325,7 +374,7 @@ function valueOf(value: unknown): ValueRecord | undefined {
 }
 
 /** Validates each row independently and projects the complete downstream record contract. */
-function parseRecord(line: string): LoadedRecord | undefined {
+export function decodeRecord(line: string): LoadedRecord | undefined {
   try {
     const r = objectOf(JSON.parse(line))
     if (!r || typeof r.time !== 'string' || !Number.isFinite(Date.parse(r.time)) || !countOf(r.n) || !Array.isArray(r.values)) return undefined
@@ -356,12 +405,51 @@ function parseRecord(line: string): LoadedRecord | undefined {
     stringsInto(out, r, ['model', 'session', 'title', 'workspace'])
     for (const k of ['relay', 'blocked', 'failed'] as const) if (r[k] === true) out[k] = true
     if (Array.isArray(r.exfilHosts)) out.exfilHosts = r.exfilHosts.filter((h): h is string => typeof h === 'string')
+    const detection = detectionOf(r.detection)
+    if (detection) out.detection = detection
+    const unknown = unknownOf(r.unknown)
+    if (unknown && unknown.length > 0) out.unknown = unknown
     const at = stepOf(r)
     if (at) Object.assign(out, at)
     return out
   } catch {
     return undefined
   }
+}
+
+/** The activity of one reply path, as the record keeps it; anything else is dropped. */
+function activityOf(value: unknown): DetectionActivity | undefined {
+  const a = objectOf(value)
+  if (!a || (a.state !== 'executed' && a.state !== 'skipped' && a.state !== 'partial' && a.state !== 'unknown')) return undefined
+  const reasons = Array.isArray(a.reasons) ? a.reasons.filter((r): r is string => typeof r === 'string').slice(0, MAX_DETECTION_REASONS) : []
+  return { state: a.state, ...(reasons.length > 0 ? { reasons } : {}) }
+}
+
+/** The settings and the two reply paths, as the record keeps them (docs/adr/0039). */
+function detectionOf(value: unknown): DetectionRecord | undefined {
+  const d = objectOf(value)
+  const settings = objectOf(d?.settings)
+  const restoreLog = settings?.restoreLog
+  const toolGuard = settings?.toolGuard
+  if (typeof restoreLog !== 'boolean' || (toolGuard !== 'off' && toolGuard !== 'warn' && toolGuard !== 'block')) return undefined
+  const unknown = activityOf(d?.unknown)
+  const exfil = activityOf(d?.exfil)
+  if (!unknown || !exfil) return undefined
+  return { settings: { restoreLog, toolGuard }, unknown, exfil }
+}
+
+/** One anonymous unknown note; a row that names none of the shape is dropped. */
+function unknownOf(value: unknown): UnknownNote[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: UnknownNote[] = []
+  for (const item of value) {
+    const n = objectOf(item)
+    if (!n || typeof n.id !== 'string' || n.id === '' || typeof n.kind !== 'string' || !countOf(n.n) || n.n < 1) continue
+    const at = placeOf(n.at)
+    out.push({ id: n.id, kind: n.kind, n: n.n, ...(at ? { at } : {}), ...(n.tool === true ? { tool: true as const } : {}) })
+    if (out.length >= MAX_UNKNOWN_NOTES) break
+  }
+  return out
 }
 
 /** The local day of `d`, as its file is named. */
@@ -441,6 +529,19 @@ export class RecordStore {
   /** A reset going on: nothing is written until it is done. */
   #resetting: Promise<unknown> | undefined
   readonly #warnedAt = new Map<string, number>()
+  /**
+   * Records this run added, as against ones read back from disk. A query puts
+   * the live one first when both name the same key (docs/adr/0039).
+   */
+  readonly #live = new WeakSet<MaskRecord>()
+  /**
+   * Where the disk rows kept in memory sit, as `file#offset`. A query skips
+   * that row on disk and uses the memory copy, so one request is counted once
+   * even when its line was written before the read that loaded it.
+   */
+  readonly #loadedAt = new Set<string>()
+  /** Records that could not be written or were past keepBytes, by day (docs/adr/0039). */
+  readonly #dropped = new Map<string, number>()
   /** Settles once the days on disk are in the sums and the latest records. */
   loaded: Promise<void> = Promise.resolve()
 
@@ -500,6 +601,7 @@ export class RecordStore {
   /** Keeps `r`, and has it written. */
   add(r: Omit<MaskRecord, 'key'>, sourceSession?: string): MaskRecord {
     const rec = { key: this.#nextKey(), ...r } as MaskRecord
+    this.#live.add(rec)
     if (sourceSession !== undefined) this.#sessions.set(rec, sourceSession)
     if (rec.values.length > MAX_RECORD_VALUES) {
       rec.valuesOmitted = (rec.valuesOmitted ?? 0) + rec.values.length - MAX_RECORD_VALUES
@@ -522,6 +624,43 @@ export class RecordStore {
   recent(limit = this.#o.keepRecords, session?: string): MaskRecord[] {
     const rows = session === undefined ? this.#ring : this.#ring.filter((r) => (this.#sessions.get(r) ?? r.session) === session)
     return rows.slice(-limit).reverse()
+  }
+
+  /**
+   * The records this run added, newest last. A history query puts these ahead
+   * of any disk row with the same key, as the load does (docs/adr/0039).
+   */
+  liveRecords(): MaskRecord[] {
+    return this.#ring.filter((r) => this.#live.has(r))
+  }
+
+  /** The disk rows already kept in memory, as `day#offset`, so a query counts each once. */
+  loadedLocations(): ReadonlySet<string> {
+    return this.#loadedAt
+  }
+
+  /** Records that never reached disk, by day: a full file or a failed write (docs/adr/0039). */
+  droppedCounts(): ReadonlyMap<string, number> {
+    return this.#dropped
+  }
+
+  /** The day files this store would read, newest first, as they are named on disk. */
+  async dayFiles(): Promise<string[]> {
+    const dir = this.#o.dir
+    if (!dir) return []
+    try {
+      const names = await readdir(dir)
+      return names.map((n) => DAY_FILE.exec(n)?.[1]).filter((d): d is string => d !== undefined).sort().reverse()
+    } catch (err) {
+      if (isMissing(err)) return []
+      throw err
+    }
+  }
+
+  /** Records a day's own file holds, for the history query (docs/adr/0039). */
+  dayPath(day: string): string | undefined {
+    const dir = this.#o.dir
+    return dir === undefined || !DAY_FILE.test(`${day}.jsonl`) ? undefined : join(dir, `${day}.jsonl`)
   }
 
   /**
@@ -599,7 +738,11 @@ export class RecordStore {
     }
     for (const [day, lines] of byDay) {
       const file = join(dir, `${day}.jsonl`)
-      if (this.#full.has(file)) continue
+      if (this.#full.has(file)) {
+        // the day is past keepBytes: these records stay in memory only, and the query says so
+        this.#countDropped(day, lines.length)
+        continue
+      }
       const h = await open(file, 'a+', 0o600)
       try {
         let size = this.#sizes.get(file)
@@ -617,6 +760,7 @@ export class RecordStore {
           keep.push(line)
           size += bytes
         }
+        this.#countDropped(day, lines.length - keep.length)
         if (keep.length > 0) await h.appendFile(keep.join('\n') + '\n')
         this.#sizes.set(file, size)
       } finally {
@@ -627,6 +771,12 @@ export class RecordStore {
       // a failed prune is not a failed write: the records above are on disk
       await this.prune().catch((err: unknown) => this.#warn('could not delete old record files; records are still written', err))
     }
+  }
+
+  /** Counts records that did not reach disk, for the day they belong to (docs/adr/0039). */
+  #countDropped(day: string, n: number): void {
+    if (n <= 0) return
+    this.#dropped.set(day, (this.#dropped.get(day) ?? 0) + n)
   }
 
   /** Makes a day file private and ends a line a crash cut short, so the next record starts a line of its own; its size after. */
@@ -660,6 +810,7 @@ export class RecordStore {
     const drop = async (day: string, file: string): Promise<void> => {
       await unlinkIfThere(file)
       this.#forgetFile(file)
+      this.#dropped.delete(day)
       gone.add(day)
     }
     const days: Array<{ day: string; file: string; size: number }> = []
@@ -749,6 +900,8 @@ export class RecordStore {
     this.#ready.clear()
     this.#sizes.clear()
     this.#full.clear()
+    this.#dropped.clear()
+    this.#loadedAt.clear()
     return { files }
   }
 
@@ -779,10 +932,15 @@ export class RecordStore {
       const t = emptyTotals()
       const need = this.#o.keepRecords - older.length
       const tail: LoadedRecord[] = []
+      // where each kept row sits, so a query uses this copy instead of the line on disk (docs/adr/0039)
+      const places = new Map<LoadedRecord, string>()
       const lines = createInterface({ input: createReadStream(join(dir, `${day}.jsonl`), { encoding: 'utf8' }), crlfDelay: Infinity })
+      let offset = 0
       for await (const line of lines) {
+        const at = `${day}#${offset}`
+        offset += Buffer.byteLength(line) + 1
         // a blank line or one a crash cut short is no record
-        const r = parseRecord(line)
+        const r = decodeRecord(line)
         // The first valid row read wins across all days; malformed rows never reserve a key.
         // Records added since the read began are already in the sums and take priority over disk rows.
         if (!r || (r.key !== undefined && (added.has(r.key) || seen.has(r.key)))) continue
@@ -792,10 +950,15 @@ export class RecordStore {
         }
         addRecord(t, r)
         if (need > 0) {
+          places.set(r, at)
           tail.push(r)
-          if (tail.length > need) tail.shift()
+          if (tail.length > need) {
+            const gone = tail.shift()
+            if (gone) places.delete(gone)
+          }
         }
       }
+      for (const at of places.values()) this.#loadedAt.add(at)
       addTotals(this.#day(day), t)
       older = [...tail, ...older]
     }

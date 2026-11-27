@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import type { Key, T } from './locales.ts'
 import { failureText, fetchOverview, type ClientCtx } from './rpc.ts'
 import { Dist, Kpis, Notices, RecordHead, RecordRow, ResetButton, SessionSwitch } from './StatsParts.ts'
+import { QuerySection } from './QuerySection.ts'
 import { afterRefresh, pageOf, warnings, type CardState, type Range } from './view.ts'
 import { PrincipleDiagram } from './PrincipleDiagram.ts'
 
@@ -192,5 +193,8 @@ function Card(props: CardProps): ReactNode {
           )
         : null,
     ),
+    // the counts above cover every day on disk, so the query below reaches the
+    // records the memory no longer holds (docs/adr/0039)
+    h(QuerySection, { ctx: props.ctx, t, ...(props.sessionId !== undefined ? { sessionId: props.sessionId } : {}) }),
   )
 }

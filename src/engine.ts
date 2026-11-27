@@ -1,11 +1,12 @@
 import type { ResolvedConfig } from './config.ts'
-import { valuesOf, whatOf, RecordStore, type MaskRecord } from './records.ts'
+import { valuesOf, whatOf, RecordStore, type DetectionActivity, type LoadedRecord, type MaskRecord } from './records.ts'
 import { ValueTable } from './redact/known.ts'
 import { Masker, type Hit, type MaskResult } from './redact/mask.ts'
 import { jsonEscape, walkJSON } from './redact/json.ts'
 import { decodedView } from './redact/find.ts'
 import { bodies } from './redact/placeholder.ts'
-import { newTally, Restorer, type StreamRestorer, type Tally } from './redact/restore.ts'
+import { newTally, Restorer, type StreamRestorer, type Tally, type ToolGuard } from './redact/restore.ts'
+import { knownKind } from './redact/kinds.ts'
 import { FirstSending } from './first.ts'
 import type { ViewStore } from './views.ts'
 
@@ -28,8 +29,8 @@ export interface Exchange {
   restoreBody(text: string): string
   /** A restorer for one `text/event-stream` reply. */
   streamRestorer(): StreamRestorer
-  /** The reply ended, or failed: the request's record is kept. Once only. */
-  finish(): void
+  /** The reply ended, or failed: the request's record is kept. Once only. `partial` says the reply was cut off. */
+  finish(partial?: boolean): void
 }
 
 /** What the dispatcher needs from the redaction engine. */
@@ -98,6 +99,8 @@ export class PrivacyEngine implements RedactionEngine {
   #keepViews: boolean
   /** Put a reply's placeholders back before the session log gets it (config restoreLog, docs/adr/0003); `reconfigure` changes it. */
   #restoreLog: boolean
+  /** The reply guard this run sends under, as the record's settings say (docs/adr/0039). */
+  #guard: ToolGuard
   readonly records: RecordStore
   readonly #logger: EngineLogger | undefined
   readonly views: ViewStore | undefined
@@ -116,6 +119,7 @@ export class PrivacyEngine implements RedactionEngine {
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#keepViews = config.vendorView
     this.#restoreLog = config.restoreLog
+    this.#guard = config.toolGuard
     this.#logger = options.logger
     this.#names = options.names
     this.#steps = options.steps
@@ -153,6 +157,7 @@ export class PrivacyEngine implements RedactionEngine {
     this.#restorer = new Restorer(this.#table, config.toolGuard)
     this.#keepViews = config.vendorView
     this.#restoreLog = config.restoreLog
+    this.#guard = config.toolGuard
     // off drops the bodies kept: they are not to stay in memory once it is turned off
     if (!config.vendorView) this.views?.clear()
   }
@@ -181,6 +186,70 @@ export class PrivacyEngine implements RedactionEngine {
         if (!oldest.done) this.#auditForms.delete(oldest.value)
       }
     }
+  }
+
+  /**
+   * What the reply path actually did (docs/adr/0039). A setting on is not
+   * proof: an empty table, a reply that never came or a guard turned off all
+   * leave it skipped, and a cut-off reply leaves it partial.
+   */
+  #activity(restoreLog: boolean, tally: Tally, partial: boolean, path: 'unknown' | 'exfil'): DetectionActivity {
+    if (!restoreLog) return { state: 'skipped', reasons: ['restore-disabled'] }
+    // the guard only decides the exfiltration path; an unknown marker is read
+    // for either way the reply goes
+    if (path === 'exfil' && this.#guard === 'off') return { state: 'skipped', reasons: ['guard-off'] }
+    if (this.#table.size === 0) return { state: 'skipped', reasons: ['no-value-table'] }
+    if (!tally.sawReply) return { state: 'skipped', reasons: ['no-reply'] }
+    return partial ? { state: 'partial', reasons: ['incomplete-reply'] } : { state: 'executed' }
+  }
+
+  /**
+   * One stored row as the card may show it (docs/adr/0039): every string
+   * projected again under today's rules, so a rule that came later still
+   * hides what it names. A projection that fails omits the field.
+   */
+  detail(row: LoadedRecord): MaskRecord {
+    const project = auditProjection(this.#auditMasker, [...this.#auditForms, ...this.#table.trueforms()])
+    const text = (value: string | undefined): string | undefined => (value === undefined ? undefined : project(value))
+    const out: MaskRecord = {
+      key: row.key ?? 0,
+      time: row.time,
+      tookMs: row.tookMs,
+      what: row.what,
+      host: text(row.host) ?? '',
+      n: row.n,
+      values: row.values.map((v) => ({
+        ...v,
+        ...(v.head === '' ? {} : { head: text(v.head) ?? '' }),
+        ...(v.tail !== undefined ? { tail: text(v.tail) } : {}),
+        ...(v.before !== undefined ? { before: text(v.before) } : {}),
+        ...(v.after !== undefined ? { after: text(v.after) } : {}),
+        ...(v.at ? { at: { path: text(v.at.path) ?? '', ...(v.at.role !== undefined ? { role: text(v.at.role) } : {}), ...(v.at.type !== undefined ? { type: text(v.at.type) } : {}) } } : {}),
+      })),
+      restored: row.restored,
+      unmapped: row.unmapped,
+    }
+    if (row.relay === true) out.relay = true
+    if (row.blocked === true) out.blocked = true
+    if (row.failed === true) out.failed = true
+    if (row.warned !== undefined) out.warned = row.warned
+    if (row.restoredInTools !== undefined) out.restoredInTools = row.restoredInTools
+    if (row.exfil !== undefined) out.exfil = row.exfil
+    if (row.exfilBlocked !== undefined) out.exfilBlocked = row.exfilBlocked
+    if (row.valuesOmitted !== undefined) out.valuesOmitted = row.valuesOmitted
+    if (row.exfilHosts) out.exfilHosts = row.exfilHosts.map((h) => text(h) ?? '')
+    if (row.model !== undefined) out.model = text(row.model)
+    if (row.session !== undefined) out.session = text(row.session)
+    if (row.title !== undefined) out.title = text(row.title)
+    if (row.workspace !== undefined) out.workspace = text(row.workspace)
+    if (row.turn !== undefined && row.step !== undefined) {
+      out.turn = row.turn
+      out.step = row.step
+    }
+    if (row.detection) out.detection = row.detection
+    // An unknown note's kind is one of ours or the fixed word; never the model's.
+    if (row.unknown) out.unknown = row.unknown.map((u) => ({ ...u, kind: knownKind(u.kind) }))
+    return out
   }
 
   maskRequest(body: string, info: RequestInfo): Exchange | null {
@@ -264,7 +333,7 @@ export class PrivacyEngine implements RedactionEngine {
       restoring: () => restoreLog && this.#table.size > 0,
       restoreBody: (text) => restorer.restoreJSON(text, tally),
       streamRestorer: () => restorer.stream(tally),
-      finish: () => {
+      finish: (partial = false) => {
         if (done) return
         done = true
         let restored = 0
@@ -283,6 +352,14 @@ export class PrivacyEngine implements RedactionEngine {
           unmapped: tally.unmapped,
           ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
           ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
+          detection: {
+            settings: { restoreLog, toolGuard: this.#guard },
+            unknown: this.#activity(restoreLog, tally, partial, 'unknown'),
+            exfil: this.#activity(restoreLog, tally, partial, 'exfil'),
+          },
+          ...(tally.unknown.length > 0
+            ? { unknown: tally.unknown.map((u, i) => ({ id: `unknown-${i + 1}`, kind: u.kind, n: u.n, ...(u.tool ? { tool: true as const } : {}) })) }
+            : {}),
         }, info.session)
         if (this.views && this.#keepViews) this.views.put(rec.key, warnedView(sentText, r.warned, [...known, ...(r.trueforms ?? [])].map(([, placeholder]) => placeholder)))
       },

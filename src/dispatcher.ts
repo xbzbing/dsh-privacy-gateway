@@ -857,11 +857,11 @@ export class MaskingDispatcher extends Dispatcher {
     handler = buffered.handler
     let exchange: Exchange | null = null
     let finished = false
-    const finish = (): void => {
+    const finish = (partial = false): void => {
       if (finished) return
       finished = true
       try {
-        exchange?.finish()
+        exchange?.finish(partial)
       } catch (err) {
         // Recording is best-effort; it cannot prevent a transport terminal callback.
         try { this.#logger?.warn(`dsh-privacy-gateway: exchange recording failed (${errorName(err)})`) } catch {}
