@@ -51,3 +51,4 @@
 | [ADR-0036](0036-named-field-values.md) | 具名赋值允许纯字母长口令与纯数字口令 | Accepted | 脱敏 |
 | [ADR-0037](0037-namespaced-placeholder-protocol.md) | 占位符换成带命名空间的方括号记号 | Accepted | 脱敏 |
 | [ADR-0038](0038-container-field-slug-values.md) | 容器字段名下的 slug 值是名字，不是值 | Accepted | 脱敏 |
+| [ADR-0039](0039-llm-stream-and-intercept-modes.md) | llm/stream 结构化脱敏半与 intercept 双模式互斥，默认 dispatcher | Accepted | 架构 |

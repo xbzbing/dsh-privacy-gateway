@@ -1,13 +1,14 @@
 import type { ResolvedConfig } from './config.ts'
 import { valuesOf, whatOf, RecordStore, type MaskRecord } from './records.ts'
 import { ValueTable } from './redact/known.ts'
-import { Masker, type Hit, type MaskResult } from './redact/mask.ts'
+import { Masker, type Hit, type MaskResult, type Place } from './redact/mask.ts'
 import { jsonEscape, walkJSON } from './redact/json.ts'
 import { decodedView } from './redact/find.ts'
 import { bodies } from './redact/placeholder.ts'
 import { newTally, Restorer, type StreamRestorer, type Tally } from './redact/restore.ts'
 import { FirstSending } from './first.ts'
 import type { ViewStore } from './views.ts'
+import { envBlockRanges } from './protect.ts'
 
 /** Where a request goes, as the record keeps it. */
 export interface RequestInfo {
@@ -36,6 +37,47 @@ export interface Exchange {
 export interface RedactionEngine {
   /** The request as it goes, or null when it goes as it is (not a model request, or masking is off). Throws when masking fails. */
   maskRequest(body: string, info: RequestInfo): Exchange | null
+}
+
+/** Where one structured string sits, and which protected region semantics apply to it. */
+export interface StructuredMaskMeta {
+  session?: string
+  what?: string
+  model?: string
+  at?: Place
+  /** Host-written system text, where configured <env> blocks stay byte for byte. */
+  env?: boolean
+  /** A tool description, skipped while protectTools is on. */
+  tool?: boolean
+}
+
+export interface StructuredMaskResult {
+  text: string
+  hits: Hit[]
+  warned: number
+  n: number
+}
+
+/** The reply side and deferred record of one structured request. */
+export interface StructuredExchange {
+  readonly restorer: Restorer
+  readonly tally: Tally
+  /** The restoreLog setting this request went out with. */
+  readonly restoring: boolean
+  /** Writes restored, unknown-placeholder, tool and exfiltration counts once. */
+  finish(): void
+}
+
+export interface StructuredRecordFields {
+  info: RequestInfo
+  what: string
+  model?: string
+  session?: string
+  n: number
+  warned: number
+  hits: readonly Hit[]
+  started: number
+  failed?: boolean
 }
 
 /**
@@ -94,10 +136,12 @@ export class PrivacyEngine implements RedactionEngine {
   /** Audit has no wire exemptions: allow, actions, protected regions and disabled categories cannot expose known values. */
   #auditMasker: Masker
   #restorer: Restorer
-  /** Keep the bodies for the vendor view (config vendorView); `reconfigure` changes it. */
+  /** Keep the bodies for the vendor view (config vendorView, dispatcher mode only); `reconfigure` changes it. */
   #keepViews: boolean
   /** Put a reply's placeholders back before the session log gets it (config restoreLog, docs/adr/0003); `reconfigure` changes it. */
   #restoreLog: boolean
+  #protectEnvBlock: boolean
+  #protectTools: boolean
   readonly records: RecordStore
   readonly #logger: EngineLogger | undefined
   readonly views: ViewStore | undefined
@@ -114,8 +158,10 @@ export class PrivacyEngine implements RedactionEngine {
     this.#masker = this.#maskerFor(config)
     this.#auditMasker = this.#maskerFor(config, true)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
-    this.#keepViews = config.vendorView
+    this.#keepViews = config.vendorView && config.intercept === 'dispatcher'
     this.#restoreLog = config.restoreLog
+    this.#protectEnvBlock = config.protectEnvBlock
+    this.#protectTools = config.protectTools
     this.#logger = options.logger
     this.#names = options.names
     this.#steps = options.steps
@@ -151,10 +197,12 @@ export class PrivacyEngine implements RedactionEngine {
     this.#masker = this.#maskerFor(config)
     this.#auditMasker = this.#maskerFor(config, true)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
-    this.#keepViews = config.vendorView
+    this.#keepViews = config.vendorView && config.intercept === 'dispatcher'
     this.#restoreLog = config.restoreLog
+    this.#protectEnvBlock = config.protectEnvBlock
+    this.#protectTools = config.protectTools
     // off drops the bodies kept: they are not to stay in memory once it is turned off
-    if (!config.vendorView) this.views?.clear()
+    if (!this.#keepViews) this.views?.clear()
   }
 
   /** How many values the table holds. */
@@ -165,6 +213,120 @@ export class PrivacyEngine implements RedactionEngine {
   /** What `text` would go as, with nothing remembered (`/privacy test`). */
   preview(text: string): MaskResult {
     return this.#masker.preview(text)
+  }
+
+  /** Masks one free-text string of a structured llm/stream request. */
+  maskStructuredText(text: string, info: RequestInfo, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
+    if (!this.active || (meta.tool === true && this.#protectTools)) return null
+    const keep = this.#protectEnvBlock && meta.env === true ? envBlockRanges(text) : []
+    const r = this.#masker.maskText(text, false, keep, meta.at)
+    return this.#structuredResult(r, info)
+  }
+
+  /** Masks a tool call's arguments as JSON text of its own, preserving its escapes. */
+  maskStructuredJSON(text: string, info: RequestInfo, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
+    if (!this.active) return null
+    const r = this.#masker.maskText(text, true, [], meta.at)
+    return this.#structuredResult(r, info)
+  }
+
+  #structuredResult(r: MaskResult, _info: RequestInfo): StructuredMaskResult | null {
+    if (r.n === 0 && r.hits.length === 0) return null
+    const hits = [...r.hits]
+    let warned = 0
+    for (const h of hits) if (h.action === 'warn') warned++
+    return { text: r.text, hits, warned, n: r.n }
+  }
+
+  /**
+   * Creates the deferred record and reply snapshot for a structured request.
+   * Failure and block records are written immediately; a successful one is
+   * finished after its reply so restoration and exfiltration counts are kept.
+   */
+  recordStructuredRequest(fields: StructuredRecordFields): StructuredExchange {
+    const started = fields.started
+    const info = fields.info
+    const step = fields.session ? this.#steps?.(fields.session) : undefined
+    // the audit boundary of maskRequest (v0.4.0): every persisted string is projected
+    const auditMasker = this.#auditMasker
+    const known = [...this.#auditForms, ...this.#table.trueforms()]
+    const project = auditProjection(auditMasker, known)
+    const rawModel = fields.model
+    const model = rawModel !== undefined ? project(rawModel) : undefined
+    const shownHost = project(info.host) ?? ''
+    const shownSession = fields.session !== undefined ? project(fields.session) : undefined
+    const names = fields.session !== undefined ? this.#names?.(fields.session) : undefined
+    const title = names?.title !== undefined ? project(names.title) : undefined
+    const workspace = names?.workspace !== undefined ? project(names.workspace) : undefined
+    const hits = fields.hits.map((hit) => auditHit(hit, project))
+    const values = valuesOf(hits)
+    if (fields.session !== undefined && step !== undefined) {
+      for (const v of values) {
+        const first = this.#first.get(fields.session, v.placeholder)
+        // A blocked attempt can refer to an earlier sending, but cannot create one.
+        if (first && (first.turn !== step.turn || first.step !== step.step)) v.first = first
+      }
+    }
+    const record: Omit<MaskRecord, 'key'> = {
+      time: new Date().toISOString(),
+      what: whatOf(fields.what),
+      host: shownHost,
+      ...(isLoopback(info.host) ? { relay: true as const } : {}),
+      ...(shownSession !== undefined ? { session: shownSession } : {}),
+      ...(title !== undefined ? { title } : {}),
+      ...(workspace !== undefined ? { workspace } : {}),
+      ...(fields.session ? { ...step } : {}),
+      ...(model !== undefined ? { model } : {}),
+      tookMs: elapsed(started),
+      n: fields.n,
+      ...(fields.warned > 0 ? { warned: fields.warned } : {}),
+      values,
+      restored: 0,
+      unmapped: 0,
+    }
+    const restorer = this.#restorer
+    const tally = newTally()
+    if (fields.failed) {
+      this.records.add({ ...record, failed: true }, fields.session)
+      return { restorer, tally, restoring: false, finish: () => {} }
+    }
+    const blocks = hits.filter((h) => h.action === 'block')
+    if (blocks.length > 0) {
+      this.records.add({ ...record, blocked: true }, fields.session)
+      throw new RequestBlocked(blocks)
+    }
+    if (fields.session !== undefined && step !== undefined) {
+      for (const v of values) this.#first.note(fields.session, v.placeholder, step)
+    }
+    // the same condition the dispatcher's restoring() answers: with the log restore
+    // switch off, or with no value to put back, the reply passes through untouched
+    const restoring = this.#restoreLog && this.#table.size > 0
+    let done = false
+    return {
+      restorer,
+      tally,
+      restoring,
+      finish: () => {
+        if (done) return
+        done = true
+        let restored = 0
+        for (const n of tally.restored.values()) restored += n
+        if (record.n === 0 && (record.warned ?? 0) === 0 && restored === 0 && tally.unmapped === 0 && tally.exfil === 0) return
+        const hosts = [...tally.exfilHosts].map(project).filter((host): host is string => host !== undefined)
+        if (tally.exfil > 0) {
+          const left = tally.exfilBlocked > 0 ? `; ${tally.exfilBlocked} placeholders were left in them` : ''
+          this.#logger?.warn(`dsh-privacy-gateway: ${tally.exfil} tool calls had a value put back in arguments that name ${hosts.join(', ')}${left}`)
+        }
+        this.records.add({
+          ...record,
+          restored,
+          ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}),
+          unmapped: tally.unmapped,
+          ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
+          ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
+        }, fields.session)
+      },
+    }
   }
 
   /** Safe display and query text for internal audit consumers; a projection failure omits the text. */

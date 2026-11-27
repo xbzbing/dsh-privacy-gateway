@@ -28,6 +28,8 @@ interface Base<K extends string> {
   group: GroupId
   /** Takes one of the group's two columns when the page is wide enough; otherwise the whole width. */
   half?: true
+  /** Modes where this field has an effect; absent means both modes. */
+  modes?: readonly ('stream' | 'dispatcher')[]
   risk?: Risk
   /** For a switch: the direction that needs confirming, `off` (the default: protection removed) or `on` (real values now kept). */
   riskWhen?: 'on' | 'off'
@@ -51,8 +53,8 @@ export const FIELDS: readonly FieldSpec[] = [
   // off keeps the values out of the session log, and the agent sees placeholders too (docs/adr/0003).
   // On is the direction that costs: the real values go into the log, which sync, backups and exports carry
   { key: 'restoreLog', group: 'mask', kind: 'switch', default: false, risk: 'log', riskWhen: 'on' },
-  // keys travel to the vendor too: off sends a secret used as a key as it is (docs/adr/0029)
-  { key: 'maskKeys', group: 'mask', kind: 'switch', default: true, risk: 'send' },
+  // keys travel to the vendor too: off sends a secret used as a key as it is (docs/adr/0029); the wire JSON exists only in dispatcher mode
+  { key: 'maskKeys', group: 'mask', kind: 'switch', default: true, risk: 'send', modes: ['dispatcher'] },
   // words are matched as written, allow in any case (README, config.ts)
   // a word taken out of words, like a value put into allow, goes as it is from then on
   { key: 'words', group: 'lists', kind: 'list', default: [], anyCase: false, half: true, risk: 'send', risky: 'remove' },
@@ -61,8 +63,8 @@ export const FIELDS: readonly FieldSpec[] = [
   { key: 'record', group: 'record', kind: 'switch', default: true, half: true, risk: 'delete' },
   { key: 'keepDays', group: 'record', kind: 'count', min: 1, default: 30, half: true, risk: 'delete' },
   { key: 'recordContext', group: 'record', kind: 'switch', default: true },
-  // off clears the copies kept so far
-  { key: 'vendorView', group: 'record', kind: 'switch', default: false, risk: 'delete' },
+  // off clears the copies kept so far; the sent body exists only in dispatcher mode
+  { key: 'vendorView', group: 'record', kind: 'switch', default: false, risk: 'delete', modes: ['dispatcher'] },
   { key: 'showPanel', group: 'view', kind: 'switch', default: false },
   { key: 'excludeProviders', group: 'view', kind: 'providers', default: [], risk: 'send' },
 ]
@@ -139,13 +141,14 @@ export interface SummaryPart {
 }
 
 /** What a group's header says while it is folded, so the page can stay short without hiding the state. */
-export function groupSummary(g: GroupId, value: Record<string, unknown>): SummaryPart[] {
+export function groupSummary(g: GroupId, value: Record<string, unknown>, mode: 'stream' | 'dispatcher' = 'dispatcher'): SummaryPart[] {
   const on = (k: 'enabled' | 'secrets' | 'personal' | 'shape' | 'restoreLog' | 'maskKeys' | 'record' | 'vendorView' | 'showPanel'): boolean => switchValue(value[k], spec(k, 'switch').default)
+  const shown = (k: 'maskKeys' | 'vendorView'): boolean => spec(k, 'switch').modes?.includes(mode) ?? true
   switch (g) {
     case 'mask': {
       if (!on('enabled')) return [{ key: 'cfg.s.maskOff', off: true }]
       const kinds = (['secrets', 'personal'] as const).filter(on)
-      const parts: SummaryPart[] = kinds.length === 0 ? [{ key: on('maskKeys') ? 'cfg.s.maskKeysOnly' : 'cfg.s.maskNothing', off: true }] : kinds.map((k) => ({ key: `cfg.s.${k}` }))
+      const parts: SummaryPart[] = kinds.length === 0 ? [{ key: shown('maskKeys') && on('maskKeys') ? 'cfg.s.maskKeysOnly' : 'cfg.s.maskNothing', off: true }] : kinds.map((k) => ({ key: `cfg.s.${k}` }))
       if (on('shape')) parts.push({ key: 'cfg.s.shape' })
       const guard = spec('toolGuard', 'choice')
       parts.push({ key: `cfg.s.toolGuard.${choiceValue(value.toolGuard, guard.choices, guard.default)}` })
@@ -160,7 +163,7 @@ export function groupSummary(g: GroupId, value: Record<string, unknown>): Summar
     case 'record': {
       const days = spec('keepDays', 'count')
       const parts: SummaryPart[] = on('record') ? [{ key: 'cfg.s.record', params: { n: countValue(value.keepDays, days.min, days.default) } }] : [{ key: 'cfg.s.recordOff', off: true }]
-      if (on('vendorView')) parts.push({ key: 'cfg.s.vendorView' })
+      if (shown('vendorView') && on('vendorView')) parts.push({ key: 'cfg.s.vendorView' })
       return parts
     }
     case 'view': {

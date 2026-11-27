@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Context } from '@deepseek-ai/cordis'
+import { getGlobalDispatcher } from 'undici'
 
 import type { PrivacyGatewayConfig } from '../src/config.ts'
+import { MaskingDispatcher } from '../src/dispatcher.ts'
 import { apply } from '../src/index.ts'
 import { isSessionId, NAMESPACE, PrivacyGatewayService, type OverviewSource } from '../src/remote.ts'
 
@@ -136,6 +138,30 @@ test('vendorView turned off serves no body and drops the ones kept, before any r
     // turned on again, nothing kept before comes back
     config.vendorView = true
     assert.equal(h.source.vendorView?.(key), null)
+  })
+})
+
+test('Remote reports intercept live and stream disables vendorView as well as hiding it', async () => {
+  const config: PrivacyGatewayConfig = { vendorView: true }
+  await withPlugin(config, { title: 't', workspace: 'w' }, async (h) => {
+    await h.send(`key ${SENTINEL}`)
+    const dispatcher = h.source.overview(50)
+    assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher)
+    assert.equal(dispatcher.intercept, 'dispatcher')
+    assert.equal(dispatcher.vendorView, true)
+    const key = dispatcher.views?.[0]
+    assert.ok(key !== undefined)
+    config.intercept = 'stream'
+    const stream = h.source.overview(50)
+    assert.equal(getGlobalDispatcher() instanceof MaskingDispatcher, false, 'reading the live mode also disposes the old half')
+    assert.equal(stream.intercept, 'stream')
+    assert.equal(stream.vendorView, false)
+    assert.deepEqual(stream.views, [])
+    assert.equal(stream.restoreLog, false)
+    assert.equal(h.source.vendorView?.(key), null)
+    config.intercept = 'dispatcher'
+    assert.equal(h.source.overview(50).intercept, 'dispatcher')
+    assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher, 'reading the mode back reinstalls the dispatcher before the next request')
   })
 })
 

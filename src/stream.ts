@@ -1,0 +1,422 @@
+/**
+ * The llm/stream half of the gateway. It masks a structured request before
+ * the provider adapter serializes it and, only when restoreLog was on for the
+ * request, restores placeholders in the reply before the host consumes it.
+ */
+import { RequestBlocked, type RequestInfo, type StructuredExchange, type StructuredMaskMeta, type StructuredMaskResult, type StructuredRecordFields } from './engine.ts'
+import { placeOf, type Hit, type Place } from './redact/mask.ts'
+import type { Restorer, Tally } from './redact/restore.ts'
+import { isExcluded } from './providers.ts'
+
+export interface WireRequest {
+  provider?: unknown
+  model?: unknown
+  messages?: readonly WireMessage[]
+  system?: unknown
+  tools?: readonly WireTool[]
+  stop?: readonly unknown[]
+  sessionId?: unknown
+  purpose?: unknown
+  signal?: unknown
+  [key: string]: unknown
+}
+
+export type WireBlock =
+  | { type: 'text'; text: string; [key: string]: unknown }
+  | { type: 'reasoning'; text: string; [key: string]: unknown }
+  | { type: 'tool-call'; id: string; name: string; arguments: string; [key: string]: unknown }
+  | { type: 'tool-result'; content: readonly WireBlock[] | string; [key: string]: unknown }
+  | { type: string; [key: string]: unknown }
+
+export interface WireMessage {
+  role?: unknown
+  content: readonly WireBlock[] | string
+  [key: string]: unknown
+}
+
+export interface WireTool {
+  name?: unknown
+  description?: unknown
+  parameters?: unknown
+  [key: string]: unknown
+}
+
+export type WireChunk =
+  | { type: 'block-start'; index: number; blockType: string; [key: string]: unknown }
+  | { type: 'text-delta'; index: number; text: string; [key: string]: unknown }
+  | { type: 'reasoning-delta'; index: number; text: string; [key: string]: unknown }
+  | { type: 'tool-call-delta'; index: number; id?: unknown; name?: unknown; argumentsDelta: string; [key: string]: unknown }
+  | { type: 'block-end'; index: number; block: WireBlock; [key: string]: unknown }
+  | { type: 'usage'; [key: string]: unknown }
+  | { type: 'finish'; [key: string]: unknown }
+  | { type: string; [key: string]: unknown }
+
+interface DeltaChunk {
+  type: 'text-delta' | 'reasoning-delta'
+  index: number
+  text: string
+  [key: string]: unknown
+}
+
+interface BlockEndChunk {
+  type: 'block-end'
+  index: number
+  block: WireBlock
+  [key: string]: unknown
+}
+
+export interface StreamLlm {
+  stream(options: WireRequest): AsyncIterable<WireChunk>
+}
+
+export type WireListener = (options: WireRequest, next: () => AsyncIterable<WireChunk>) => AsyncIterable<WireChunk>
+
+export interface StreamOutcome {
+  request: WireRequest
+  /** Whether a masked copy, rather than the original object, must be dispatched. */
+  changed: boolean
+  restorer: Restorer
+  tally: Tally
+  restoring: boolean
+  finish(): void
+}
+
+export interface StreamEngine {
+  maskStructuredText(text: string, info: RequestInfo, meta?: StructuredMaskMeta): StructuredMaskResult | null
+  maskStructuredJSON(text: string, info: RequestInfo, meta?: StructuredMaskMeta): StructuredMaskResult | null
+  recordStructuredRequest(fields: StructuredRecordFields): StructuredExchange
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+function infoOf(route: string, session: string | undefined): RequestInfo {
+  return { host: route, path: 'llm/stream', ...(session ? { session } : {}) }
+}
+
+function hostMessage(message: { role?: unknown }): boolean {
+  return message.role === 'system' || message.role === 'developer'
+}
+
+/**
+ * Masks every supported string without mutating the request. Unchanged
+ * messages, blocks, arrays and tools keep their identities; a warning alone
+ * does not force a copy. Masking errors are recorded and fail the request.
+ */
+export function maskStructuredRequest(engine: StreamEngine, options: WireRequest, route: string, session: string | undefined, what: string): StreamOutcome {
+  const started = performance.now()
+  const info = infoOf(route, session)
+  const model = typeof options.model === 'string' ? options.model : undefined
+  let n = 0
+  let warned = 0
+  const hits: Hit[] = []
+
+  const accumulate = (r: StructuredMaskResult | null): string | undefined => {
+    if (r === null) return undefined
+    n += r.n
+    warned += r.warned
+    hits.push(...r.hits)
+    return r.text
+  }
+  const maskText = (raw: string, at: Place, env = false, tool = false): string | undefined =>
+    accumulate(engine.maskStructuredText(raw, info, { session, what, model, at, env, tool }))
+  const maskArgs = (raw: string, at: Place): string | undefined =>
+    accumulate(engine.maskStructuredJSON(raw, info, { session, what, model, at }))
+
+  let nextMessages: readonly WireMessage[] | undefined
+  let nextSystem: string | undefined
+  let nextTools: readonly WireTool[] | undefined
+  let nextStop: readonly unknown[] | undefined
+  try {
+    const walkBlocks = (blocks: readonly WireBlock[], path: string, env: boolean): readonly WireBlock[] => {
+      let touched = false
+      const out = blocks.map((block, i): WireBlock => {
+        if (!isObject(block)) return block as WireBlock
+        const at = `${path}.${i}`
+        if (block.type === 'tool-result') {
+          const content = (block as { content?: unknown }).content
+          // Some hosts serialize a tool result as one plain string: mask it as
+          // the free text it is, the way a message-level string content is.
+          if (typeof content === 'string') {
+            if (content === '') return block as WireBlock
+            const next = maskText(content, placeOf(options, `${at}.content`), env)
+            if (next === undefined || next === content) return block as WireBlock
+            touched = true
+            return { ...block, content: next } as WireBlock
+          }
+          if (!Array.isArray(content)) return block as WireBlock
+          const next = walkBlocks(content as readonly WireBlock[], `${at}.content`, env)
+          if (next === content) return block as WireBlock
+          touched = true
+          return { ...block, content: next } as WireBlock
+        }
+        if (block.type !== 'text' && block.type !== 'reasoning' && block.type !== 'tool-call') return block as WireBlock
+        const raw = block.type === 'tool-call' ? (block as { arguments?: unknown }).arguments : (block as { text?: unknown }).text
+        if (typeof raw !== 'string' || raw === '') return block as WireBlock
+        const next = block.type === 'tool-call' ? maskArgs(raw, placeOf(options, `${at}.arguments`)) : maskText(raw, placeOf(options, `${at}.text`), env)
+        if (next === undefined || next === raw) return block as WireBlock
+        touched = true
+        return (block.type === 'tool-call' ? { ...block, arguments: next } : { ...block, text: next }) as WireBlock
+      })
+      return touched ? out : blocks
+    }
+
+    const messages = options.messages
+    if (Array.isArray(messages)) {
+      let touched = false
+      const out = messages.map((message, i): WireMessage => {
+        if (!isObject(message)) return message as WireMessage
+        const content = message.content
+        const env = hostMessage(message)
+        if (typeof content === 'string') {
+          if (content === '') return message as WireMessage
+          const next = maskText(content, placeOf(options, `messages.${i}.content`), env)
+          if (next === undefined || next === content) return message as WireMessage
+          touched = true
+          return { ...message, content: next } as WireMessage
+        }
+        if (!Array.isArray(content)) return message as WireMessage
+        const next = walkBlocks(content, `messages.${i}.content`, env)
+        if (next === content) return message as WireMessage
+        touched = true
+        return { ...message, content: next } as WireMessage
+      })
+      if (touched) nextMessages = out
+    }
+
+    if (typeof options.system === 'string' && options.system !== '') {
+      const next = maskText(options.system, placeOf(options, 'system'), true)
+      if (next !== undefined && next !== options.system) nextSystem = next
+    }
+
+    if (Array.isArray(options.tools)) {
+      let touched = false
+      const out = options.tools.map((tool, i): WireTool => {
+        if (!isObject(tool) || typeof tool.description !== 'string' || tool.description === '') return tool as WireTool
+        const next = maskText(tool.description, placeOf(options, `tools.${i}.description`), false, true)
+        if (next === undefined || next === tool.description) return tool as WireTool
+        touched = true
+        return { ...tool, description: next } as WireTool
+      })
+      if (touched) nextTools = out
+    }
+
+    if (Array.isArray(options.stop)) {
+      let touched = false
+      const out = options.stop.map((entry, i) => {
+        if (typeof entry !== 'string' || entry === '') return entry
+        const next = maskText(entry, placeOf(options, `stop.${i}`))
+        if (next === undefined || next === entry) return entry
+        touched = true
+        return next
+      })
+      if (touched) nextStop = out
+    }
+  } catch (err) {
+    engine.recordStructuredRequest({ info, what, model, session, n, warned, hits, started, failed: true })
+    throw err
+  }
+
+  const changed = nextMessages !== undefined || nextSystem !== undefined || nextTools !== undefined || nextStop !== undefined
+  const request: WireRequest = changed
+    ? {
+        ...options,
+        ...(nextMessages !== undefined ? { messages: nextMessages } : {}),
+        ...(nextSystem !== undefined ? { system: nextSystem } : {}),
+        ...(nextTools !== undefined ? { tools: nextTools } : {}),
+        ...(nextStop !== undefined ? { stop: nextStop } : {}),
+      }
+    : options
+  const exchange = engine.recordStructuredRequest({ info, what, model, session, n, warned, hits, started })
+  return { request, changed, restorer: exchange.restorer, tally: exchange.tally, restoring: exchange.restoring, finish: exchange.finish }
+}
+
+const MASKED_REQUESTS = new WeakSet<object>()
+
+/** Marks a masked copy so its re-entry through the waterfall is not masked again. */
+export function markMaskedRequest<T extends object>(request: T): T {
+  MASKED_REQUESTS.add(request)
+  return request
+}
+
+export function isMaskedRequest(request: unknown): boolean {
+  return typeof request === 'object' && request !== null && MASKED_REQUESTS.has(request)
+}
+
+type ReplyExchange = Pick<StreamOutcome, 'restorer' | 'tally' | 'restoring' | 'finish'>
+
+/**
+ * Restores text and reasoning incrementally, then restores each assembled
+ * block authoritatively. Tool arguments are judged and restored at block-end,
+ * before the tool executor reads them. Held text is released before a terminal
+ * chunk or normal EOF. Cancellation and errors discard it, finish the request
+ * immediately, and never yield from cleanup; restoreLog off is a strict pass-through.
+ */
+export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: ReplyExchange): AsyncIterable<WireChunk> {
+  return (async function* () {
+    if (!exchange.restoring) {
+      try {
+        for await (const chunk of source) yield chunk
+      } finally {
+        exchange.finish()
+      }
+      return
+    }
+    const { restorer, tally } = exchange
+    const kinds = new Map<number, 'text-delta' | 'reasoning-delta'>()
+    const held = new Map<number, string>()
+    const take = (index: number): { kind: 'text-delta' | 'reasoning-delta'; text: string } | undefined => {
+      const kind = kinds.get(index)
+      const text = held.get(index)
+      kinds.delete(index)
+      held.delete(index)
+      if (kind === undefined || text === undefined) return undefined
+      return { kind, text }
+    }
+    const drain = function* (): Generator<WireChunk> {
+      for (const [index] of [...held]) {
+        const tail = take(index)
+        if (tail === undefined || tail.text === '') continue
+        const text = restorer.restoreText(tail.text, false, tally, false)
+        yield { type: tail.kind, index, text } as WireChunk
+      }
+    }
+    try {
+      for await (const chunk of source) {
+        switch (chunk.type) {
+          case 'text-delta':
+          case 'reasoning-delta': {
+            const c = chunk as DeltaChunk
+            if (!kinds.has(c.index)) {
+              kinds.set(c.index, c.type)
+              held.set(c.index, '')
+            }
+            const buf = (held.get(c.index) ?? '') + c.text
+            const n = restorer.partialTail(buf)
+            const ready = n > 0 ? buf.slice(0, buf.length - n) : buf
+            held.set(c.index, buf.slice(buf.length - n))
+            if (ready === '') continue
+            const text = restorer.restoreText(ready, false, tally, false)
+            yield text === ready && ready === c.text ? chunk : ({ ...chunk, text } as WireChunk)
+            continue
+          }
+          case 'tool-call-delta':
+            // Only the assembled block is authoritative for tool execution.
+            yield chunk
+            continue
+          case 'block-end': {
+            const c = chunk as BlockEndChunk
+            const tail = take(c.index)
+            if (tail !== undefined && tail.text !== '') {
+              const text = restorer.restoreText(tail.text, false, tally, false)
+              yield { type: tail.kind, index: c.index, text } as WireChunk
+            }
+            const block = c.block
+            if (isObject(block) && (block.type === 'text' || block.type === 'reasoning') && typeof block.text === 'string') {
+              const whole = restorer.restoreText(block.text, false, tally, false)
+              yield whole === block.text ? chunk : ({ ...c, block: { ...block, text: whole } } as WireChunk)
+              continue
+            }
+            if (isObject(block) && block.type === 'tool-call' && typeof block.arguments === 'string') {
+              const args = restorer.restoreTool(block.arguments, tally)
+              yield args === block.arguments ? chunk : ({ ...c, block: { ...block, arguments: args } } as WireChunk)
+              continue
+            }
+            yield chunk
+            continue
+          }
+          case 'usage':
+          case 'finish':
+            // DSH emits usage and finish after content: no held text may follow them.
+            for (const pending of drain()) yield pending
+            yield chunk
+            continue
+          default:
+            yield chunk
+        }
+      }
+      for (const pending of drain()) yield pending
+    } finally {
+      kinds.clear()
+      held.clear()
+      exchange.finish()
+    }
+  })()
+}
+
+export interface StreamGatewayOptions {
+  engine: StreamEngine
+  /** The current llm service; absent means the request must not bypass masking. */
+  llm(): StreamLlm | undefined
+  excluded(): readonly string[]
+  sessionOff(session: string | undefined): boolean
+  enabled(): boolean
+  logger: { info(...args: unknown[]): void; warn(...args: unknown[]): void }
+}
+
+function whatOfCall(options: WireRequest): string {
+  return typeof options.purpose === 'string' && options.purpose !== '' ? options.purpose : 'chat'
+}
+
+function providerOf(options: WireRequest): string {
+  return typeof options.provider === 'string' ? options.provider : ''
+}
+
+function failed(err: unknown): AsyncIterable<WireChunk> {
+  return (async function* () {
+    if (err instanceof RequestBlocked) throw err
+    throw new Error('masking failed, request not sent')
+  })()
+}
+
+/** Middleware and adapter failures keep their own identity and diagnostic. */
+function thrown(err: unknown): AsyncIterable<WireChunk> {
+  return (async function* () {
+    throw err
+  })()
+}
+
+/** The structured listener; all bypasses are explicit and re-entry is marked. */
+export function makeStreamListener(o: StreamGatewayOptions): WireListener {
+  const warnedProviders = new Set<string>()
+  return (options, next) => {
+    if (isMaskedRequest(options)) return next()
+    const session = typeof options.sessionId === 'string' && options.sessionId !== '' ? options.sessionId : undefined
+    const provider = providerOf(options)
+    if (!o.enabled() || o.sessionOff(session)) return next()
+    if (isExcluded(provider, o.excluded())) {
+      const id = provider.toLowerCase()
+      if (!warnedProviders.has(id)) {
+        if (warnedProviders.size >= 32) warnedProviders.clear()
+        warnedProviders.add(id)
+        o.logger.warn(`dsh-privacy-gateway: requests of provider ${JSON.stringify(provider)} go out unmasked (excludeProviders); this is said once for that provider`)
+      }
+      return next()
+    }
+    const llm = o.llm()
+    if (llm === undefined) {
+      o.logger.warn('dsh-privacy-gateway: llm service unavailable, request not sent')
+      return failed(new Error('llm service unavailable'))
+    }
+    let outcome: StreamOutcome
+    try {
+      outcome = maskStructuredRequest(o.engine, options, provider, session, whatOfCall(options))
+    } catch (err) {
+      const name = err instanceof Error ? err.name : typeof err
+      o.logger.warn(`dsh-privacy-gateway: masking failed (${name}), request not sent`)
+      return failed(err)
+    }
+    let source: AsyncIterable<WireChunk>
+    try {
+      if (outcome.changed) {
+        o.logger.info('dsh-privacy-gateway: masked a call on llm/stream')
+        source = llm.stream(markMaskedRequest(outcome.request))
+      } else {
+        source = next()
+      }
+    } catch (err) {
+      outcome.finish()
+      return thrown(err)
+    }
+    return restoreWireStream(source, outcome)
+  }
+}

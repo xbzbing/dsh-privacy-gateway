@@ -16,6 +16,9 @@ export const ACTIONS: readonly Action[] = ['mask', 'warn', 'block']
 
 export type ToolGuard = 'off' | 'warn' | 'block'
 
+/** Where the gateway masks: the undici global dispatcher (the default) or the llm/stream waterfall. */
+export type Intercept = 'stream' | 'dispatcher'
+
 /** excludeProviders' description. */
 export const EXCLUDE_PROVIDERS_DESCRIPTION = '不脱敏的 provider / Providers whose requests are not masked'
 
@@ -59,6 +62,8 @@ export function liveStrings(v: unknown): string[] {
 export interface PrivacyGatewayConfig {
   /** Master switch. */
   enabled?: boolean
+  /** Keep the undici global dispatcher path (the default), or mask structured requests on the llm/stream waterfall. */
+  intercept?: Intercept | LiveValue<Intercept>
   /** Mask secrets: API keys, tokens, passwords, private keys, cookies. */
   secrets?: boolean
   /** Mask personal data: emails, mainland phone, ID card and bank card numbers. */
@@ -130,6 +135,7 @@ export interface PrivacyGatewayConfig {
 // the cast: a volatile field's input is a boolean and its output a live reference, which Schema<T> has one type for
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
+  intercept: Schema.union(['stream', 'dispatcher'] as const).default('dispatcher').volatile().description('脱敏拦截层 / Where masking intercepts'),
   secrets: Schema.boolean().default(true).volatile(),
   personal: Schema.boolean().default(false).volatile(),
   words: Schema.array(Schema.string()).default([]).volatile(),
@@ -156,10 +162,10 @@ export const Config = Schema.object({
   showPanel: Schema.boolean().default(false).volatile().description(SHOW_PANEL_DESCRIPTION),
 }) as unknown as Schema<PrivacyGatewayConfig>
 
-export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders'>> & { showPanel: boolean; excludeProviders: string[] }
+export type ResolvedConfig = Required<Omit<PrivacyGatewayConfig, 'showPanel' | 'excludeProviders' | 'intercept'>> & { showPanel: boolean; excludeProviders: string[]; intercept: Intercept }
 
-/** The volatile fields the gateway rebuilds its rules and stores from (showPanel and excludeProviders are read where they are used). */
-export const LIVE_FIELDS = ['enabled', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'restoreLog', 'maskKeys', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
+/** The volatile fields the gateway rebuilds its rules and stores from; intercept is in it so a mode edit reaches `current()` at once (showPanel and excludeProviders are read where they are used). */
+export const LIVE_FIELDS = ['enabled', 'intercept', 'secrets', 'personal', 'words', 'allow', 'toolGuard', 'shape', 'restoreLog', 'maskKeys', 'record', 'keepDays', 'vendorView', 'recordContext'] as const
 
 /** A string that changes when one of LIVE_FIELDS does. */
 export function liveMark(cfg: ResolvedConfig): string {
@@ -168,6 +174,7 @@ export function liveMark(cfg: ResolvedConfig): string {
 
 export const defaults: ResolvedConfig = {
   enabled: true,
+  intercept: 'dispatcher',
   secrets: true,
   personal: false,
   words: [],
@@ -224,6 +231,7 @@ export function resolveConfig(config: PrivacyGatewayConfig = {}): ResolvedConfig
   for (const [k, v] of Object.entries(config as Record<string, unknown>)) c[k] = live(v)
   return {
     enabled: bool(c.enabled, defaults.enabled),
+    intercept: c.intercept === 'stream' ? 'stream' : c.intercept === 'dispatcher' ? 'dispatcher' : defaults.intercept,
     secrets: bool(c.secrets, defaults.secrets),
     personal: bool(c.personal, defaults.personal),
     words: strings(c.words),

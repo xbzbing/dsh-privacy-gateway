@@ -20,8 +20,9 @@ test('every field the page edits is volatile, so the settings service lets it be
   }
 })
 
-test('the gateway rebuilds from every volatile field the page edits but the two read where they are used', () => {
-  const page = FIELDS.map((f) => f.key).filter((k) => k !== 'showPanel' && k !== 'excludeProviders')
+test('the gateway rebuilds from every volatile field the page edits, with intercept read at the call boundary', () => {
+  const page: string[] = FIELDS.map((f) => f.key).filter((k) => k !== 'showPanel' && k !== 'excludeProviders')
+  page.push('intercept')
   assert.deepEqual([...page].sort(), [...LIVE_FIELDS].sort())
 })
 
@@ -93,10 +94,11 @@ test('a folded group says its state in words both languages have', () => {
 })
 
 test('a folded group’s summary follows the settings, falling back to the defaults', () => {
-  const keys = (g: Parameters<typeof groupSummary>[0], v: Record<string, unknown>) => groupSummary(g, v).map((p) => p.key)
+  const keys = (g: Parameters<typeof groupSummary>[0], v: Record<string, unknown>, mode?: 'stream' | 'dispatcher') => groupSummary(g, v, mode).map((p) => p.key)
   assert.deepEqual(keys('mask', {}), ['cfg.s.secrets', 'cfg.s.toolGuard.off'])
   assert.deepEqual(groupSummary('mask', { enabled: false }), [{ key: 'cfg.s.maskOff', off: true }])
   assert.deepEqual(keys('mask', { secrets: false }), ['cfg.s.maskKeysOnly', 'cfg.s.toolGuard.off'])
+  assert.deepEqual(keys('mask', { secrets: false }, 'stream'), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
   assert.deepEqual(keys('mask', { secrets: false, maskKeys: false }), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
   assert.deepEqual(keys('mask', { personal: true, shape: true, toolGuard: 'warn', restoreLog: true }), ['cfg.s.secrets', 'cfg.s.personal', 'cfg.s.shape', 'cfg.s.toolGuard.warn', 'cfg.s.restoreLog'])
   assert.deepEqual(groupSummary('lists', { words: ['a', 'b'] }), [
@@ -105,8 +107,19 @@ test('a folded group’s summary follows the settings, falling back to the defau
   ])
   assert.deepEqual(groupSummary('record', { keepDays: 7 }), [{ key: 'cfg.s.record', params: { n: 7 } }])
   assert.deepEqual(keys('record', { record: false, vendorView: true }), ['cfg.s.recordOff', 'cfg.s.vendorView'])
+  assert.deepEqual(keys('record', { record: false, vendorView: true }, 'stream'), ['cfg.s.recordOff'])
   assert.deepEqual(keys('view', {}), ['cfg.s.panelOff', 'cfg.s.providersAll'])
   assert.deepEqual(groupSummary('view', { showPanel: true, excludeProviders: ['x'] }), [{ key: 'cfg.s.panel' }, { key: 'cfg.s.providersSome', params: { n: 1 } }])
+})
+
+test('dispatcher-only fields are hidden with their summaries in stream mode', () => {
+  for (const key of ['maskKeys', 'vendorView'] as const) {
+    const f = FIELDS.find((x) => x.key === key)
+    assert.ok(f)
+    assert.deepEqual(f.modes, ['dispatcher'])
+    assert.equal(f.modes?.includes('stream') ?? true, false)
+    assert.equal(f.modes?.includes('dispatcher') ?? true, true)
+  }
 })
 
 test('two-column fields pair up, so no group leaves a half row empty', () => {

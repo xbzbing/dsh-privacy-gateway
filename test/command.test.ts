@@ -110,6 +110,9 @@ test('apply registers /privacy once dsh-commands is there, with its input kept o
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     effect: (fn) => disposers.push(fn()),
     inject: (deps, cb) => {
+      // the plugin now also injects `llm` for the stream half (docs/adr/0039);
+      // this stub answers the command service only
+      if (deps.length === 1 && deps[0] === 'llm') return
       assert.deepEqual(deps, ['commands'])
       cb({ ...ctx, commands })
     },

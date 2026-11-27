@@ -311,6 +311,8 @@ export function readOverview(o: unknown): Overview | undefined {
     ...(rest as unknown as Overview),
     // a host of this version says; an older one has no such field, and the card shows the count as it is
     ...(typeof rawRestoreLog === 'boolean' ? { restoreLog: rawRestoreLog } : {}),
+    // an older host has no intercept field; the normalized RPC value defaults it to dispatcher
+    intercept: (o as { intercept?: unknown }).intercept === 'stream' ? 'stream' : 'dispatcher',
     values: count(o.values),
     stats: { today, week, month, failStreak: count(o.stats.failStreak) },
     recent: o.recent.filter(isRecord).map(readRecord),
