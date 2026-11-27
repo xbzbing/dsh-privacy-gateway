@@ -1,7 +1,7 @@
-# ADR-0039：llm/stream 结构化脱敏与 intercept 双模式互斥
+# ADR-0040：llm/stream 结构化脱敏与 intercept 双模式互斥
 
-- 状态：Accepted（2026-11-27）
-- 相关：`src/stream.ts`、`src/engine.ts`、`src/index.ts`、`src/config.ts`、`src/redact/restore.ts`、`src/redact/mask.ts`、`src/remote.ts`、`src/client/ConfigSection.ts`、`src/client/fields.ts`、ADR-0001、ADR-0003、ADR-0004、ADR-0005、ADR-0008、ADR-0014、ADR-0016、ADR-0021、ADR-0029、ADR-0034、ADR-0037
+- 状态：Accepted（2026-11-27）。原编号 0039，因上游 v0.4.1 先行占用（0039-record-traceability）重编为 0040。
+- 相关：`src/stream.ts`、`src/engine.ts`、`src/index.ts`、`src/config.ts`、`src/redact/restore.ts`、`src/redact/mask.ts`、`src/remote.ts`、`src/client/ConfigSection.ts`、`src/client/fields.ts`、ADR-0001、ADR-0003、ADR-0004、ADR-0005、ADR-0008、ADR-0014、ADR-0016、ADR-0021、ADR-0029、ADR-0034、ADR-0037、ADR-0039
 
 ## Context
 

@@ -59,7 +59,7 @@ test('the service answers privacyGateway/overview with the latest records capped
   assert.ok(svc)
   assert.deepEqual(
     remoteMethods(svc).map((m) => m.method).sort(),
-    ['overview', 'providers', 'reset', 'sessionMasking', 'vendorView'],
+    ['overview', 'providers', 'record', 'records', 'reset', 'sessionMasking', 'vendorView'],
   )
   assert.deepEqual(await svc.vendorView({ key: 7 }), { key: 7, body: '{}' })
   assert.equal(await svc.vendorView({ key: 8 }), null)
