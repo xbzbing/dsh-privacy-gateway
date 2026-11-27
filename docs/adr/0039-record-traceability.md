@@ -51,3 +51,11 @@
 - 旧记录没有 `unknown` / `detection` 字段时显示「未保存」或 `unknown`，不补猜、不回填。
 - 查询是只读旁路：它失败、被取消或索引损坏，都不影响请求是否发出与回复还原。
 - 已知代价：无 key 的旧记录与内存副本不按内容猜测关联；敏感身份的导航缺失；精确跳到日志事件仍未承诺。
+
+## 补充（2026-11-27）：Remote 服务的挂载时机
+
+首版把 `PrivacyGatewayService` 放在 `import('./remote.ts').then(...)` 里挂载，理由是「typert 不在就不该拖累网关」。实测这个理由不成立：`index.ts` 本来就静态引用了 `remote.ts`（`isSessionId`），`remote.ts` 又静态引用 `@deepseek-ai/dsh-typert-protocol`，产物里它早已是启动期的硬依赖；动态 import 只多出一段延迟。
+
+代价是「卸载再重装（不重启）」这条路径会丢端点：重装时新 fiber 先跑完 `apply()`，延迟到的回调才去 `ctx.plugin(...)`，而旧 fiber 的销毁可能在这之后才移除同名的服务键，于是 `/api/privacyGateway/*` 一律 404 ——脱敏照旧工作（记录里已带新的 `detection` 字段），只有配置页拿不到数据，看起来像「没生效」。
+
+现在改为在 `apply()` 内同步挂载，挂载与 fiber 生命周期同序，不再与销毁赛跑。仍保留 `try`/`catch`：服务键被占用时记一条警告，不影响脱敏主链路。验证方式：重装后 `POST /api/privacyGateway/overview` 返回 401（需鉴权，端点存在）而不是 404。

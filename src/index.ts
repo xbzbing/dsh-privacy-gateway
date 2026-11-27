@@ -10,7 +10,7 @@ import { makeSkip, routeStream } from './providers.ts'
 import { QueryEngine } from './query.ts'
 import { RecordStore } from './records.ts'
 import type { OverviewSource } from './remote.ts'
-import { isSessionId } from './remote.ts'
+import { isSessionId, PrivacyGatewayService } from './remote.ts'
 import { SessionSwitches } from './sessions.ts'
 import { StepBook } from './steps.ts'
 import { ViewStore } from './views.ts'
@@ -366,16 +366,16 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         return body === undefined ? null : { key, body }
       },
     }
-    let disposed = false
-    ctx.effect(() => () => {
-      disposed = true
-    })
-    import('./remote.ts').then(
-      ({ PrivacyGatewayService }) => {
-        if (!disposed) ctx.plugin?.(PrivacyGatewayService, source)
-      },
-      (err: unknown) => ctx.logger.warn('dsh-privacy-gateway: the settings card has no data (typert is not there)', err),
-    )
+    // Mounted right here, while the fiber is still the one running apply().
+    // Deferring it behind a dynamic import used to lose the endpoint on a
+    // remount: that fiber's teardown could remove the service key after the
+    // late registration had added it, leaving the page calling an endpoint
+    // nothing answered (docs/adr/0039).
+    try {
+      ctx.plugin(PrivacyGatewayService, source)
+    } catch (err) {
+      ctx.logger.warn('dsh-privacy-gateway: the settings card has no data', err)
+    }
   }
   // Where each session is in its turns: the host appends `step/start` to the session's log before it makes the
   // call, and this feed hands each entry over, so a record can name the turn and step it went in (docs/adr/0030).
