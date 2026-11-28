@@ -42,6 +42,28 @@ export function newTally(): Tally {
 }
 
 /**
+ * Adds what `from` counted to `into`: the same reply restored in more than
+ * one pass (a live text delta and the block that closes it) is counted where
+ * the pass is authoritative (docs/adr/0040).
+ */
+export function mergeTally(into: Tally, from: Tally): void {
+  for (const [placeholder, n] of from.restored) into.restored.set(placeholder, (into.restored.get(placeholder) ?? 0) + n)
+  into.inTools += from.inTools
+  into.unmapped += from.unmapped
+  into.exfil += from.exfil
+  into.exfilBlocked += from.exfilBlocked
+  for (const host of from.exfilHosts) {
+    if (into.exfilHosts.size < MAX_HOSTS) into.exfilHosts.add(host)
+  }
+  for (const u of from.unknown) {
+    const same = into.unknown.find((x) => x.kind === u.kind && x.tool === u.tool)
+    if (same) same.n += u.n
+    else if (into.unknown.length < MAX_UNKNOWN) into.unknown.push({ ...u })
+  }
+  into.sawReply ||= from.sawReply
+}
+
+/**
  * What is done with a tool call's arguments that would have a value put back
  * and name a host off this machine (design §13 R15, docs/adr/0014): nothing
  * but the count (off), a warning and a record (warn), or the placeholders
@@ -350,6 +372,18 @@ export class Restorer {
     return out ?? this.restoreText(text, false, tally)
   }
 
+  /**
+   * Restores one structured tool call's arguments under this request's guard.
+   * Block judges the assembled arguments before any value reaches the tool;
+   * warn restores and records the external hosts; off only restores.
+   */
+  restoreTool(text: string, tally?: Tally): string {
+    // the structured arguments are one document of the tool's own: every string in it is argument text
+    const args = argumentsText(text)
+    const leave = this.#guard !== 'off' && this.#judge(args, tally) && this.#guard === 'block'
+    return this.restoreText(text, true, tally, true, leave)
+  }
+
   /** Keys share the value restoration policy in whole replies and stream events. */
   #restoreKey(path: string, name: string, segments: readonly string[], type: string, tally: Tally | undefined, leave: boolean): string | undefined {
     if (KEPT.has(name)) return undefined
@@ -395,7 +429,7 @@ export class Restorer {
    * finishes (magpie `partialTail`): from a ⟦ or a namespace on, up to a body
    * that is not whole yet.
    */
-  #partialTail(s: string): number {
+  partialTail(s: string): number {
     return Math.max(tailLen(s), this.#table.shapeTail(s))
   }
 
@@ -462,7 +496,7 @@ export class Restorer {
         const escaped = asJSON(key, type)
         // the tail is looked for before anything is put back, so a placeholder whose last brace is still to come keeps it
         if (!KEPT.has(key) && key !== 'obfuscation') {
-          const n = this.#partialTail(s)
+          const n = this.partialTail(s)
           if (n > 0) {
             tails ??= new Map()
             cuts ??= new Map()
@@ -641,5 +675,25 @@ function eventToolText(ev: string, identities: Map<string, string>): ToolText | 
   const e = splitEvent(ev)
   if (!e) return undefined
   return toolText(e.data, typeOf(e.data) || e.name, identities, true)
+}
+
+/**
+ * Every string and key of a structured tool call's arguments, which are the
+ * tool's own document rather than a vendor event: each one is argument text,
+ * so each is judged (toolGuard) and none is a sealed or signed answer.
+ */
+function argumentsText(text: string): ToolText | undefined {
+  let doc: unknown
+  try { doc = JSON.parse(text) } catch { return undefined }
+  const t: ToolText = { values: new Map(), keys: [], eligibleKeys: [] }
+  const identities = new Map<string, string>()
+  walkJSON(text, (path, _shown, key, s, segments) => {
+    t.values.set(fragmentLocation(doc, segments, identities), { raw: s, eligible: s })
+    t.keys.push(key)
+    if (!KEPT.has(key)) t.eligibleKeys.push(key)
+    void path
+    return s
+  })
+  return t
 }
 

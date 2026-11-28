@@ -35,10 +35,11 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-privacy-gateway/rele
 - **记录与统计**：按天落盘的脱敏记录、统计卡、会话「隐私保护」标签页；记录里只有占位符，没有真值。
 - **`/privacy` 命令**：查状态、临时开关、`test` 预览一段文本会怎样发出。
 - **配置热更新**：日常项在插件页上改，下一次调用即生效；脱敏出错时请求不发出。
+- **两种工作模式**：默认的 `dispatcher` 装在 undici 全局 dispatcher 前面，覆盖所有走全局 `fetch()` 的模型请求；实验性的 `stream` 在 `llm/stream` 结构化层脱敏，供代理插件接管 `fetch` 的环境使用，只覆盖经过它的调用，见[工作模式](#工作模式)。
 
 ## 原理
 
-网关只有这一个拦截点，出站与入站都在 HTTP 层完成：
+默认的 `dispatcher` 模式下网关只有这一个拦截点，出站与入站都在 HTTP 层完成（`stream` 模式见[工作模式](#工作模式)）：
 
 ```mermaid
 flowchart LR
@@ -54,6 +55,22 @@ flowchart LR
 - **出站（①②）**：请求体里命中规则且未被豁免的值换成占位符，映射只留在内存的值表里，同一个值每轮都是同一个占位符。受保护区域、`allow`、关闭的类别与未命中内容仍按原文发出。
 - **入站（③④）**：`restoreLog` 关闭（默认）时占位符原样交给 agent、原样写进会话日志；打开后在日志落盘前换回真值，agent 与日志都拿到真值——回复方向只有这一个还原点，两边必然一致。
 - **旁路**：记录、统计与 `overview` 返回安全投影，不写已脱敏值的完整原值；上下文和 host、model 等展示字段也单独清洗。`vendorView` 返回的是发出内容副本，受保护区域、`allow` 与未命中内容仍可能含敏感原文，不能按「无秘密」的数据处理。
+
+## 工作模式
+
+网关有两种互斥的工作模式，同一时间只装一种；由内部实验开关 `intercept` 选择（仅 profile 的 `cordis.patch.yml` 里可改，配置页没有这一项），从下一次模型调用起生效，不用重启（[ADR-0040](docs/adr/0040-llm-stream-and-intercept-modes.md)）：
+
+| | `dispatcher`（默认） | `stream`（实验） |
+| --- | --- | --- |
+| 拦截位置 | undici 全局 dispatcher，在 adapter 序列化之后改写 HTTP body | `llm/stream` 结构化层，在 adapter 序列化之前改写请求 |
+| 覆盖 | 所有走全局 `fetch()` 的模型请求，包括插件提供的 adapter | 只有经过 `llm/stream` 的模型调用 |
+| 不覆盖 | `node:http` 直连、multipart / 表单 / 非 JSON body | 绕过 `llm/stream` 的调用：代理插件接管 `fetch` 之后的请求、`node:http` 直连 |
+| `maskKeys` | 生效 | 不生效：这一层看不到 wire JSON 的键 |
+| `vendorView` | 生效 | 不生效，已保留的发出内容副本会被清除 |
+| 回复 | 同一条连接上的 SSE 流与整段 JSON | `llm/stream` 的回复块，在工具执行前还原参数 |
+| 已知限制 | 需要 AsyncLocalStorage 把 provider 带到 dispatcher | 改写过的请求会由本插件重新派发一次：prepared call 与宿主按对象身份标记的 agent-loop 身份不随浅拷贝走 |
+
+默认安装的行为与此前逐字节一致。切到 `stream` 后日志里会有一条一次性的实验能力提示；把 `intercept` 改回 `dispatcher` 即恢复默认覆盖，无需重启。
 
 ## 脱敏范围
 
@@ -107,6 +124,7 @@ someone@gmail.com                                                    → EMAIL
 | --- | --- |
 | 模型请求体 | 走全局 `fetch()` 的 POST JSON 请求（数组 `messages`、数组或字符串 `input`、`contents`、字符串 `prompt`）：命中规则的值换成占位符，压缩的先解压（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)、[ADR-0025](docs/adr/0025-compression-and-upgrades.md)） |
 | 模型回复 | 同一条连接的响应：SSE 流与整段 JSON，跨分片、压缩、`\u27e6` 转义都能还原；`restoreLog` 打开时才写回日志 |
+| `stream` 模式（实验） | 在 adapter 序列化之前脱敏结构化请求，回复在工具执行前还原；覆盖范围比 `dispatcher` 窄，见[工作模式](#工作模式) |
 | 覆盖的 provider | 所有走 `fetch()` 的 adapter，包括插件提供的；`excludeHosts` / `excludeProviders` 可以放行 |
 | 出错时 | 脱敏出错、认不出的 `content-encoding`、模型调用上的 `upgrade` / `CONNECT` 一律不发（[ADR-0005](docs/adr/0005-fail-closed.md)） |
 | 旁路 | 记录、统计和 `overview` 不写已脱敏值的完整原值；`vendorView` 的发出内容副本仍可能含豁免或未命中的敏感原文（[ADR-0008](docs/adr/0008-masking-records.md)、[ADR-0016](docs/adr/0016-vendor-view.md)） |
@@ -121,6 +139,7 @@ someone@gmail.com                                                    → EMAIL
 | 工具结果 | 工具返回后落盘 | **会话日志里是工具输出的原文**；下一次出站才脱敏 |
 | 图片、文件、base64 附件 | 没有规则认它，原样发出 | 截图、扫描件、附件内容会到模型服务；`multipart`、表单、非 JSON body 更是一律原样发出，也不留记录 |
 | `node:http` 直连、worker 线程、独立进程 | 不经过网关 | 这些路径上的请求没有占位符，也没有记录（[ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)） |
+| `stream` 模式下绕过 `llm/stream` 的调用 | 不经过网关 | 代理插件接管 `fetch` 之后的请求、`node:http` 直连都没有占位符和记录；`maskKeys` 与「保留发出内容」在这一模式下不生效 |
 | 请求头、URL、方法 | 只改 body，以及随之变化的长度与编码头 | `Authorization` 这类头里是 provider 自己的凭据，改了会认证失败；query 参数同样不动 |
 | 别的出站通道 | 不管 | 别的插件自己发消息、写文件、连自己的服务，都不经过它；走 `fetch()` 但不是模型请求的，原样放行 |
 | 已经落盘的历史 | 不改 | 升级前写进日志的内容保持原样 |
@@ -153,6 +172,7 @@ someone@gmail.com                                                    → EMAIL
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
+| `intercept` | `dispatcher` | 工作模式：`dispatcher`（默认，装在 undici 全局 dispatcher 前面）或 `stream`（实验，在 `llm/stream` 结构化层脱敏）。切到 `stream` 覆盖变窄：只有经过 `llm/stream` 的调用被脱敏，`maskKeys` 与「保留发出内容」不生效，改写过的请求由本插件重新派发一次；改回 `dispatcher` 即恢复默认（[ADR-0040](docs/adr/0040-llm-stream-and-intercept-modes.md)） |
 | `enabled` | `true` | 总开关；关掉后网关仍在，但所有请求原样放行，不还原、不记录 |
 | `secrets` | `true` | 脱敏密钥、令牌、密码、私钥、cookie |
 | `personal` | `false` | 脱敏邮箱、手机号、身份证号、银行卡号 |
@@ -208,6 +228,7 @@ someone@gmail.com                                                    → EMAIL
 - 从 0.1.x 升级上来：默认不再还原，agent 拿到的是占位符。需要旧行为（agent 与日志都拿到真值）时，在配置页打开 `restoreLog`（「会话日志写入真值」）。
 - 会话日志默认是占位符：`restoreLog` 关闭（默认）时，回复里的占位符原样进日志，不会将回复里的占位符还原成真值，agent 拿到的也是占位符；打开后还原发生在日志落盘之前，日志与 agent 都是真值，会话同步、备份、分享、导出带走的也是真值（[ADR-0003](docs/adr/0003-restore-before-session-log.md)）。
 - 压缩的请求先解压再脱敏；`restoreLog` 打开时压缩的回复也先解码再还原，关闭时压缩的回复原样穿过网关、由适配器按 `content-encoding` 自己解压（用 `undici.request` 直连的 adapter 要自己解压，`fetch` 会自动解）。请求里认不出的 `content-encoding` 不发（[ADR-0025](docs/adr/0025-compression-and-upgrades.md)）。模型调用里的 `upgrade` 握手（WebSocket）与 `CONNECT` 隧道也不发：Codex 第一次被拒后回落到 SSE，之后同一会话直接走 SSE；模型调用之外的升级与隧道（别的组件自己的连接）放行，消息不脱敏，每个 host 提示一次（[ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)）——这是 fail-closed 往 fail-open 的取舍，代价见 ADR；需要整条链路放行的 host 仍可加进 `excludeHosts`。
+- 工作模式是内部实验开关 `intercept`，只在 `cordis.patch.yml` 里改（配置页没有这一项）。切到 `stream` 后只有经过 `llm/stream` 的调用被脱敏，`maskKeys` 与「保留发出内容」不生效，日志里会有一条一次性的实验能力提示；切回 `dispatcher` 立即恢复默认覆盖。
 - 脱敏出错时请求不会发出，报错 `dsh-privacy-gateway: masking failed, request not sent`（[ADR-0005](docs/adr/0005-fail-closed.md)）。止血办法是 `/privacy off`，或在插件页停用本插件、把配置 `enabled` 设为 `false`。
 
 ## 开发

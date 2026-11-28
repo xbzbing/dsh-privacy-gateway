@@ -382,6 +382,10 @@ test('an overview from another host version is filled in, not trusted as it is',
   assert.equal(readOverview({ active: true, version: '0.2.1', stats: { today: {}, week: {}, month: {} }, recent: [] })?.version, '0.2.1')
   assert.equal(readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [] })?.version, undefined)
   assert.equal(readOverview({ active: true, version: 2, stats: { today: {}, week: {}, month: {} }, recent: [] })?.version, 2)
+  // an older host has no intercept field; the normalized RPC value defaults it to dispatcher
+  assert.equal(readOverview({ active: true, stats: { today: {}, week: {}, month: {} }, recent: [] })?.intercept, 'dispatcher')
+  assert.equal(readOverview({ active: true, intercept: 'stream', stats: { today: {}, week: {}, month: {} }, recent: [] })?.intercept, 'stream')
+  assert.equal(readOverview({ active: true, intercept: 'other', stats: { today: {}, week: {}, month: {} }, recent: [] })?.intercept, 'dispatcher')
   const odd = readOverview({ active: true, stats: { today: {}, week: { requests: 'x' }, month: { requests: 3, kinds: { a: 1, b: 'x' } } }, recent: [{ key: 1, time: 't', values: [] }, { nope: true }] })
   assert.ok(odd)
   assert.equal(odd.stats.today.restoredInTools, 0)

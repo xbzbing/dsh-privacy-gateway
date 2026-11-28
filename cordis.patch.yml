@@ -3,6 +3,11 @@
 # The loader imports the row's `name`, so it must equal this package's name.
 # `id` is the settings namespace and the keyed config slot. Only this row is
 # inserted; no built-in row's config is touched.
+#
+# `config` takes this plugin's own settings (README, "配置"); the everyday ones
+# live on the configuration page. `intercept` picks the working mode:
+# `dispatcher` (default, the undici global dispatcher) or `stream` (experimental,
+# the llm/stream structured layer; docs/adr/0040).
 - insert:
     - id: dsh-privacy-gateway
       name: 'dsh-privacy-gateway'

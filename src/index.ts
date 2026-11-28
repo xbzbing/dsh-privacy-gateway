@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { langOf, runPrivacyCommand, type PrivacyFace } from './command.ts'
-import { liveBool, liveMark, liveStrings, resolveConfig, type PrivacyGatewayConfig, type ResolvedConfig } from './config.ts'
+import { liveBool, liveMark, liveStrings, resolveConfig, type Intercept, type PrivacyGatewayConfig, type ResolvedConfig } from './config.ts'
 import { installGateway } from './dispatcher.ts'
 import { PrivacyEngine } from './engine.ts'
 import { stateDir } from './paths.ts'
@@ -13,16 +13,20 @@ import type { OverviewSource } from './remote.ts'
 import { isSessionId, PrivacyGatewayService } from './remote.ts'
 import { SessionSwitches } from './sessions.ts'
 import { StepBook } from './steps.ts'
+import { isMaskedRequest, makeStreamListener, type StreamLlm, type WireChunk, type WireRequest } from './stream.ts'
 import { ViewStore } from './views.ts'
 import { loadKey } from './redact/key.ts'
 
 /**
- * dsh-privacy-gateway cordis plugin entry: chains a masking dispatcher in
- * front of undici's global dispatcher (docs/adr/0001). Secrets in outgoing
- * model requests go as placeholders; the placeholders in the replies come
- * back as the values while the log restore switch is on (docs/adr/0003) —
- * off by default, so the session log holds no plaintext. Disposal (plugin
- * reload, unload, shutdown) puts the previous dispatcher back.
+ * dsh-privacy-gateway cordis plugin entry. The default is the dispatcher half:
+ * a masking dispatcher chained in front of undici's global dispatcher
+ * (docs/adr/0001). The volatile `intercept: stream` half masks structured
+ * requests on the `llm/stream` waterfall instead (docs/adr/0040); only one of
+ * the two is installed at a time. Secrets in outgoing model requests go as
+ * placeholders; the placeholders in the replies come back as the values while
+ * the log restore switch is on (docs/adr/0003) — off by default, so the
+ * session log holds no plaintext. Disposal (plugin reload, unload, shutdown)
+ * restores whatever this plugin installed.
  */
 
 /** The subject of a `session/event`: the plugin reads the session's id and nothing else. */
@@ -225,13 +229,47 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   const current = (): ResolvedConfig => {
     const next = resolveConfig(config)
     const m = liveMark(next)
-    if (m === mark) return cfg
-    mark = m
-    if (next.enabled !== cfg.enabled) ctx.logger.info(`dsh-privacy-gateway: ${next.enabled ? 'enabled' : 'disabled'} by config`)
-    cfg = next
-    engine.reconfigure(next)
-    records.configure({ ...(next.record ? { dir: recordDir } : {}), keepDays: next.keepDays })
+    if (m !== mark) {
+      mark = m
+      if (next.enabled !== cfg.enabled) ctx.logger.info(`dsh-privacy-gateway: ${next.enabled ? 'enabled' : 'disabled'} by config`)
+      cfg = next
+      engine.reconfigure(next)
+      records.configure({ ...(next.record ? { dir: recordDir } : {}), keepDays: next.keepDays })
+    }
     return cfg
+  }
+  let llm: StreamLlm | undefined
+  let gateway: ReturnType<typeof installGateway> | undefined
+  let installedMode: Intercept | undefined
+  /** Installs the selected half and disposes the other, in both directions. */
+  let streamWarned = false
+  const ensureMode = (mode: Intercept): void => {
+    if (installedMode === mode) return
+    gateway?.dispose()
+    gateway = undefined
+    // A failed install leaves no false installed state and is retried on the next explicit boundary.
+    installedMode = undefined
+    if (mode === 'stream') {
+      installedMode = mode
+      // The half is experimental (docs/adr/0040): say so once, in the log the maintainer reads.
+      if (!streamWarned) {
+        streamWarned = true
+        ctx.logger.warn('dsh-privacy-gateway: intercept=stream is experimental: it covers only calls that go through llm/stream, redispatches the masked request, and leaves maskKeys and vendorView off; set intercept back to dispatcher to return to the default')
+      }
+      ctx.logger.info('dsh-privacy-gateway: masking on llm/stream')
+      return
+    }
+    const skip = makeSkip({
+      enabled: () => {
+        const c = current()
+        return engine.active && c.enabled && c.intercept === 'dispatcher'
+      },
+      sessionOff: (session) => sessions.isOff(session),
+    })
+    const installed = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip, logger: ctx.logger })
+    gateway = installed
+    installedMode = mode
+    ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
   }
   const face: PrivacyFace = {
     get active() {
@@ -276,6 +314,23 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       })
     })
   })
+  // Deferred injection follows llm service replacement without remounting the plugin.
+  if (ctx.inject) {
+    ctx.inject(['llm'], (child) => {
+      const candidate = (child as unknown as { llm?: unknown }).llm
+      if (typeof (candidate as StreamLlm | undefined)?.stream !== 'function') return
+      const service = candidate as StreamLlm
+      child.effect(() => {
+        llm = service
+        return () => {
+          if (llm === service) llm = undefined
+        }
+      })
+    })
+  } else {
+    const candidate = optional('llm') as StreamLlm | undefined
+    if (typeof candidate?.stream === 'function') llm = candidate
+  }
   // the settings card's Remote service; the gateway does not depend on it
   if (ctx.plugin) {
     const sessionLabel = (session: string, recent = records.recent(1, session)): string | undefined => {
@@ -287,6 +342,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       overview: (limit, session) => {
         // first: a change the configuration page made is applied before anything is read
         const c = current()
+        // an explicit write boundary: the read may follow a mode edit made on another page
+        ensureMode(c.intercept)
         const recent = records.recent(limit, session)
         // Warned or blocked values may never enter the table; their request's audit snapshot is authoritative.
         const shownSession = session ? sessionLabel(session, recent) : undefined
@@ -299,9 +356,10 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           ...(shownSession !== undefined ? { session: shownSession } : {}),
           stats: records.stats(session),
           recent,
-          vendorView: c.vendorView,
+          vendorView: c.vendorView && c.intercept === 'dispatcher',
           restoreLog: c.restoreLog,
-          views: c.vendorView ? views.keys() : [],
+          views: c.vendorView && c.intercept === 'dispatcher' ? views.keys() : [],
+          intercept: c.intercept,
           // read now: the detail page's switch changes it without remounting the plugin
           showPanel: liveBool(config.showPanel, c.showPanel),
           excludeProviders: excludedProviders(),
@@ -358,7 +416,10 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       vendorView: (key) => {
         // read now: vendorView turned off on the configuration page serves no body from then on,
         // and drops the ones kept, without waiting for the next request to apply the change
-        if (!current().vendorView) {
+        const c = current()
+        // an explicit write boundary: a mode edit made on another page is applied before the answer
+        ensureMode(c.intercept)
+        if (!c.vendorView || c.intercept !== 'dispatcher') {
           views.clear()
           return null
         }
@@ -381,14 +442,29 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
   // call, and this feed hands each entry over, so a record can name the turn and step it went in (docs/adr/0030).
   // An unscoped listener is admitted for every scope, so a subagent's sessions are read too.
   ctx.on?.('session/event', (session, event) => stepBook.observe(session, event))
-  ctx.on?.('llm/stream', (call, next) => routeStream(call?.provider, excludedProviders(), next, call?.sessionId))
+  const structured = makeStreamListener({
+    engine,
+    llm: () => llm,
+    excluded: excludedProviders,
+    sessionOff: (session) => sessions.isOff(session),
+    enabled: () => engine.active && current().enabled,
+    logger: ctx.logger,
+  })
+  // One stable multiplexer reads volatile intercept for every call. A marked
+  // re-entry always belongs to the structured half, even across a mode edit.
+  ctx.on?.('llm/stream', (call, next) => {
+    if (isMaskedRequest(call)) return next()
+    const c = current()
+    ensureMode(c.intercept)
+    if (c.intercept === 'dispatcher') return routeStream(call?.provider, excludedProviders(), next, call?.sessionId)
+    return structured(call as WireRequest, next as () => AsyncIterable<WireChunk>)
+  })
   ctx.effect(() => {
-    // `/privacy off` is a bypass too: a request then goes as it is, and a WebSocket may open (docs/adr/0025)
-    const skip = makeSkip({ enabled: () => engine.active && current().enabled, sessionOff: (session) => sessions.isOff(session) })
-    const gateway = installGateway(engine, { excludeHosts: cfg.excludeHosts, skip, logger: ctx.logger })
-    ctx.logger.info('dsh-privacy-gateway: installed in front of the global dispatcher')
+    ensureMode(current().intercept)
     return () => {
-      gateway.dispose()
+      gateway?.dispose()
+      gateway = undefined
+      installedMode = undefined
       // Handing back the promise lets a shutdown (and the tests) wait for the
       // last records to reach the day file instead of racing the write.
       return records.close()

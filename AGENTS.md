@@ -1,6 +1,6 @@
 # AGENTS.md
 
-dsh-privacy-gateway 是 DSH 的进程级脱敏网关（Cordis 插件，host + client 两半）。host 端把一个 undici dispatcher 挂在全局 dispatcher 前面：发往模型服务的请求里，密钥、凭据、个人信息和自定义敏感词换成占位符；回复里的占位符默认原样进会话日志（明文不进日志），配置页的 `restoreLog` 打开时再换回原值（ADR-0003）。走全局 fetch 的 provider 都经过它；`node:http` 直连、multipart / 表单 / 非 JSON body 和放行名单里的 provider 不经过（见 README「说明」）。ESM（`"type": "module"`）、TypeScript、Node >= 22.19、pnpm。
+dsh-privacy-gateway 是 DSH 的进程级脱敏网关（Cordis 插件，host + client 两半）。默认的 `dispatcher` 半把一个 undici dispatcher 挂在全局 dispatcher 前面：发往模型服务的请求里，密钥、凭据、个人信息和自定义敏感词换成占位符；回复里的占位符默认原样进会话日志（明文不进日志），配置页的 `restoreLog` 打开时再换回原值（ADR-0003）。走全局 fetch 的 provider 都经过它；`node:http` 直连、multipart / 表单 / 非 JSON body 和放行名单里的 provider 不经过（见 README「说明」）。另一个实验性的 `stream` 半在 `llm/stream` 结构化层做同样的事，由 volatile 的 `intercept` 二选一，两者互斥（ADR-0040）。ESM（`"type": "module"`）、TypeScript、Node >= 22.19、pnpm。
 
 每个决策都有 ADR，见 [docs/adr/README.md](docs/adr/README.md)。改行为前先读相关 ADR。
 
@@ -11,6 +11,7 @@ src/
   index.ts        插件入口：读配置、装网关、注册 /privacy、挂 Remote 服务、llm/stream 监听
   config.ts       schemastery 配置；volatile 字段、LIVE_FIELDS、liveMark、resolveConfig、defaults
   dispatcher.ts   MaskingDispatcher：改写请求 body、流式还原回复；脱敏失败则不发（fail closed）
+  stream.ts       llm/stream 半：adapter 序列化前脱敏结构化请求，回复块在工具执行前还原；认不出的形状不发
   engine.ts       PrivacyEngine：Masker/Restorer/值表/记录的组合；reconfigure 热替换规则
   providers.ts    AsyncLocalStorage 上下文：把 llm/stream 的 provider 与会话 id 带到 dispatcher
   sessions.ts     关闭了脱敏的会话名单（状态目录的 sessions.json）

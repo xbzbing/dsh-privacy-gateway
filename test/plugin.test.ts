@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url'
 
 import { getGlobalDispatcher } from 'undici'
 
-import { Config, defaults, liveBool, liveStrings, resolveConfig } from '../src/config.ts'
+import { Config, defaults, liveBool, liveStrings, resolveConfig, type PrivacyGatewayConfig } from '../src/config.ts'
 import { MaskingDispatcher } from '../src/dispatcher.ts'
-import { apply, name } from '../src/index.ts'
+import { apply, name, type StreamListener } from '../src/index.ts'
 import { stateDir } from '../src/paths.ts'
 import type { OverviewSource } from '../src/remote.ts'
 
@@ -62,9 +62,13 @@ test('Config defaults and round-trips through toJSON', () => {
   // the fields the configuration page edits are volatile: they come as live references
   assert.equal(liveBool(parsed.showPanel, true), false)
   assert.deepEqual(liveStrings(parsed.excludeProviders), [])
+  // the default layer is the dispatcher (docs/adr/0040): an install without the field changes nothing
+  assert.equal(resolveConfig(parsed).intercept, 'dispatcher')
   assert.deepEqual(resolveConfig(parsed), defaults)
   assert.equal(resolveConfig(Config({ showPanel: true })).showPanel, true)
   assert.equal(resolveConfig({ enabled: false }).enabled, false)
+  assert.equal(resolveConfig({ intercept: 'stream' }).intercept, 'stream')
+  assert.equal(resolveConfig({ intercept: 'nope' as never }).intercept, 'dispatcher')
   assert.doesNotThrow(() => JSON.stringify(Config.toJSON()))
 })
 
@@ -94,10 +98,63 @@ test('apply installs the gateway and its disposal puts the previous dispatcher b
     assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher)
     for (const d of disposers) d()
     assert.equal(getGlobalDispatcher(), before)
+
+    // stream mode never touches the global dispatcher at all
+    disposers.length = 0
+    apply({ logger, effect: (fn) => disposers.push(fn()) }, { intercept: 'stream' })
+    assert.equal(getGlobalDispatcher(), before)
+    for (const d of disposers) d()
+    assert.equal(getGlobalDispatcher(), before)
   } finally {
     if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
     else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
     rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('intercept defaults to dispatcher and hot-switches the halves in both directions', async () => {
+  const saved = process.env.DSH_PRIVACY_GATEWAY_HOME
+  const home = mkdtempSync(join(tmpdir(), 'dpg-modes-'))
+  process.env.DSH_PRIVACY_GATEWAY_HOME = home
+  const before = getGlobalDispatcher()
+  const disposers: Array<() => void | Promise<void>> = []
+  const config: PrivacyGatewayConfig = {}
+  let listener: StreamListener | undefined
+  const llm = { stream: () => (async function* () { yield { type: 'finish' } })() }
+  const ctx = {
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    effect: (fn: () => () => void | Promise<void>) => disposers.push(fn()),
+    on: (event: string, l: unknown) => {
+      if (event === 'llm/stream') listener = l as StreamListener
+    },
+    inject: (deps: string[], cb: (child: unknown) => void) => {
+      if (deps.includes('llm')) cb({ ...ctx, llm })
+    },
+  }
+  const run = async (): Promise<void> => {
+    assert.ok(listener)
+    const next = async function* () { yield { type: 'finish' } }
+    for await (const _ of listener({ provider: 'openai' }, next)) void _
+  }
+  try {
+    apply(ctx as never, config)
+    assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher, 'the default install is the dispatcher half')
+    await run()
+    config.intercept = 'stream'
+    await run()
+    assert.equal(getGlobalDispatcher(), before, 'the old gateway is disposed on the way to stream')
+    config.intercept = 'dispatcher'
+    await run()
+    assert.ok(getGlobalDispatcher() instanceof MaskingDispatcher, 'a switch back installs a live gateway again')
+    config.intercept = 'stream'
+    await run()
+    assert.equal(getGlobalDispatcher(), before, 'the second switch disposes it again')
+  } finally {
+    for (const d of disposers.splice(0)) await d()
+    if (saved === undefined) delete process.env.DSH_PRIVACY_GATEWAY_HOME
+    else process.env.DSH_PRIVACY_GATEWAY_HOME = saved
+    rmSync(home, { recursive: true, force: true })
+    assert.equal(getGlobalDispatcher(), before)
   }
 })
 

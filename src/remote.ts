@@ -45,6 +45,8 @@ export interface Overview {
   sessionMasking?: boolean
   /** The host half's own version; absent on a host too old to say. */
   version?: string
+  /** Where masking runs now (docs/adr/0040); absent on a host too old to say, and the client reads that as dispatcher. */
+  intercept?: 'stream' | 'dispatcher'
   /** What this host can answer (docs/adr/0039); absent on a host without the history query. */
   capabilities?: {
     historyQuery: boolean

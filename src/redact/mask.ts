@@ -314,8 +314,8 @@ export class Masker {
    * remembered is the value unescaped, so the reply gets back what the agent
    * wrote. Nothing inside `keep` is touched.
    */
-  maskText(raw: string, escaped = false, keep: readonly Range[] = []): MaskResult {
-    const pass: Pass = { route: '', preview: false, hits: [] }
+  maskText(raw: string, escaped = false, keep: readonly Range[] = [], at?: Place): MaskResult {
+    const pass: Pass = { route: '', preview: false, hits: [], ...(this.#options.context && at ? { at } : {}) }
     const { text, n } = this.#mask(raw, escaped, keep, pass)
     return { text, n, hits: pass.hits }
   }
