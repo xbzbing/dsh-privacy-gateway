@@ -24,6 +24,7 @@ ADR-0028 把第二条记作已知局限并指出根因在请求侧。这份 ADR 
 - 记录里的位置用「发出时」的键：`walkJSON` 同时维护原始路径和改写后的路径，前者给判断逻辑（`keepIn`、`argPaths`、`placeOf`），后者进 `Place.path`。所以记录写的是 `metadata.{{API_KEY_x}}.note`，与「查看发出内容」对得上，也不再带原始键名。按 warn/block 照发的键，位置里写它的占位符而不是它本身。
 - 键上的替换计入 `n`（替换处），不只是值：一个键被换掉就是一个替换处。
 - 新增配置项 `maskKeys`，默认**开启**，volatile，放在配置页「脱敏」组，关闭时确认框说明它会让读起来像密钥的键名原样发出（ADR-0021）。默认开启是因为：会触发它的 body 本来就是把敏感文本当键名，关掉只会继续泄露；而普通 body 的键（`messages`、`content`、`role`）不匹配任何查找器，字节不变。
+- 2026-11-28 补充：ADR-0040 的 stream 半复用 `Masker.maskKey`，只遍历非结构对象键。DSH 协议字段、`source` / adapter 私有 replay state、`AbortSignal`、工具定义与参数 schema、工具调用参数名保持原样；发生键名冲突时 fail closed。记录路径用发出或 warn 投影后的键，回复里的键名占位符仍由全文本还原来恢复。
 
 ## Consequences
 

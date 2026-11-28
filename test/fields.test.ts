@@ -20,9 +20,16 @@ test('every field the page edits is volatile, so the settings service lets it be
   }
 })
 
-test('the gateway rebuilds from every volatile field the page edits', () => {
+test('intercept stays a live internal switch without becoming a page control', () => {
+  const page: string[] = FIELDS.map((f) => f.key)
+  assert.equal(page.includes('intercept'), false)
+  assert.equal(defaults.intercept, 'dispatcher')
+  assert.ok(LIVE_FIELDS.includes('intercept'))
+})
+
+test('the gateway rebuilds from every volatile page field and the internal mode switch', () => {
   const page: string[] = FIELDS.map((f) => f.key).filter((k) => k !== 'showPanel' && k !== 'excludeProviders')
-  assert.deepEqual([...page].sort(), [...LIVE_FIELDS].sort())
+  assert.deepEqual([...page, 'intercept'].sort(), [...LIVE_FIELDS].sort())
 })
 
 test('every field, choice and group has its words in both languages', () => {
@@ -93,11 +100,11 @@ test('a folded group says its state in words both languages have', () => {
 })
 
 test('a folded group’s summary follows the settings, falling back to the defaults', () => {
-  const keys = (g: Parameters<typeof groupSummary>[0], v: Record<string, unknown>, mode?: 'stream' | 'dispatcher') => groupSummary(g, v, mode).map((p) => p.key)
+  const keys = (g: Parameters<typeof groupSummary>[0], v: Record<string, unknown>) => groupSummary(g, v).map((p) => p.key)
   assert.deepEqual(keys('mask', {}), ['cfg.s.secrets', 'cfg.s.toolGuard.off'])
   assert.deepEqual(groupSummary('mask', { enabled: false }), [{ key: 'cfg.s.maskOff', off: true }])
   assert.deepEqual(keys('mask', { secrets: false }), ['cfg.s.maskKeysOnly', 'cfg.s.toolGuard.off'])
-  assert.deepEqual(keys('mask', { secrets: false }, 'stream'), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
+  assert.deepEqual(keys('mask', { secrets: false, intercept: 'stream' }), ['cfg.s.maskKeysOnly', 'cfg.s.toolGuard.off', 'cfg.s.intercept.stream'])
   assert.deepEqual(keys('mask', { secrets: false, maskKeys: false }), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
   assert.deepEqual(keys('mask', { personal: true, shape: true, toolGuard: 'warn', restoreLog: true }), ['cfg.s.secrets', 'cfg.s.personal', 'cfg.s.shape', 'cfg.s.toolGuard.warn', 'cfg.s.restoreLog'])
   // the working mode says so only where it is not the default
@@ -109,18 +116,16 @@ test('a folded group’s summary follows the settings, falling back to the defau
   ])
   assert.deepEqual(groupSummary('record', { keepDays: 7 }), [{ key: 'cfg.s.record', params: { n: 7 } }])
   assert.deepEqual(keys('record', { record: false, vendorView: true }), ['cfg.s.recordOff', 'cfg.s.vendorView'])
-  assert.deepEqual(keys('record', { record: false, vendorView: true }, 'stream'), ['cfg.s.recordOff'])
+  assert.deepEqual(keys('record', { record: false, vendorView: true, intercept: 'stream' }), ['cfg.s.recordOff', 'cfg.s.vendorView'])
   assert.deepEqual(keys('view', {}), ['cfg.s.panelOff', 'cfg.s.providersAll'])
   assert.deepEqual(groupSummary('view', { showPanel: true, excludeProviders: ['x'] }), [{ key: 'cfg.s.panel' }, { key: 'cfg.s.providersSome', params: { n: 1 } }])
 })
 
-test('dispatcher-only fields are hidden with their summaries in stream mode', () => {
+test('maskKeys and vendorView stay available in stream mode', () => {
   for (const key of ['maskKeys', 'vendorView'] as const) {
     const f = FIELDS.find((x) => x.key === key)
     assert.ok(f)
-    assert.deepEqual(f.modes, ['dispatcher'])
-    assert.equal(f.modes?.includes('stream') ?? true, false)
-    assert.equal(f.modes?.includes('dispatcher') ?? true, true)
+    assert.equal('modes' in f, false)
   }
 })
 
@@ -142,12 +147,7 @@ const field = (k: FieldSpec['key']): FieldSpec => FIELDS.find((f) => f.key === k
 
 test('the changes that send content as it is or delete kept data are the ones confirmed', () => {
   const risky = FIELDS.filter((f) => f.risk).map((f) => `${f.key}:${f.risk}`)
-  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'intercept:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'restoreLog:log', 'secrets:send', 'vendorView:delete', 'words:send'])
-  // the working mode only when it narrows the coverage (docs/adr/0040)
-  assert.deepEqual(riskOf(field('intercept'), 'dispatcher', 'stream'), { risk: 'send' })
-  assert.deepEqual(riskOf(field('intercept'), undefined, 'stream'), { risk: 'send' })
-  assert.equal(riskOf(field('intercept'), 'stream', 'dispatcher'), undefined)
-  assert.equal(riskOf(field('intercept'), 'stream', 'stream'), undefined)
+  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'restoreLog:log', 'secrets:send', 'vendorView:delete', 'words:send'])
   // a switch only when turned off, from its default too
   assert.deepEqual(riskOf(field('enabled'), undefined, false), { risk: 'send' })
   assert.equal(riskOf(field('enabled'), false, true), undefined)

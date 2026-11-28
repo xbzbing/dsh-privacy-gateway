@@ -51,9 +51,15 @@ export interface StructuredMaskMeta {
 
 export interface StructuredMaskResult {
   text: string
+  /** A key's audit-only projection; warned keys keep their wire text but not their record path. */
+  shown?: string
   hits: Hit[]
   warned: number
   n: number
+  /** Request-only view projection inputs, never persisted as records. */
+  warnedForms?: MaskResult['warned']
+  /** Request-only audit projection inputs, matching maskJSON's trueforms boundary. */
+  trueforms?: MaskResult['trueforms']
 }
 
 /** The reply side and deferred record of one structured request. */
@@ -75,6 +81,10 @@ export interface StructuredRecordFields {
   warned: number
   hits: readonly Hit[]
   started: number
+  /** The redispatched structured request for vendorView, without its live AbortSignal. */
+  view?: unknown
+  warnedForms?: MaskResult['warned']
+  trueforms?: MaskResult['trueforms']
   failed?: boolean
 }
 
@@ -134,8 +144,10 @@ export class PrivacyEngine implements RedactionEngine {
   /** Audit has no wire exemptions: allow, actions, protected regions and disabled categories cannot expose known values. */
   #auditMasker: Masker
   #restorer: Restorer
-  /** Keep the bodies for the vendor view (config vendorView, dispatcher mode only); `reconfigure` changes it. */
+  /** Keep request copies for the vendor view (config vendorView); `reconfigure` changes it. */
   #keepViews: boolean
+  /** Whether non-structural JSON keys are content too (docs/adr/0029). */
+  #maskKeys: boolean
   /** Put a reply's placeholders back before the session log gets it (config restoreLog, docs/adr/0003); `reconfigure` changes it. */
   #restoreLog: boolean
   #protectEnvBlock: boolean
@@ -158,7 +170,8 @@ export class PrivacyEngine implements RedactionEngine {
     this.#masker = this.#maskerFor(config)
     this.#auditMasker = this.#maskerFor(config, true)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
-    this.#keepViews = config.vendorView && config.intercept === 'dispatcher'
+    this.#keepViews = config.vendorView
+    this.#maskKeys = config.maskKeys
     this.#restoreLog = config.restoreLog
     this.#protectEnvBlock = config.protectEnvBlock
     this.#protectTools = config.protectTools
@@ -198,7 +211,8 @@ export class PrivacyEngine implements RedactionEngine {
     this.#masker = this.#maskerFor(config)
     this.#auditMasker = this.#maskerFor(config, true)
     this.#restorer = new Restorer(this.#table, config.toolGuard)
-    this.#keepViews = config.vendorView && config.intercept === 'dispatcher'
+    this.#keepViews = config.vendorView
+    this.#maskKeys = config.maskKeys
     this.#restoreLog = config.restoreLog
     this.#protectEnvBlock = config.protectEnvBlock
     this.#protectTools = config.protectTools
@@ -225,10 +239,18 @@ export class PrivacyEngine implements RedactionEngine {
     return this.#structuredResult(r)
   }
 
-  /** Masks a tool call's arguments as JSON text of its own, preserving its escapes. */
+  /** Masks one non-structural key of a structured request, with an audit-safe path for its hits. */
+  maskStructuredKey(text: string, at: Place): StructuredMaskResult | null {
+    if (!this.active || !this.#maskKeys) return null
+    const r = this.#masker.maskKey(text, '')
+    const result = this.#structuredResult({ ...r, hits: r.hits.map((hit) => ({ ...hit, at })) })
+    return result === null ? null : { ...result, shown: r.shown }
+  }
+
+  /** Masks a tool call's JSON values, preserving its argument names and escapes. */
   maskStructuredJSON(text: string, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
     if (!this.active) return null
-    const r = this.#masker.maskText(text, true, [], meta.at)
+    const r = this.#masker.maskJSONArguments(text, '', meta.at)
     return this.#structuredResult(r)
   }
 
@@ -237,7 +259,14 @@ export class PrivacyEngine implements RedactionEngine {
     const hits = [...r.hits]
     let warned = 0
     for (const h of hits) if (h.action === 'warn') warned++
-    return { text: r.text, hits, warned, n: r.n }
+    return {
+      text: r.text,
+      hits,
+      warned,
+      n: r.n,
+      ...(r.warned?.length ? { warnedForms: r.warned } : {}),
+      ...(r.trueforms?.length ? { trueforms: r.trueforms } : {}),
+    }
   }
 
   /**
@@ -248,10 +277,11 @@ export class PrivacyEngine implements RedactionEngine {
   recordStructuredRequest(fields: StructuredRecordFields): StructuredExchange {
     const started = fields.started
     const info = fields.info
+    this.#rememberAudit(fields.trueforms ?? [])
     const step = fields.session ? this.#steps?.(fields.session) : undefined
     // the audit boundary of maskRequest (v0.4.0): every persisted string is projected
     const auditMasker = this.#auditMasker
-    const known = [...this.#auditForms, ...this.#table.trueforms()]
+    const known = [...this.#auditForms, ...this.#table.trueforms(), ...(fields.trueforms ?? [])]
     const project = auditProjection(auditMasker, known)
     const rawModel = fields.model
     const model = rawModel !== undefined ? project(rawModel) : undefined
@@ -303,6 +333,8 @@ export class PrivacyEngine implements RedactionEngine {
     // the same condition the dispatcher's restoring() answers: with the log restore
     // switch off, or with no value to put back, the reply passes through untouched
     const restoring = this.#restoreLog && this.#table.size > 0
+    // A stream copy is the structured request about to be redispatched, not the adapter's eventual wire body.
+    const sentView = this.views && this.#keepViews ? structuredView(fields.view) : undefined
     let done = false
     return {
       restorer,
@@ -319,7 +351,7 @@ export class PrivacyEngine implements RedactionEngine {
           const left = tally.exfilBlocked > 0 ? `; ${tally.exfilBlocked} placeholders were left in them` : ''
           this.#logger?.warn(`dsh-privacy-gateway: ${tally.exfil} tool calls had a value put back in arguments that name ${hosts.join(', ')}${left}`)
         }
-        this.records.add({
+        const rec = this.records.add({
           ...record,
           restored,
           ...(tally.inTools > 0 ? { restoredInTools: tally.inTools } : {}),
@@ -327,6 +359,9 @@ export class PrivacyEngine implements RedactionEngine {
           ...(tally.exfil > 0 ? { exfil: tally.exfil, exfilHosts: hosts } : {}),
           ...(tally.exfilBlocked > 0 ? { exfilBlocked: tally.exfilBlocked } : {}),
         }, fields.session)
+        if (sentView !== undefined && this.views && this.#keepViews) {
+          this.views.put(rec.key, warnedView(sentView, fields.warnedForms, known.map(([, placeholder]) => placeholder)))
+        }
       },
     }
   }
@@ -568,6 +603,39 @@ function literalProjector(known: ReadonlyArray<readonly [string, string]>, stand
     }
     out.push(text.slice(last))
     return out.join('')
+  }
+}
+
+/** Serializes only plain request data, without invoking a third-party toJSON. */
+function structuredView(request: unknown): string | undefined {
+  if (request === undefined) return undefined
+  try {
+    const seen = new WeakSet<object>()
+    const copy = (value: unknown): unknown => {
+      if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+      if (typeof value === 'number') return Number.isFinite(value) ? value : null
+      if (typeof value !== 'object') return undefined
+      if (seen.has(value)) throw new Error('cyclic structured request')
+      seen.add(value)
+      try {
+        if (Array.isArray(value)) return value.map((entry) => copy(entry) ?? null)
+        const out: Record<string, unknown> = {}
+        for (const [key, entry] of Object.entries(value)) {
+          if (key === 'signal') continue
+          const projected = copy(entry)
+          if (projected !== undefined) out[key] = projected
+        }
+        return out
+      } finally {
+        seen.delete(value)
+      }
+    }
+    const projected = copy(request)
+    return projected === undefined ? undefined : JSON.stringify(projected, null, 2)
+  } catch {
+    // A third-party request may contain a cycle, a getter that throws, or a
+    // value JSON cannot represent. An optional view never stops the call.
+    return undefined
   }
 }
 

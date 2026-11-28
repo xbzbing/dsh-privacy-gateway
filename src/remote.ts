@@ -83,7 +83,7 @@ export interface VendorViewRequest {
   key: number
 }
 
-/** A recorded request's body as the vendor got it, a warned value as its placeholder (docs/adr/0016). */
+/** The dispatcher wire body or stream structured request before adapter serialization; warned values stay projected (docs/adr/0016). */
 export interface VendorView {
   key: number
   body: string

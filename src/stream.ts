@@ -4,6 +4,7 @@
  * request, restores placeholders in the reply before the host consumes it.
  */
 import { RequestBlocked, type RequestInfo, type StructuredExchange, type StructuredMaskMeta, type StructuredMaskResult, type StructuredRecordFields } from './engine.ts'
+import { KEPT } from './redact/json.ts'
 import { placeOf, type Hit, type Place } from './redact/mask.ts'
 import { mergeTally, newTally, type Restorer, type Tally } from './redact/restore.ts'
 import { isExcluded } from './providers.ts'
@@ -38,6 +39,13 @@ export interface WireTool {
   name?: unknown
   description?: unknown
   parameters?: unknown
+  [key: string]: unknown
+}
+
+/** DSH's ToolHistory, read by projectToolUpdates after the llm/stream waterfall. */
+export interface WireToolHistory {
+  tools: readonly WireTool[]
+  updates: readonly { messageId?: unknown; additions: readonly WireTool[]; [key: string]: unknown }[]
   [key: string]: unknown
 }
 
@@ -83,6 +91,7 @@ export interface StreamOutcome {
 
 export interface StreamEngine {
   maskStructuredText(text: string, meta?: StructuredMaskMeta): StructuredMaskResult | null
+  maskStructuredKey(text: string, at: Place): StructuredMaskResult | null
   maskStructuredJSON(text: string, meta?: StructuredMaskMeta): StructuredMaskResult | null
   recordStructuredRequest(fields: StructuredRecordFields): StructuredExchange
 }
@@ -109,6 +118,70 @@ function hostMessage(message: { role?: unknown }): boolean {
   return message.role === 'system' || message.role === 'developer'
 }
 
+/** Canonical DSH fields that must survive even a custom sensitive-word rule. */
+const STRUCTURED_KEYS = new Set([
+  'content', 'arguments', 'parameters', 'description', 'attachment', 'source', 'toolName', 'isError', 'toolCallId',
+  'deferLoading', 'updates', 'additions', 'offloaded', 'provider', 'messages', 'system', 'tools', 'toolHistory', 'stop',
+  'sessionId', 'purpose', 'signal', 'reasoningEffort', 'temperature', 'maxTokens',
+])
+
+function structuredKey(path: readonly string[], name: string): boolean {
+  if (STRUCTURED_KEYS.has(name) || KEPT.has(name)) return true
+  return name === 'id' || name === 'ids' || name.endsWith('_id') || name.endsWith('_ids') || name.endsWith('Id') || name.endsWith('Ids') || (path.length === 0 && name === 'model')
+}
+
+/**
+ * Masks non-structural object keys without walking live runtime objects or
+ * adapter-private replay state. Tool declarations are handled by maskTool:
+ * their JSON Schema property names and tool-call argument names stay intact.
+ */
+function maskStructuredKeys(
+  engine: StreamEngine,
+  original: WireRequest,
+  node: unknown,
+  raw: readonly string[],
+  shown: readonly string[],
+  accumulate: (result: StructuredMaskResult | null) => string | undefined,
+): unknown {
+  if (Array.isArray(node)) {
+    let changed = false
+    const out = node.map((value, i) => {
+      const next = maskStructuredKeys(engine, original, value, [...raw, String(i)], [...shown, String(i)], accumulate)
+      if (next !== value) changed = true
+      return next
+    })
+    return changed ? out : node
+  }
+  if (!isObject(node)) return node
+  let changed = false
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(node)) {
+    const rawChild = [...raw, key]
+    // AbortSignal is live and unserializable; source.replayState is an opaque
+    // adapter-private value. Neither is model content for this walker to edit.
+    if (key === 'signal' || key === 'source' || (raw.length === 0 && (key === 'tools' || key === 'toolHistory'))) {
+      out[key] = value
+      continue
+    }
+    const at = placeOf(original, rawChild.join('.'), rawChild)
+    const result = structuredKey(raw, key) ? null : engine.maskStructuredKey(key, at)
+    if (result) {
+      const safeAt = { ...at, path: [...shown, result.shown ?? result.text].join('.') }
+      for (const hit of result.hits) hit.at = safeAt
+    }
+    const nextKey = accumulate(result) ?? key
+    const shownKey = result?.shown ?? nextKey
+    if (nextKey !== key && (Object.hasOwn(node, nextKey) || Object.hasOwn(out, nextKey))) {
+      throw new UnhandledShape('object keys that collide after masking')
+    }
+    if (nextKey !== key) changed = true
+    const nextValue = maskStructuredKeys(engine, original, value, rawChild, [...shown, shownKey], accumulate)
+    if (nextValue !== value) changed = true
+    out[nextKey] = nextValue
+  }
+  return changed ? out : node
+}
+
 /**
  * Masks every supported string without mutating the request. Unchanged
  * messages, blocks, arrays and tools keep their identities; a warning alone
@@ -122,12 +195,16 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
   let n = 0
   let warned = 0
   const hits: Hit[] = []
+  const warnedForms: Array<[string, string]> = []
+  const trueforms: Array<[string, string]> = []
 
   const accumulate = (r: StructuredMaskResult | null): string | undefined => {
     if (r === null) return undefined
     n += r.n
     warned += r.warned
     hits.push(...r.hits)
+    warnedForms.push(...r.warnedForms ?? [])
+    trueforms.push(...r.trueforms ?? [])
     return r.text
   }
   const maskText = (raw: string, at: Place, env = false, tool = false): string | undefined =>
@@ -137,7 +214,7 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
   let nextMessages: readonly WireMessage[] | undefined
   let nextSystem: string | readonly WireBlock[] | undefined
   let nextTools: readonly WireTool[] | undefined
-  let nextToolHistory: readonly WireTool[] | undefined
+  let nextToolHistory: WireToolHistory | undefined
   let nextStop: readonly unknown[] | undefined
   try {
     const walkBlocks = (blocks: readonly WireBlock[], path: string, env: boolean): readonly WireBlock[] => {
@@ -181,8 +258,8 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
 
     /**
      * Masks the strings of a tool's parameter schema, as the dispatcher masks
-     * that body while protectTools is off. Keys stay: maskKeys reads the wire
-     * JSON, which this half never sees (docs/adr/0040).
+     * that body while protectTools is off. Schema keys are tool-owned protocol,
+     * so maskKeys never rewrites them (docs/adr/0029).
      */
     const maskSchema = (node: unknown, path: string): { value: unknown; changed: boolean } => {
       if (typeof node === 'string') {
@@ -281,18 +358,41 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
       if (touched) nextTools = out
     }
 
-    // Some adapters rebuild the tools from `toolHistory`: leave it unmasked and
-    // the masked `tools` above is not what the model reads.
+    // DSH projects this history into `tools` after the waterfall. Both the
+    // baseline and every later addition therefore need the same masking.
     const history = options.toolHistory
-    if (history !== undefined && !Array.isArray(history)) throw new UnhandledShape('toolHistory that is not an array')
-    if (Array.isArray(history)) {
+    if (history !== undefined && !isObject(history)) throw new UnhandledShape('toolHistory that is not an object')
+    if (isObject(history)) {
+      if (!Array.isArray(history.tools) || !Array.isArray(history.updates)) {
+        throw new UnhandledShape('toolHistory without a tools array and an updates array')
+      }
       let touched = false
-      const out = history.map((tool, i): WireTool => {
-        const next = maskTool(tool as WireTool, `toolHistory.${i}`)
-        if (next !== tool) touched = true
+      let toolsChanged = false
+      const tools = history.tools.map((tool, i): WireTool => {
+        const next = maskTool(tool as WireTool, `toolHistory.tools.${i}`)
+        if (next !== tool) touched = toolsChanged = true
         return next
       })
-      if (touched) nextToolHistory = out
+      const updates: WireToolHistory['updates'] = (history.updates as readonly unknown[]).map((update, i): WireToolHistory['updates'][number] => {
+        if (!isObject(update) || !Array.isArray(update.additions)) throw new UnhandledShape(`toolHistory.updates.${i} without an additions array`)
+        const checked = update as unknown as WireToolHistory['updates'][number]
+        let changed = false
+        const additions = checked.additions.map((tool, j): WireTool => {
+          const next = maskTool(tool as WireTool, `toolHistory.updates.${i}.additions.${j}`)
+          if (next !== tool) changed = true
+          return next
+        })
+        if (!changed) return checked
+        touched = true
+        return { ...checked, additions }
+      })
+      if (touched) {
+        nextToolHistory = {
+          ...history,
+          tools: toolsChanged ? tools : history.tools,
+          updates,
+        }
+      }
     }
 
     if (Array.isArray(options.stop)) {
@@ -307,12 +407,16 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
       if (touched) nextStop = out
     }
   } catch (err) {
-    engine.recordStructuredRequest({ info, what, model, session, n, warned, hits, started, failed: true })
+    engine.recordStructuredRequest({
+      info, what, model, session, n, warned, hits, started, failed: true,
+      ...(warnedForms.length > 0 ? { warnedForms } : {}),
+      ...(trueforms.length > 0 ? { trueforms } : {}),
+    })
     throw err
   }
 
   const changed = nextMessages !== undefined || nextSystem !== undefined || nextTools !== undefined || nextToolHistory !== undefined || nextStop !== undefined
-  const request: WireRequest = changed
+  let request: WireRequest = changed
     ? {
         ...options,
         ...(nextMessages !== undefined ? { messages: nextMessages } : {}),
@@ -322,8 +426,30 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
         ...(nextStop !== undefined ? { stop: nextStop } : {}),
       }
     : options
-  const exchange = engine.recordStructuredRequest({ info, what, model, session, n, warned, hits, started })
-  return { request, changed, restorer: exchange.restorer, tally: exchange.tally, restoring: exchange.restoring, finish: exchange.finish }
+  try {
+    request = maskStructuredKeys(engine, options, request, [], [], accumulate) as WireRequest
+  } catch (err) {
+    engine.recordStructuredRequest({
+      info, what, model, session, n, warned, hits, started, failed: true,
+      ...(warnedForms.length > 0 ? { warnedForms } : {}),
+      ...(trueforms.length > 0 ? { trueforms } : {}),
+    })
+    throw err
+  }
+  const exchange = engine.recordStructuredRequest({
+    info,
+    what,
+    model,
+    session,
+    n,
+    warned,
+    hits,
+    started,
+    view: request,
+    ...(warnedForms.length > 0 ? { warnedForms } : {}),
+    ...(trueforms.length > 0 ? { trueforms } : {}),
+  })
+  return { request, changed: request !== options, restorer: exchange.restorer, tally: exchange.tally, restoring: exchange.restoring, finish: exchange.finish }
 }
 
 const MASKED_REQUESTS = new WeakSet<object>()

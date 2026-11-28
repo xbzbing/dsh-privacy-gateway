@@ -149,9 +149,9 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   const saved = state?.value ?? {}
   // what each field shows and the next change starts from: the saved value, or the one still on its way
   const value = (k: FieldSpec['key']): unknown => queue.latest(k, saved[k])
-  // The mode the page shows fields for is the field's own value, saved or still on its way: a write
-  // applies it at once, so no read of the host is needed for the page to agree with itself.
-  const mode = choiceValue(value('intercept'), ['dispatcher', 'stream'], 'dispatcher') as 'stream' | 'dispatcher'
+  // intercept is an internal cordis.patch.yml switch, not a control on this page. Its volatile
+  // form value still lets the folded summary identify the non-default structured mode.
+  const mode = choiceValue(saved.intercept, ['dispatcher', 'stream'], 'dispatcher') as 'stream' | 'dispatcher'
   const toggle = (g: GroupId): void =>
     setOpen((was) => {
       const next = was.includes(g) ? was.filter((x) => x !== g) : GROUPS.filter((x) => x === g || was.includes(x))
@@ -252,12 +252,12 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
       )
     return undefined
   }
-  const shown = Object.fromEntries(FIELDS.map((f) => [f.key, value(f.key)]))
+  const shown = { ...Object.fromEntries(FIELDS.map((f) => [f.key, value(f.key)])), intercept: mode }
   const group = (g: GroupId): ReactNode => {
-    const fields = FIELDS.filter((f) => f.group === g && (f.modes?.includes(mode) ?? true))
+    const fields = FIELDS.filter((f) => f.group === g)
     const name = t(key(`cfg.g.${g}`))
     const isOpen = open.includes(g)
-    const parts = groupSummary(g, shown, mode)
+    const parts = groupSummary(g, shown)
     const problem = fields.some((f) => note(f) !== undefined)
     const summary = ready
       ? [

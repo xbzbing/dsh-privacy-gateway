@@ -4,7 +4,8 @@ import { randomBytes } from 'node:crypto'
 
 import { defaults, resolveConfig, type PrivacyGatewayConfig, type ToolGuard } from '../src/config.ts'
 import { PrivacyEngine, RequestBlocked } from '../src/engine.ts'
-import { isMaskedRequest, makeStreamListener, maskStructuredRequest, restoreWireStream, UnhandledShape, type StreamOutcome, type WireBlock, type WireChunk, type WireRequest } from '../src/stream.ts'
+import { isMaskedRequest, makeStreamListener, maskStructuredRequest, restoreWireStream, UnhandledShape, type StreamOutcome, type WireBlock, type WireChunk, type WireRequest, type WireToolHistory } from '../src/stream.ts'
+import { ViewStore } from '../src/views.ts'
 
 const KEY = 'sk-' + 'proj-STREAMstream0123456789abcdef'
 const PLACEHOLDER = /⟦DSH_REDACTED:API_KEY_[a-z2-7]{8}⟧/
@@ -527,6 +528,8 @@ test('a structured shape this half cannot read fails the request instead of goin
     { provider: 'openai', messages: [{ role: 'user', content: [{ type: 'tool-result', id: 'r', name: 'env', content: { text: KEY } }] }] },
     { provider: 'openai', messages: [{ role: 'user', content: [{ type: 'text', text: 7 }] }] },
     { provider: 'openai', tools: { name: 'write' } },
+    { provider: 'openai', toolHistory: [{ name: 'write', description: KEY }] },
+    { provider: 'openai', toolHistory: { tools: [], updates: [{ messageId: 'm' }] } },
   ] as unknown as WireRequest[]
   for (const options of unreadable) {
     assert.throws(() => maskStructuredRequest(engine, options, 'openai', undefined, 'chat'), UnhandledShape)
@@ -535,21 +538,98 @@ test('a structured shape this half cannot read fails the request instead of goin
   assert.ok(!JSON.stringify(engine.records.recent()).includes(KEY))
 })
 
-test('toolHistory and parameter schemas are masked while protectTools is off, and untouched while it is on', () => {
-  const history = [{
-    name: 'write',
+test('toolHistory baselines and update additions are masked while protectTools is off, and untouched while it is on', () => {
+  const tool = (name: string) => ({
+    name,
     description: `use ${KEY}`,
     parameters: { type: 'object', description: `writes ${KEY}`, properties: { path: { type: 'string', description: `path ${KEY}` } } },
-  }]
+  })
+  const history: WireToolHistory = { tools: [tool('write')], updates: [{ messageId: 'm', additions: [tool('read')] }] }
   const open = setup({ protectTools: false })
   const outcome = maskStructuredRequest(open.engine, { provider: 'openai', messages: [{ role: 'user', content: 'plain' }], toolHistory: history }, 'openai', undefined, 'chat')
   assert.equal(outcome.changed, true)
   assert.ok(!JSON.stringify(outcome.request.toolHistory).includes(KEY))
   assert.ok(JSON.stringify(history).includes(KEY), 'the original is not mutated')
+  assert.equal((outcome.request.toolHistory as WireToolHistory).updates[0]?.messageId, 'm')
   outcome.finish()
 
   const closed = setup({ protectTools: true })
   const kept = maskStructuredRequest(closed.engine, { provider: 'openai', messages: [{ role: 'user', content: 'plain' }], toolHistory: history }, 'openai', undefined, 'chat')
   assert.equal(kept.changed, false, 'protectTools leaves the tool definitions byte for byte')
   assert.equal(kept.request.toolHistory, history)
+})
+
+test('tool-call JSON values are masked without changing tool-owned argument keys', () => {
+  const { engine } = setup()
+  const options: WireRequest = {
+    provider: 'openai',
+    messages: [{ role: 'assistant', content: [{ type: 'tool-call', id: 'c', name: 'write', arguments: JSON.stringify({ [KEY]: KEY, plain: 'ok' }) }] }],
+  }
+  const outcome = maskStructuredRequest(engine, options, 'openai', undefined, 'chat')
+  const block = (outcome.request.messages?.[0]?.content as readonly WireBlock[])[0] as { arguments: string }
+  const args = JSON.parse(block.arguments) as Record<string, string>
+  assert.ok(Object.hasOwn(args, KEY), 'the sensitive-looking argument name is tool schema and stays intact')
+  assert.match(args[KEY] as string, PLACEHOLDER)
+  assert.equal(args.plain, 'ok')
+  outcome.finish()
+  const record = engine.records.recent()[0]
+  assert.equal(record?.n, 1)
+  assert.equal(record?.values[0]?.at?.path, 'messages.0.content.0.arguments')
+})
+
+test('maskKeys covers non-structural keys but never protocol, tool schema or argument keys', async () => {
+  const { engine } = setup({ restoreLog: true })
+  const options: WireRequest = {
+    provider: 'openai',
+    messages: [{ role: 'user', content: 'plain', metadata: { [KEY]: 'label', nested: { [KEY]: 'again' }, plain: 'ok' } }],
+    tools: [{ name: 'write', description: 'plain', parameters: { type: 'object', properties: { [KEY]: { type: 'string' } } } }],
+  }
+  const outcome = maskStructuredRequest(engine, options, 'openai', undefined, 'chat')
+  assert.equal(outcome.changed, true)
+  assert.ok(!JSON.stringify((outcome.request.messages?.[0] as { metadata?: unknown }).metadata).includes(KEY))
+  assert.ok(JSON.stringify(outcome.request.tools).includes(KEY), 'tool schema keys stay intact')
+  assert.equal(outcome.request.messages?.[0]?.role, 'user')
+  assert.ok(JSON.stringify(options.messages).includes(KEY), 'the frozen source request is not mutated')
+  outcome.finish()
+  const record = engine.records.recent()[0]
+  assert.equal(record?.n, 2)
+  assert.ok(!JSON.stringify(record).includes(KEY), 'key paths and records never expose the original key')
+
+  const placeholder = PLACEHOLDER.exec(JSON.stringify(outcome.request))?.[0]
+  assert.ok(placeholder)
+  const reply = [{ type: 'block-end', index: 0, block: { type: 'tool-call', id: 'c', name: 'write', arguments: JSON.stringify({ content: KEY, [placeholder]: 'restored key' }) } }] as WireChunk[]
+  const restored = await collect(restoreWireStream((async function* () { yield* reply })(), outcome))
+  const block = (restored[0] as { block: { arguments: string } }).block
+  assert.deepEqual(JSON.parse(block.arguments), { content: KEY, [KEY]: 'restored key' })
+
+  const off = setup({ maskKeys: false })
+  const untouched = maskStructuredRequest(off.engine, options, 'openai', undefined, 'chat')
+  assert.equal(untouched.changed, false)
+  assert.equal(untouched.request, options)
+  untouched.finish()
+})
+
+test('vendorView keeps the structured dispatch and hides masked and warned values and keys', () => {
+  const views = new ViewStore()
+  const engine = new PrivacyEngine(randomBytes(32), resolveConfig({ ...defaults, intercept: 'stream', vendorView: true, words: ['内部代号'], actions: { API_KEY: 'warn' } }), { views })
+  const outcome = maskStructuredRequest(engine, {
+    provider: 'openai',
+    signal: new AbortController().signal,
+    messages: [{ role: 'user', content: `${KEY} 内部代号`, metadata: { [KEY]: 'label' } }],
+    toJSON() {
+      return { leaked: `${KEY} 内部代号` }
+    },
+  }, 'openai', undefined, 'chat')
+  outcome.finish()
+  const record = engine.records.recent()[0]
+  assert.ok(record)
+  const body = views.get(record.key)
+  assert.ok(body)
+  assert.ok(!body.includes(KEY), 'warned value and key stay out of the view')
+  assert.ok(!body.includes('内部代号'), 'masked value stays out of the view')
+  assert.ok(body.includes('⟦DSH_REDACTED:API_KEY_'))
+  assert.ok(body.includes('⟦DSH_REDACTED:TERM_'))
+  assert.ok(!body.includes('"signal"'))
+  engine.reconfigure(resolveConfig({ ...defaults, intercept: 'stream', vendorView: false }))
+  assert.equal(views.size, 0)
 })

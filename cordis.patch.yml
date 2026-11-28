@@ -5,9 +5,9 @@
 # inserted; no built-in row's config is touched.
 #
 # `config` takes this plugin's own settings (README, "配置"); the everyday ones
-# live on the configuration page. `intercept` picks the working mode:
-# `dispatcher` (default, the undici global dispatcher) or `stream` (experimental,
-# the llm/stream structured layer; docs/adr/0040).
+# live on the configuration page. `intercept` is an internal switch, with no
+# ordinary-page selector: `dispatcher` (default, the undici global dispatcher)
+# or `stream` (experimental, the llm/stream structured layer; docs/adr/0040).
 - insert:
     - id: dsh-privacy-gateway
       name: 'dsh-privacy-gateway'
