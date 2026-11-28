@@ -320,31 +320,6 @@ export class Masker {
     return { text, n, hits: pass.hits }
   }
 
-  /**
-   * Masks the values of one tool call's JSON arguments without touching its
-   * tool-owned argument names. The wire text and escapes stay lossless; every
-   * nested hit keeps the argument block's base place so a sensitive key cannot
-   * leak through an audit path (docs/adr/0029).
-   */
-  maskJSONArguments(raw: string, route = '', at?: Place): MaskResult {
-    let doc: unknown
-    try {
-      doc = JSON.parse(raw)
-    } catch {
-      throw new Error('tool call arguments are not JSON')
-    }
-    if (!isObject(doc)) throw new Error('tool call arguments are not a JSON object')
-    const pass: Pass = { route, preview: false, hits: [], warned: [], trueforms: [], ...(this.#options.context && at ? { at } : {}) }
-    let n = 0
-    const out = walkJSON(raw, (_path, _shown, key, value) => {
-      const r = this.#mask(value, asJSON(key, ''), [], pass)
-      n += r.n
-      return r.edits
-    })
-    if (out === null) throw new Error('tool call arguments could not be walked')
-    return { text: out, n, hits: pass.hits, ...(pass.warned?.length ? { warned: pass.warned } : {}), ...(pass.trueforms?.length ? { trueforms: pass.trueforms } : {}) }
-  }
-
   /** maskText with nothing remembered: each value goes as the placeholder it would have (`/privacy test`). */
   preview(raw: string): MaskResult {
     const pass: Pass = { route: '', preview: true, hits: [] }

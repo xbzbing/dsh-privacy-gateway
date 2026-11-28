@@ -140,7 +140,7 @@ export interface PrivacyGatewayConfig {
 // the cast: a volatile field's input is a boolean and its output a live reference, which Schema<T> has one type for
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
-  intercept: Schema.union(['stream', 'dispatcher'] as const).default('dispatcher').volatile().description('内部实验工作模式，仅在 cordis.patch.yml 中配置：dispatcher（默认）或 stream（仅覆盖 llm/stream，会二次派发）/ Internal experimental mode, cordis.patch.yml only: dispatcher (default) or stream (llm/stream calls only, redispatches masked requests)'),
+  intercept: Schema.union(['stream', 'dispatcher'] as const).default('dispatcher').volatile().description('内部实验工作模式，仅在 cordis.patch.yml 配置：dispatcher（默认）或 stream（仅覆盖 llm/stream，会二次派发；docs/adr/0040）/ Internal experimental mode, cordis.patch.yml only: dispatcher (default) or stream (llm/stream calls only, redispatches masked requests; docs/adr/0040)'),
   secrets: Schema.boolean().default(true).volatile(),
   personal: Schema.boolean().default(false).volatile(),
   words: Schema.array(Schema.string()).default([]).volatile(),

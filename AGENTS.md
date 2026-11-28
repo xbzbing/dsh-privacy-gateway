@@ -1,6 +1,6 @@
 # AGENTS.md
 
-dsh-privacy-gateway 是 DSH 的进程级脱敏网关（Cordis 插件，host + client 两半）。默认的 `dispatcher` 半把一个 undici dispatcher 挂在全局 dispatcher 前面：发往模型服务的请求里，密钥、凭据、个人信息和自定义敏感词换成占位符；回复里的占位符默认原样进会话日志（明文不进日志），配置页的 `restoreLog` 打开时再换回原值（ADR-0003）。走全局 fetch 的 provider 都经过它；`node:http` 直连、multipart / 表单 / 非 JSON body 和放行名单里的 provider 不经过（见 README「说明」）。另一个实验性的 `stream` 半在 `llm/stream` 结构化层做同样的事，由 volatile 的 `intercept` 二选一，两者互斥；该内部开关只在 `cordis.patch.yml` 里配置，普通设置页不提供模式选择器（ADR-0040）。ESM（`"type": "module"`）、TypeScript、Node >= 22.19、pnpm。
+dsh-privacy-gateway 是 DSH 的进程级脱敏网关（Cordis 插件，host + client 两半）。默认的 `dispatcher` 半把一个 undici dispatcher 挂在全局 dispatcher 前面：发往模型服务的请求里，密钥、凭据、个人信息和自定义敏感词换成占位符；回复里的占位符默认原样进会话日志（明文不进日志），配置页的 `restoreLog` 打开时再换回原值（ADR-0003）。走全局 fetch 的 provider 都经过它；`node:http` 直连、multipart / 表单 / 非 JSON body 和放行名单里的 provider 不经过（见 README「说明」）。另一个实验性的 `stream` 半在 `llm/stream` 结构化层做同样的事，由 volatile 的 `intercept` 二选一，两者互斥（ADR-0040）。ESM（`"type": "module"`）、TypeScript、Node >= 22.19、pnpm。
 
 每个决策都有 ADR，见 [docs/adr/README.md](docs/adr/README.md)。改行为前先读相关 ADR。
 

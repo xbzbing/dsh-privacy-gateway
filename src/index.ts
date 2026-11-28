@@ -254,7 +254,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       // The half is experimental (docs/adr/0040): say so once, in the log the maintainer reads.
       if (!streamWarned) {
         streamWarned = true
-        ctx.logger.warn('dsh-privacy-gateway: intercept=stream is experimental: it covers only calls that go through llm/stream, redispatches the masked request, and its vendorView is the structured request before adapter serialization; set intercept back to dispatcher to return to the default')
+        ctx.logger.warn('dsh-privacy-gateway: intercept=stream is experimental: it covers only calls that go through llm/stream, redispatches the masked request, and leaves maskKeys and vendorView off; set intercept back to dispatcher to return to the default')
       }
       ctx.logger.info('dsh-privacy-gateway: masking on llm/stream')
       return
@@ -356,9 +356,9 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
           ...(shownSession !== undefined ? { session: shownSession } : {}),
           stats: records.stats(session),
           recent,
-          vendorView: c.vendorView,
+          vendorView: c.vendorView && c.intercept === 'dispatcher',
           restoreLog: c.restoreLog,
-          views: c.vendorView ? views.keys() : [],
+          views: c.vendorView && c.intercept === 'dispatcher' ? views.keys() : [],
           intercept: c.intercept,
           // read now: the detail page's switch changes it without remounting the plugin
           showPanel: liveBool(config.showPanel, c.showPanel),
@@ -419,7 +419,7 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         const c = current()
         // an explicit write boundary: a mode edit made on another page is applied before the answer
         ensureMode(c.intercept)
-        if (!c.vendorView) {
+        if (!c.vendorView || c.intercept !== 'dispatcher') {
           views.clear()
           return null
         }
