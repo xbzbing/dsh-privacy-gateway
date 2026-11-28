@@ -20,9 +20,8 @@ test('every field the page edits is volatile, so the settings service lets it be
   }
 })
 
-test('the gateway rebuilds from every volatile field the page edits, with intercept read at the call boundary', () => {
+test('the gateway rebuilds from every volatile field the page edits', () => {
   const page: string[] = FIELDS.map((f) => f.key).filter((k) => k !== 'showPanel' && k !== 'excludeProviders')
-  page.push('intercept')
   assert.deepEqual([...page].sort(), [...LIVE_FIELDS].sort())
 })
 
@@ -101,6 +100,9 @@ test('a folded group’s summary follows the settings, falling back to the defau
   assert.deepEqual(keys('mask', { secrets: false }, 'stream'), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
   assert.deepEqual(keys('mask', { secrets: false, maskKeys: false }), ['cfg.s.maskNothing', 'cfg.s.toolGuard.off'])
   assert.deepEqual(keys('mask', { personal: true, shape: true, toolGuard: 'warn', restoreLog: true }), ['cfg.s.secrets', 'cfg.s.personal', 'cfg.s.shape', 'cfg.s.toolGuard.warn', 'cfg.s.restoreLog'])
+  // the working mode says so only where it is not the default
+  assert.deepEqual(keys('mask', { intercept: 'dispatcher' }), ['cfg.s.secrets', 'cfg.s.toolGuard.off'])
+  assert.deepEqual(keys('mask', { intercept: 'stream' }), ['cfg.s.secrets', 'cfg.s.toolGuard.off', 'cfg.s.intercept.stream'])
   assert.deepEqual(groupSummary('lists', { words: ['a', 'b'] }), [
     { key: 'cfg.s.words', params: { n: 2 } },
     { key: 'cfg.s.allow', params: { n: 0 } },
@@ -140,7 +142,12 @@ const field = (k: FieldSpec['key']): FieldSpec => FIELDS.find((f) => f.key === k
 
 test('the changes that send content as it is or delete kept data are the ones confirmed', () => {
   const risky = FIELDS.filter((f) => f.risk).map((f) => `${f.key}:${f.risk}`)
-  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'restoreLog:log', 'secrets:send', 'vendorView:delete', 'words:send'])
+  assert.deepEqual(risky.sort(), ['allow:send', 'enabled:send', 'excludeProviders:send', 'intercept:send', 'keepDays:delete', 'maskKeys:send', 'personal:send', 'record:delete', 'restoreLog:log', 'secrets:send', 'vendorView:delete', 'words:send'])
+  // the working mode only when it narrows the coverage (docs/adr/0040)
+  assert.deepEqual(riskOf(field('intercept'), 'dispatcher', 'stream'), { risk: 'send' })
+  assert.deepEqual(riskOf(field('intercept'), undefined, 'stream'), { risk: 'send' })
+  assert.equal(riskOf(field('intercept'), 'stream', 'dispatcher'), undefined)
+  assert.equal(riskOf(field('intercept'), 'stream', 'stream'), undefined)
   // a switch only when turned off, from its default too
   assert.deepEqual(riskOf(field('enabled'), undefined, false), { risk: 'send' })
   assert.equal(riskOf(field('enabled'), false, true), undefined)

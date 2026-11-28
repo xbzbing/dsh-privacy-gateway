@@ -62,7 +62,7 @@ test('Config defaults and round-trips through toJSON', () => {
   // the fields the configuration page edits are volatile: they come as live references
   assert.equal(liveBool(parsed.showPanel, true), false)
   assert.deepEqual(liveStrings(parsed.excludeProviders), [])
-  // the default layer is the dispatcher (docs/adr/0039): an install without the field changes nothing
+  // the default layer is the dispatcher (docs/adr/0040): an install without the field changes nothing
   assert.equal(resolveConfig(parsed).intercept, 'dispatcher')
   assert.deepEqual(resolveConfig(parsed), defaults)
   assert.equal(resolveConfig(Config({ showPanel: true })).showPanel, true)

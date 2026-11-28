@@ -236,22 +236,26 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       engine.reconfigure(next)
       records.configure({ ...(next.record ? { dir: recordDir } : {}), keepDays: next.keepDays })
     }
-    // Check the installed half even after a failed switch: a cached config must not make that failure permanent.
-    ensureMode(cfg.intercept)
     return cfg
   }
   let llm: StreamLlm | undefined
   let gateway: ReturnType<typeof installGateway> | undefined
   let installedMode: Intercept | undefined
   /** Installs the selected half and disposes the other, in both directions. */
+  let streamWarned = false
   const ensureMode = (mode: Intercept): void => {
     if (installedMode === mode) return
     gateway?.dispose()
     gateway = undefined
-    // A failed install leaves no false installed state and is retried on the next current() read.
+    // A failed install leaves no false installed state and is retried on the next explicit boundary.
     installedMode = undefined
     if (mode === 'stream') {
       installedMode = mode
+      // The half is experimental (docs/adr/0040): say so once, in the log the maintainer reads.
+      if (!streamWarned) {
+        streamWarned = true
+        ctx.logger.warn('dsh-privacy-gateway: intercept=stream is experimental: it covers only calls that go through llm/stream, redispatches the masked request, and leaves maskKeys and vendorView off; set intercept back to dispatcher to return to the default')
+      }
       ctx.logger.info('dsh-privacy-gateway: masking on llm/stream')
       return
     }
@@ -338,6 +342,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
       overview: (limit, session) => {
         // first: a change the configuration page made is applied before anything is read
         const c = current()
+        // an explicit write boundary: the read may follow a mode edit made on another page
+        ensureMode(c.intercept)
         const recent = records.recent(limit, session)
         // Warned or blocked values may never enter the table; their request's audit snapshot is authoritative.
         const shownSession = session ? sessionLabel(session, recent) : undefined
@@ -411,6 +417,8 @@ export function apply(ctx: PluginContext, config: PrivacyGatewayConfig = {}): vo
         // read now: vendorView turned off on the configuration page serves no body from then on,
         // and drops the ones kept, without waiting for the next request to apply the change
         const c = current()
+        // an explicit write boundary: a mode edit made on another page is applied before the answer
+        ensureMode(c.intercept)
         if (!c.vendorView || c.intercept !== 'dispatcher') {
           views.clear()
           return null

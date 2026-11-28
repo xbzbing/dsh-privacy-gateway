@@ -42,6 +42,28 @@ export function newTally(): Tally {
 }
 
 /**
+ * Adds what `from` counted to `into`: the same reply restored in more than
+ * one pass (a live text delta and the block that closes it) is counted where
+ * the pass is authoritative (docs/adr/0040).
+ */
+export function mergeTally(into: Tally, from: Tally): void {
+  for (const [placeholder, n] of from.restored) into.restored.set(placeholder, (into.restored.get(placeholder) ?? 0) + n)
+  into.inTools += from.inTools
+  into.unmapped += from.unmapped
+  into.exfil += from.exfil
+  into.exfilBlocked += from.exfilBlocked
+  for (const host of from.exfilHosts) {
+    if (into.exfilHosts.size < MAX_HOSTS) into.exfilHosts.add(host)
+  }
+  for (const u of from.unknown) {
+    const same = into.unknown.find((x) => x.kind === u.kind && x.tool === u.tool)
+    if (same) same.n += u.n
+    else if (into.unknown.length < MAX_UNKNOWN) into.unknown.push({ ...u })
+  }
+  into.sawReply ||= from.sawReply
+}
+
+/**
  * What is done with a tool call's arguments that would have a value put back
  * and name a host off this machine (design §13 R15, docs/adr/0014): nothing
  * but the count (off), a warning and a record (warn), or the placeholders

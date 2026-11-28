@@ -46,6 +46,10 @@
 
 「带 `upgrade` 的请求一律不发」被 [ADR-0032](0032-upgrade-scoped-to-masked-calls.md) 收窄为「只在模型调用里不发」：模型调用之外的升级（别的插件自建的连接，如 dsh-im-infoflow 的入站）与 `CONNECT` 隧道放行，消息不脱敏，同一 host 打一条 warn。这是一次 fail-closed 到 fail-open 的取舍，代价见 ADR-0032。明确放行的情况（`enabled` 关、`/privacy off`、排除的 provider、关闭了脱敏的会话、`excludeHosts`）不变。
 
+## 更新（2026-11-28）
+
+本 ADR 的「WebSocket 升级与 `CONNECT` 隧道不发」只在 `dispatcher` 模式下成立。切到 `stream`（[ADR-0040](0040-llm-stream-and-intercept-modes.md)）后不再安装 dispatcher，模型调用的升级握手也不经过网关，这一拒绝随之失效：结构化层在 adapter 序列化**之前**改写请求、回复在交给宿主之前还原，握手与它后面的帧不在这一层的视野内，也不靠拒绝它们来保证安全。默认仍是 `dispatcher`，此更新不改变默认行为。
+
 ## 更新（2026-11-20）
 
 回复方向的两条随 [ADR-0003](0003-restore-before-session-log.md) 改为开关、默认不还原而收窄：`accept-encoding` 只在要还原时设成 `identity`，压缩回复的解码与 warn 只发生在还原打开时；还原关闭时压缩的回复原样穿过网关。请求方向不变。

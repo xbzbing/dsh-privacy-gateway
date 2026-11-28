@@ -24,7 +24,7 @@ import { choiceValue, countValue, FIELDS, GROUPS, groupSummary, inline, listValu
 import type { Key, T } from './locales.ts'
 import { configForms, findNamespace } from './panelConfig.ts'
 import { excludeChoices, toggleExcluded } from './providerChoice.ts'
-import { fetchOverview, fetchProviders, type ClientCtx, type ProviderEntry } from './rpc.ts'
+import { fetchProviders, type ClientCtx, type ProviderEntry } from './rpc.ts'
 import { panelFailure, panelFailureText } from './sidebar.ts'
 import { WriteQueue, type QueueState } from './writeQueue.ts'
 
@@ -149,18 +149,9 @@ export function ConfigSection(props: { ctx: ClientCtx; t: T; form?: RowForm }): 
   const saved = state?.value ?? {}
   // what each field shows and the next change starts from: the saved value, or the one still on its way
   const value = (k: FieldSpec['key']): unknown => queue.latest(k, saved[k])
-  // The mode the page shows fields for, read from the host: fields that have no effect in it are
-  // hidden. The intercept field itself is volatile and rides in no form snapshot, so a fresh
-  // state identity (any write, here or through another page) is the cue to ask the host again.
-  const [mode, setMode] = useState<'stream' | 'dispatcher'>('dispatcher')
-  useEffect(() => {
-    const abort = new AbortController()
-    void fetchOverview(ctx, 1, abort.signal).then((r) => {
-      // readOverview normalizes the mode; a missing one (an old host) reads as dispatcher
-      if (!abort.signal.aborted && r.ok) setMode(r.value.intercept === 'stream' ? 'stream' : 'dispatcher')
-    })
-    return () => abort.abort()
-  }, [ctx, tries, state])
+  // The mode the page shows fields for is the field's own value, saved or still on its way: a write
+  // applies it at once, so no read of the host is needed for the page to agree with itself.
+  const mode = choiceValue(value('intercept'), ['dispatcher', 'stream'], 'dispatcher') as 'stream' | 'dispatcher'
   const toggle = (g: GroupId): void =>
     setOpen((was) => {
       const next = was.includes(g) ? was.filter((x) => x !== g) : GROUPS.filter((x) => x === g || was.includes(x))

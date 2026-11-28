@@ -42,13 +42,10 @@ export interface RedactionEngine {
 
 /** Where one structured string sits, and which protected region semantics apply to it. */
 export interface StructuredMaskMeta {
-  session?: string
-  what?: string
-  model?: string
   at?: Place
   /** Host-written system text, where configured <env> blocks stay byte for byte. */
   env?: boolean
-  /** A tool description, skipped while protectTools is on. */
+  /** A tool definition, skipped while protectTools is on. */
   tool?: boolean
 }
 
@@ -221,21 +218,21 @@ export class PrivacyEngine implements RedactionEngine {
   }
 
   /** Masks one free-text string of a structured llm/stream request. */
-  maskStructuredText(text: string, info: RequestInfo, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
+  maskStructuredText(text: string, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
     if (!this.active || (meta.tool === true && this.#protectTools)) return null
     const keep = this.#protectEnvBlock && meta.env === true ? envBlockRanges(text) : []
     const r = this.#masker.maskText(text, false, keep, meta.at)
-    return this.#structuredResult(r, info)
+    return this.#structuredResult(r)
   }
 
   /** Masks a tool call's arguments as JSON text of its own, preserving its escapes. */
-  maskStructuredJSON(text: string, info: RequestInfo, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
+  maskStructuredJSON(text: string, meta: StructuredMaskMeta = {}): StructuredMaskResult | null {
     if (!this.active) return null
     const r = this.#masker.maskText(text, true, [], meta.at)
-    return this.#structuredResult(r, info)
+    return this.#structuredResult(r)
   }
 
-  #structuredResult(r: MaskResult, _info: RequestInfo): StructuredMaskResult | null {
+  #structuredResult(r: MaskResult): StructuredMaskResult | null {
     if (r.n === 0 && r.hits.length === 0) return null
     const hits = [...r.hits]
     let warned = 0

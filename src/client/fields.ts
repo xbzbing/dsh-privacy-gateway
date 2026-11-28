@@ -37,7 +37,7 @@ interface Base<K extends string> {
 
 export type FieldSpec =
   | (Base<'enabled' | 'secrets' | 'personal' | 'shape' | 'restoreLog' | 'maskKeys' | 'record' | 'recordContext' | 'vendorView' | 'showPanel'> & { kind: 'switch'; default: boolean })
-  | (Base<'toolGuard'> & { kind: 'choice'; choices: readonly string[]; default: string })
+  | (Base<'toolGuard' | 'intercept'> & { kind: 'choice'; choices: readonly string[]; default: string; /** The one choice that costs, confirmed before it is written. */ riskChoice?: string })
   | (Base<'words' | 'allow'> & { kind: 'list'; default: readonly string[]; anyCase: boolean; risky: 'add' | 'remove' })
   | (Base<'keepDays'> & { kind: 'count'; min: number; default: number })
   | (Base<'excludeProviders'> & { kind: 'providers'; default: readonly string[] })
@@ -45,6 +45,8 @@ export type FieldSpec =
 export const GROUPS: readonly GroupId[] = ['mask', 'lists', 'record', 'view']
 
 export const FIELDS: readonly FieldSpec[] = [
+  // the working mode decides which fields below have an effect; stream is experimental
+  { key: 'intercept', group: 'mask', kind: 'choice', choices: ['dispatcher', 'stream'], default: 'dispatcher', risk: 'send', riskChoice: 'stream' },
   { key: 'enabled', group: 'mask', kind: 'switch', default: true, risk: 'send' },
   { key: 'secrets', group: 'mask', kind: 'switch', default: true, half: true, risk: 'send' },
   { key: 'personal', group: 'mask', kind: 'switch', default: false, half: true, risk: 'send' },
@@ -116,8 +118,13 @@ export function riskOf(f: FieldSpec, before: unknown, after: unknown): RiskyChan
       const to = countValue(after, f.min, f.default)
       return to < from ? { risk: f.risk, from, to } : undefined
     }
-    case 'choice':
-      return undefined
+    case 'choice': {
+      // only the one choice that costs is confirmed: the working mode that narrows the coverage
+      if (f.risk === undefined || f.riskChoice === undefined) return undefined
+      const was = choiceValue(before, f.choices, f.default)
+      const now = choiceValue(after, f.choices, f.default)
+      return was !== f.riskChoice && now === f.riskChoice ? { risk: f.risk } : undefined
+    }
   }
 }
 
@@ -153,6 +160,8 @@ export function groupSummary(g: GroupId, value: Record<string, unknown>, mode: '
       const guard = spec('toolGuard', 'choice')
       parts.push({ key: `cfg.s.toolGuard.${choiceValue(value.toolGuard, guard.choices, guard.default)}` })
       if (on('restoreLog')) parts.push({ key: 'cfg.s.restoreLog' })
+      const mode = spec('intercept', 'choice')
+      if (choiceValue(value.intercept, mode.choices, mode.default) === 'stream') parts.push({ key: 'cfg.s.intercept.stream' })
       return parts
     }
     case 'lists':

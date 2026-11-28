@@ -16,7 +16,7 @@ export const ACTIONS: readonly Action[] = ['mask', 'warn', 'block']
 
 export type ToolGuard = 'off' | 'warn' | 'block'
 
-/** Where the gateway masks: the undici global dispatcher (the default) or the llm/stream waterfall. */
+/** Where the gateway masks: the undici global dispatcher (the default) or the experimental llm/stream waterfall. */
 export type Intercept = 'stream' | 'dispatcher'
 
 /** excludeProviders' description. */
@@ -62,7 +62,12 @@ export function liveStrings(v: unknown): string[] {
 export interface PrivacyGatewayConfig {
   /** Master switch. */
   enabled?: boolean
-  /** Keep the undici global dispatcher path (the default), or mask structured requests on the llm/stream waterfall. */
+  /**
+   * Keep the undici global dispatcher path (the default), or mask structured
+   * requests on the llm/stream waterfall. The stream half is experimental:
+   * it covers only calls that go through `llm/stream` and redispatches the
+   * masked request (docs/adr/0040).
+   */
   intercept?: Intercept | LiveValue<Intercept>
   /** Mask secrets: API keys, tokens, passwords, private keys, cookies. */
   secrets?: boolean
@@ -135,7 +140,7 @@ export interface PrivacyGatewayConfig {
 // the cast: a volatile field's input is a boolean and its output a live reference, which Schema<T> has one type for
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).volatile(),
-  intercept: Schema.union(['stream', 'dispatcher'] as const).default('dispatcher').volatile().description('脱敏拦截层 / Where masking intercepts'),
+  intercept: Schema.union(['stream', 'dispatcher'] as const).default('dispatcher').volatile().description('工作模式：dispatcher（默认）或 stream（实验）/ Working mode: dispatcher (default) or stream (experimental)'),
   secrets: Schema.boolean().default(true).volatile(),
   personal: Schema.boolean().default(false).volatile(),
   words: Schema.array(Schema.string()).default([]).volatile(),

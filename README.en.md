@@ -35,10 +35,11 @@ In the default web profile the first install works at once, with no restart of t
 - **Records and statistics**: records written to disk by the day, a statistics card, and the session's 「隐私保护」 (Privacy) tab; a record holds placeholders, never a value.
 - **The `/privacy` command**: status, a temporary on / off, and `test` to preview how a text would go out.
 - **Live configuration**: everyday items are changed on the plugin page and apply from the next call; when masking fails, the request is not sent.
+- **Two working modes**: the default `dispatcher` sits in front of the undici global dispatcher and covers every model request through the global `fetch()`; the experimental `stream` masks at the `llm/stream` structured layer, for environments where a proxy plugin took over `fetch`, and covers only the calls that go through it. See [Working mode](#working-mode).
 
 ## How it works
 
-The gateway has this one interception point, and both directions happen at the HTTP layer:
+In the default `dispatcher` mode the gateway has this one interception point, and both directions happen at the HTTP layer (the `stream` mode is described in [Working mode](#working-mode)):
 
 ```mermaid
 flowchart LR
@@ -54,6 +55,22 @@ flowchart LR
 - **Outbound (①②)**: a matched, non-exempt value becomes a placeholder; the mapping stays in the in-memory table, so the same value has the same placeholder every turn. Protected regions, `allow` entries, disabled categories and unmatched content still go out as written.
 - **Inbound (③④)**: with `restoreLog` off (the default) the placeholders reach the agent and the session log as they are; with it on they become the real values before the log is written, so the agent and the log agree — the reply has this one restore point.
 - **Side channel**: records, statistics and `overview` use a safe projection without the complete originals of masked values; context and display fields such as host and model are cleaned independently. `vendorView` returns a copy of what was sent: protected regions, `allow` entries and unmatched content may still contain sensitive originals, so this copy is not secret-free.
+
+## Working mode
+
+The gateway has two exclusive working modes, and only one of them is installed at a time. The `intercept` field, first in the Masking group of the configuration page, switches between them from the next model call on, with no restart ([ADR-0040](docs/adr/0040-llm-stream-and-intercept-modes.md)):
+
+| | `dispatcher` (default) | `stream` (experimental) |
+| --- | --- | --- |
+| Where it intercepts | The undici global dispatcher: it rewrites the HTTP body after the adapter serialized it | The `llm/stream` structured layer: it rewrites the request before the adapter serializes it |
+| Covers | Every model request through the global `fetch()`, adapters provided by plugins included | Only the model calls that go through `llm/stream` |
+| Does not cover | Direct `node:http`, multipart / form / non-JSON bodies | Calls that bypass `llm/stream`: a request made after a proxy plugin took over `fetch`, direct `node:http` |
+| `maskKeys` | Applies | Does not apply: this layer never sees the wire JSON's keys |
+| `vendorView` | Applies | Does not apply, and the copies of what was sent are cleared |
+| Reply | SSE streams and whole JSON on the same connection | The reply chunks of `llm/stream`, arguments restored before the tool runs |
+| Known limit | The provider reaches the dispatcher through AsyncLocalStorage | A rewritten request is redispatched once by this plugin: the prepared call and the host's agent-loop identity (marked by object identity) do not follow a shallow copy |
+
+A default install behaves exactly as before. On `stream` the log carries one experimental notice; set `intercept` back to `dispatcher` to return to the default coverage, with no restart.
 
 ## What is masked
 
@@ -107,6 +124,7 @@ The gateway acts at one point: **the moment a model request leaves**. It does no
 | --- | --- |
 | Model request body | POST JSON requests through the global `fetch()` (array `messages`, array or string `input`, `contents`, string `prompt`): matched values become placeholders, a compressed body is decompressed first ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md), [ADR-0025](docs/adr/0025-compression-and-upgrades.md)) |
 | Model reply | The response on the same connection: SSE streams and whole JSON, restored across chunks, compression and `\u27e6` escapes; written back into the log only with `restoreLog` on |
+| `stream` mode (experimental) | Masks the structured request before the adapter serializes it and restores the reply before a tool runs; a narrower coverage than `dispatcher`, see [Working mode](#working-mode) |
 | Providers | Every adapter that goes through `fetch()`, ones a plugin provides included; `excludeHosts` / `excludeProviders` opt out |
 | On failure | A masking error, an unknown `content-encoding`, or an `upgrade` / `CONNECT` on a model call is not sent ([ADR-0005](docs/adr/0005-fail-closed.md)) |
 | Side channel | Records, statistics and `overview` do not store the complete originals of masked values; the `vendorView` copy can still contain exempt or unmatched sensitive originals ([ADR-0008](docs/adr/0008-masking-records.md), [ADR-0016](docs/adr/0016-vendor-view.md)) |
@@ -121,6 +139,7 @@ In the order a reader is most likely to assume otherwise:
 | Tool results | Written when the tool returns | **The session log holds the tool's output**; masked only on the next request out |
 | Images, files, base64 attachments | No rule recognises them; sent as they are | Screenshots, scans and attachments reach the model service; `multipart`, forms and non-JSON bodies are always sent untouched and leave no record |
 | Direct `node:http`, worker threads, separate processes | Do not pass through the gateway | Those requests get no placeholder and leave no record ([ADR-0001](docs/adr/0001-intercept-at-undici-global-dispatcher.md)) |
+| Calls that bypass `llm/stream` in `stream` mode | Do not pass through the gateway | A request made after a proxy plugin took over `fetch`, and a direct `node:http` call, get no placeholder and leave no record; `maskKeys` and “keep what was sent” do not apply in this mode |
 | Headers, URL, method | Only the body is rewritten, with the length and coding headers that follow | `Authorization` carries the provider's own credential and would fail if changed; query parameters are untouched |
 | Other egress | Not handled | A plugin sending its own messages, writing files or reaching its own service does not pass through it; a `fetch()` that is no model request goes as it is |
 | What is already on disk | Not rewritten | Content logged before the upgrade stays as it is |
@@ -151,10 +170,11 @@ The screenshots show the Chinese interface.
 
 ## Configuration
 
-The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `restoreLog`, `maskKeys`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in the profile's `~/.dsh/profiles/<profile>/cordis.patch.yml`, under `config` of the `id: dsh-privacy-gateway` row; the `cordis.patch.yml` shipped in the package is replaced on upgrade, so do not edit it.
+The everyday settings can be changed on the Configure page of this plugin's row on the plugin page: `intercept`, `enabled`, `secrets`, `personal`, `shape`, `toolGuard`, `restoreLog`, `maskKeys`, `words`, `allow`, `record`, `keepDays`, `recordContext`, `vendorView`, `showPanel`, `excludeProviders`. A change is saved at once and applies from the next model call, with no restart ([ADR-0021](docs/adr/0021-live-settings.md)). The others are changed in the profile's `~/.dsh/profiles/<profile>/cordis.patch.yml`, under `config` of the `id: dsh-privacy-gateway` row; the `cordis.patch.yml` shipped in the package is replaced on upgrade, so do not edit it.
 
 | Key | Default | Description |
 | --- | --- | --- |
+| `intercept` | `dispatcher` | Working mode: `dispatcher` (default, in front of the undici global dispatcher) or `stream` (experimental, masking at the `llm/stream` structured layer). `stream` narrows the coverage: only calls through `llm/stream` are masked, `maskKeys` and “keep what was sent” do not apply, and a rewritten request is redispatched once by this plugin; set it back to `dispatcher` to return to the default ([ADR-0040](docs/adr/0040-llm-stream-and-intercept-modes.md)) |
 | `enabled` | `true` | Master switch; when off, the gateway stays but lets every request by as it is, restoring and recording nothing |
 | `secrets` | `true` | Mask secrets, tokens, passwords, private keys and cookies |
 | `personal` | `false` | Mask email addresses, phone numbers, ID card and bank card numbers |
@@ -210,6 +230,7 @@ With `vendorView` on (「保留发出内容，供对照查看」 on the config p
 - Upgrading from 0.1.x: replies are no longer restored by default, so the agent gets placeholders. For the old behaviour (the agent and the log both hold the real values), turn `restoreLog` on in the config page.
 - By default the session log holds placeholders: with `restoreLog` off (the default), a reply's placeholders go into the log as they are, no real value from a reply reaches it, and the agent sees placeholders too; with it on, replies are restored before the log is written, so the log and the agent both hold the real values, and session sync, backups, shares and exports carry them too ([ADR-0003](docs/adr/0003-restore-before-session-log.md)).
 - Compressed requests are decompressed before they are masked; with `restoreLog` on, a compressed reply is decoded before it is restored, and with it off the reply passes through the gateway compressed, so an adapter reading it with `undici.request` must decompress it itself (`fetch` does it for the caller). A request's `content-encoding` with no decoder fails the request ([ADR-0025](docs/adr/0025-compression-and-upgrades.md)). An upgrade (the WebSocket handshake) or a `CONNECT` tunnel inside a model call is refused as well: Codex falls back to SSE the first time and takes SSE from then on in that session. One opened by something other than a model call is let through, its messages unmasked, with one warning per host ([ADR-0032](docs/adr/0032-upgrade-scoped-to-masked-calls.md)) — a fail-closed to fail-open trade whose cost the ADR records; a host that needs a transparent link can still go into `excludeHosts`.
+- The working mode is the `intercept` field, first in the Masking group of the configuration page; it can be changed in `cordis.patch.yml` too. On `stream`, only the calls that go through `llm/stream` are masked, `maskKeys` and “keep what was sent” do not apply, and the log carries one experimental notice; setting it back to `dispatcher` restores the default coverage at once ([ADR-0040](docs/adr/0040-llm-stream-and-intercept-modes.md)).
 - When masking fails, the request is not sent and fails with `dsh-privacy-gateway: masking failed, request not sent` ([ADR-0005](docs/adr/0005-fail-closed.md)). To recover, run `/privacy off`, or disable the plugin on the Plugins page or set `enabled` to `false`.
 
 ## Development

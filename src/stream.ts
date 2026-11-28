@@ -5,7 +5,7 @@
  */
 import { RequestBlocked, type RequestInfo, type StructuredExchange, type StructuredMaskMeta, type StructuredMaskResult, type StructuredRecordFields } from './engine.ts'
 import { placeOf, type Hit, type Place } from './redact/mask.ts'
-import type { Restorer, Tally } from './redact/restore.ts'
+import { mergeTally, newTally, type Restorer, type Tally } from './redact/restore.ts'
 import { isExcluded } from './providers.ts'
 
 export interface WireRequest {
@@ -82,9 +82,21 @@ export interface StreamOutcome {
 }
 
 export interface StreamEngine {
-  maskStructuredText(text: string, info: RequestInfo, meta?: StructuredMaskMeta): StructuredMaskResult | null
-  maskStructuredJSON(text: string, info: RequestInfo, meta?: StructuredMaskMeta): StructuredMaskResult | null
+  maskStructuredText(text: string, meta?: StructuredMaskMeta): StructuredMaskResult | null
+  maskStructuredJSON(text: string, meta?: StructuredMaskMeta): StructuredMaskResult | null
   recordStructuredRequest(fields: StructuredRecordFields): StructuredExchange
+}
+
+/**
+ * A structured request this half does not know how to read. The gateway is
+ * fail closed (docs/adr/0005): a shape it cannot walk might carry a value in a
+ * place it would leave as it is, so the call is not sent at all.
+ */
+export class UnhandledShape extends Error {
+  constructor(what: string) {
+    super(`llm/stream request has ${what}, which this gateway cannot mask`)
+    this.name = 'UnhandledShape'
+  }
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -100,7 +112,8 @@ function hostMessage(message: { role?: unknown }): boolean {
 /**
  * Masks every supported string without mutating the request. Unchanged
  * messages, blocks, arrays and tools keep their identities; a warning alone
- * does not force a copy. Masking errors are recorded and fail the request.
+ * does not force a copy. Masking errors, and a shape this half cannot read,
+ * are recorded and fail the request.
  */
 export function maskStructuredRequest(engine: StreamEngine, options: WireRequest, route: string, session: string | undefined, what: string): StreamOutcome {
   const started = performance.now()
@@ -118,13 +131,13 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
     return r.text
   }
   const maskText = (raw: string, at: Place, env = false, tool = false): string | undefined =>
-    accumulate(engine.maskStructuredText(raw, info, { session, what, model, at, env, tool }))
-  const maskArgs = (raw: string, at: Place): string | undefined =>
-    accumulate(engine.maskStructuredJSON(raw, info, { session, what, model, at }))
+    accumulate(engine.maskStructuredText(raw, { at, env, tool }))
+  const maskArgs = (raw: string, at: Place): string | undefined => accumulate(engine.maskStructuredJSON(raw, { at }))
 
   let nextMessages: readonly WireMessage[] | undefined
-  let nextSystem: string | undefined
+  let nextSystem: string | readonly WireBlock[] | undefined
   let nextTools: readonly WireTool[] | undefined
+  let nextToolHistory: readonly WireTool[] | undefined
   let nextStop: readonly unknown[] | undefined
   try {
     const walkBlocks = (blocks: readonly WireBlock[], path: string, env: boolean): readonly WireBlock[] => {
@@ -143,15 +156,21 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
             touched = true
             return { ...block, content: next } as WireBlock
           }
-          if (!Array.isArray(content)) return block as WireBlock
-          const next = walkBlocks(content as readonly WireBlock[], `${at}.content`, env)
-          if (next === content) return block as WireBlock
-          touched = true
-          return { ...block, content: next } as WireBlock
+          if (Array.isArray(content)) {
+            const next = walkBlocks(content as readonly WireBlock[], `${at}.content`, env)
+            if (next === content) return block as WireBlock
+            touched = true
+            return { ...block, content: next } as WireBlock
+          }
+          // A result this half cannot read may hold a value in a place it would
+          // leave as it is, so the request is not sent (docs/adr/0005).
+          throw new UnhandledShape('a tool result whose content is neither text nor a block array')
         }
         if (block.type !== 'text' && block.type !== 'reasoning' && block.type !== 'tool-call') return block as WireBlock
         const raw = block.type === 'tool-call' ? (block as { arguments?: unknown }).arguments : (block as { text?: unknown }).text
-        if (typeof raw !== 'string' || raw === '') return block as WireBlock
+        if (raw === undefined) return block as WireBlock
+        if (typeof raw !== 'string') throw new UnhandledShape(`a ${block.type} block whose payload is not text`)
+        if (raw === '') return block as WireBlock
         const next = block.type === 'tool-call' ? maskArgs(raw, placeOf(options, `${at}.arguments`)) : maskText(raw, placeOf(options, `${at}.text`), env)
         if (next === undefined || next === raw) return block as WireBlock
         touched = true
@@ -160,7 +179,56 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
       return touched ? out : blocks
     }
 
+    /**
+     * Masks the strings of a tool's parameter schema, as the dispatcher masks
+     * that body while protectTools is off. Keys stay: maskKeys reads the wire
+     * JSON, which this half never sees (docs/adr/0040).
+     */
+    const maskSchema = (node: unknown, path: string): { value: unknown; changed: boolean } => {
+      if (typeof node === 'string') {
+        if (node === '') return { value: node, changed: false }
+        const next = maskText(node, placeOf(options, path), false, true)
+        return next === undefined || next === node ? { value: node, changed: false } : { value: next, changed: true }
+      }
+      if (Array.isArray(node)) {
+        let changed = false
+        const out = node.map((item, i) => {
+          const masked = maskSchema(item, `${path}.${i}`)
+          if (masked.changed) changed = true
+          return masked.value
+        })
+        return { value: changed ? out : node, changed }
+      }
+      if (isObject(node)) {
+        let changed = false
+        const out: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(node)) {
+          const masked = maskSchema(value, `${path}.${key}`)
+          if (masked.changed) changed = true
+          out[key] = masked.value
+        }
+        return { value: changed ? out : node, changed }
+      }
+      return { value: node, changed: false }
+    }
+
+    /** One tool definition: its description, and the schema of its parameters while protectTools is off. */
+    const maskTool = (tool: WireTool, path: string): WireTool => {
+      if (!isObject(tool)) return tool
+      let next: Record<string, unknown> | undefined
+      if (typeof tool.description === 'string' && tool.description !== '') {
+        const masked = maskText(tool.description, placeOf(options, `${path}.description`), false, true)
+        if (masked !== undefined && masked !== tool.description) next = { ...tool, description: masked }
+      }
+      if (isObject(tool.parameters)) {
+        const masked = maskSchema(tool.parameters, `${path}.parameters`)
+        if (masked.changed) next = { ...(next ?? tool), parameters: masked.value }
+      }
+      return (next ?? tool) as WireTool
+    }
+
     const messages = options.messages
+    if (messages !== undefined && !Array.isArray(messages)) throw new UnhandledShape('messages that are not an array')
     if (Array.isArray(messages)) {
       let touched = false
       const out = messages.map((message, i): WireMessage => {
@@ -174,30 +242,57 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
           touched = true
           return { ...message, content: next } as WireMessage
         }
-        if (!Array.isArray(content)) return message as WireMessage
-        const next = walkBlocks(content, `messages.${i}.content`, env)
-        if (next === content) return message as WireMessage
-        touched = true
-        return { ...message, content: next } as WireMessage
+        if (Array.isArray(content)) {
+          const next = walkBlocks(content, `messages.${i}.content`, env)
+          if (next === content) return message as WireMessage
+          touched = true
+          return { ...message, content: next } as WireMessage
+        }
+        if (content === undefined) return message as WireMessage
+        throw new UnhandledShape(`a message whose content is neither text nor a block array (messages.${i})`)
       })
       if (touched) nextMessages = out
     }
 
-    if (typeof options.system === 'string' && options.system !== '') {
-      const next = maskText(options.system, placeOf(options, 'system'), true)
-      if (next !== undefined && next !== options.system) nextSystem = next
+    // A block-array system prompt is a covered shape (docs/adr/0004): walk it like a message.
+    const system = options.system
+    if (system !== undefined) {
+      if (typeof system === 'string') {
+        if (system !== '') {
+          const next = maskText(system, placeOf(options, 'system'), true)
+          if (next !== undefined && next !== system) nextSystem = next
+        }
+      } else if (Array.isArray(system)) {
+        const next = walkBlocks(system as readonly WireBlock[], 'system', true)
+        if (next !== system) nextSystem = next
+      } else {
+        throw new UnhandledShape('a system prompt that is neither text nor a block array')
+      }
     }
 
+    if (options.tools !== undefined && !Array.isArray(options.tools)) throw new UnhandledShape('tools that are not an array')
     if (Array.isArray(options.tools)) {
       let touched = false
       const out = options.tools.map((tool, i): WireTool => {
-        if (!isObject(tool) || typeof tool.description !== 'string' || tool.description === '') return tool as WireTool
-        const next = maskText(tool.description, placeOf(options, `tools.${i}.description`), false, true)
-        if (next === undefined || next === tool.description) return tool as WireTool
-        touched = true
-        return { ...tool, description: next } as WireTool
+        const next = maskTool(tool, `tools.${i}`)
+        if (next !== tool) touched = true
+        return next
       })
       if (touched) nextTools = out
+    }
+
+    // Some adapters rebuild the tools from `toolHistory`: leave it unmasked and
+    // the masked `tools` above is not what the model reads.
+    const history = options.toolHistory
+    if (history !== undefined && !Array.isArray(history)) throw new UnhandledShape('toolHistory that is not an array')
+    if (Array.isArray(history)) {
+      let touched = false
+      const out = history.map((tool, i): WireTool => {
+        const next = maskTool(tool as WireTool, `toolHistory.${i}`)
+        if (next !== tool) touched = true
+        return next
+      })
+      if (touched) nextToolHistory = out
     }
 
     if (Array.isArray(options.stop)) {
@@ -216,13 +311,14 @@ export function maskStructuredRequest(engine: StreamEngine, options: WireRequest
     throw err
   }
 
-  const changed = nextMessages !== undefined || nextSystem !== undefined || nextTools !== undefined || nextStop !== undefined
+  const changed = nextMessages !== undefined || nextSystem !== undefined || nextTools !== undefined || nextToolHistory !== undefined || nextStop !== undefined
   const request: WireRequest = changed
     ? {
         ...options,
         ...(nextMessages !== undefined ? { messages: nextMessages } : {}),
         ...(nextSystem !== undefined ? { system: nextSystem } : {}),
         ...(nextTools !== undefined ? { tools: nextTools } : {}),
+        ...(nextToolHistory !== undefined ? { toolHistory: nextToolHistory } : {}),
         ...(nextStop !== undefined ? { stop: nextStop } : {}),
       }
     : options
@@ -246,10 +342,15 @@ type ReplyExchange = Pick<StreamOutcome, 'restorer' | 'tally' | 'restoring' | 'f
 
 /**
  * Restores text and reasoning incrementally, then restores each assembled
- * block authoritatively. Tool arguments are judged and restored at block-end,
- * before the tool executor reads them. Held text is released before a terminal
- * chunk or normal EOF. Cancellation and errors discard it, finish the request
- * immediately, and never yield from cleanup; restoreLog off is a strict pass-through.
+ * block authoritatively. A live delta is counted in a tally of its own and
+ * merged into the request's only where no block ever closes that index, so
+ * one placeholder in a reply counts once (docs/adr/0040). Tool arguments are
+ * judged and restored at block-end, before the tool executor reads them; a
+ * call that only ever arrives as deltas is closed here, for the host would
+ * otherwise assemble it from the placeholders. Held text is released before a
+ * terminal chunk or normal EOF. Cancellation and errors discard it, finish
+ * the request immediately, and never yield from cleanup; restoreLog off is a
+ * strict pass-through.
  */
 export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: ReplyExchange): AsyncIterable<WireChunk> {
   return (async function* () {
@@ -264,6 +365,18 @@ export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: Re
     const { restorer, tally } = exchange
     const kinds = new Map<number, 'text-delta' | 'reasoning-delta'>()
     const held = new Map<number, string>()
+    /** What each index's live text put back, kept apart until a block says whether it counts. */
+    const live = new Map<number, Tally>()
+    /** Tool calls whose deltas no block has closed yet. */
+    const open = new Map<number, { id?: unknown; name?: unknown; args: string }>()
+    const liveTally = (index: number): Tally => {
+      let t = live.get(index)
+      if (t === undefined) {
+        t = newTally()
+        live.set(index, t)
+      }
+      return t
+    }
     const take = (index: number): { kind: 'text-delta' | 'reasoning-delta'; text: string } | undefined => {
       const kind = kinds.get(index)
       const text = held.get(index)
@@ -276,9 +389,29 @@ export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: Re
       for (const [index] of [...held]) {
         const tail = take(index)
         if (tail === undefined || tail.text === '') continue
-        const text = restorer.restoreText(tail.text, false, tally, false)
+        const text = restorer.restoreText(tail.text, false, liveTally(index), false)
         yield { type: tail.kind, index, text } as WireChunk
       }
+    }
+    /**
+     * Closes the tool calls that only ever arrived as deltas. The host's
+     * assembler takes a block over the deltas it accumulated, so this is what
+     * the executor reads; a call it cannot name is not sent on at all.
+     */
+    const closeOpen = function* (): Generator<WireChunk> {
+      for (const [index, call] of [...open].sort((a, b) => a[0] - b[0])) {
+        open.delete(index)
+        if (call.args === '' || !call.args.includes('_')) continue
+        const name = typeof call.name === 'string' ? call.name : ''
+        if (name === '') throw new UnhandledShape('a tool call that only arrived as deltas and cannot be named')
+        const args = restorer.restoreTool(call.args, tally)
+        yield { type: 'block-end', index, block: { type: 'tool-call', id: typeof call.id === 'string' ? call.id : '', name, arguments: args } } as WireChunk
+      }
+    }
+    /** Keeps what the live text put back where no block ever counted it. */
+    const settle = (): void => {
+      for (const t of live.values()) mergeTally(tally, t)
+      live.clear()
     }
     try {
       for await (const chunk of source) {
@@ -295,21 +428,31 @@ export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: Re
             const ready = n > 0 ? buf.slice(0, buf.length - n) : buf
             held.set(c.index, buf.slice(buf.length - n))
             if (ready === '') continue
-            const text = restorer.restoreText(ready, false, tally, false)
+            const text = restorer.restoreText(ready, false, liveTally(c.index), false)
             yield text === ready && ready === c.text ? chunk : ({ ...chunk, text } as WireChunk)
             continue
           }
-          case 'tool-call-delta':
-            // Only the assembled block is authoritative for tool execution.
+          case 'tool-call-delta': {
+            const c = chunk as { index: number; id?: unknown; name?: unknown; argumentsDelta?: unknown }
+            const call = open.get(c.index) ?? { id: c.id, name: c.name, args: '' }
+            if (c.id !== undefined) call.id = c.id
+            if (c.name !== undefined) call.name = c.name
+            call.args += typeof c.argumentsDelta === 'string' ? c.argumentsDelta : ''
+            open.set(c.index, call)
+            // The assembled block is authoritative for tool execution.
             yield chunk
             continue
+          }
           case 'block-end': {
             const c = chunk as BlockEndChunk
             const tail = take(c.index)
             if (tail !== undefined && tail.text !== '') {
-              const text = restorer.restoreText(tail.text, false, tally, false)
+              const text = restorer.restoreText(tail.text, false, liveTally(c.index), false)
               yield { type: tail.kind, index: c.index, text } as WireChunk
             }
+            // The block is authoritative: the live counts of its index are dropped.
+            live.delete(c.index)
+            open.delete(c.index)
             const block = c.block
             if (isObject(block) && (block.type === 'text' || block.type === 'reasoning') && typeof block.text === 'string') {
               const whole = restorer.restoreText(block.text, false, tally, false)
@@ -328,6 +471,7 @@ export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: Re
           case 'finish':
             // DSH emits usage and finish after content: no held text may follow them.
             for (const pending of drain()) yield pending
+            for (const closed of closeOpen()) yield closed
             yield chunk
             continue
           default:
@@ -335,9 +479,12 @@ export function restoreWireStream(source: AsyncIterable<WireChunk>, exchange: Re
         }
       }
       for (const pending of drain()) yield pending
+      for (const closed of closeOpen()) yield closed
     } finally {
       kinds.clear()
       held.clear()
+      open.clear()
+      settle()
       exchange.finish()
     }
   })()
